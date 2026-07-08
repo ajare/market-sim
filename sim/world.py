@@ -12,14 +12,14 @@ import matplotlib.pyplot as plt
 
 from .events import (
     Event, MarketEvent, EVENT_TEMPLATES, LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES,
-    LocationClosure, LOCATION_CLOSURE_TEMPLATES,
+    LocationClosure, LOCATION_CLOSURE_TEMPLATES, CompanyEvent, COMPANY_EVENT_TEMPLATES,
 )
 from .location import Location
 from .markets import Market
 from .transport import Ship
 from .captain import Captain
 from .names import ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES
-from .faction import Faction, PirateBrigade, PoliceFleet
+from .faction import Faction, Company, PirateBrigade, PoliceFleet
 from .pathfinding import prime_route_graph_cache
 
 
@@ -68,6 +68,12 @@ class World:
     already docked just wait it out, and ships en route still arrive but
     can't unload until it reopens.
 
+    A sixth, independent kind of event -- `company_event_probability` --
+    rolls separately for EACH plain Company (never a SoloTrader,
+    PirateBrigade, or PoliceFleet -- see CompanyEvent's docstring) every
+    day: a random cash windfall or setback (see COMPANY_EVENT_TEMPLATES)
+    that moves that Company's shared pool directly.
+
     Each day, `agent_order_fn(traders, day)` decides what order the fleet
     acts in before that day's action loop runs; it defaults to
     `random_agent_order` so first-mover advantage on shared prices doesn't
@@ -83,6 +89,7 @@ class World:
     def __init__(self, locations: List[Location], global_event_probability: float = 0.06,
                  local_event_probability: float = 0.08, location_event_probability: float = 0.04,
                  worldwide_event_probability: float = 0.02, location_closure_probability: float = 0.01,
+                 company_event_probability: float = 0.05,
                  seed: Optional[int] = None,
                  traders: Optional[List[Captain]] = None,
                  factions: Optional[List[Faction]] = None,
@@ -102,6 +109,7 @@ class World:
         self.location_event_probability = location_event_probability
         self.worldwide_event_probability = worldwide_event_probability
         self.location_closure_probability = location_closure_probability
+        self.company_event_probability = company_event_probability
         self.closed_locations: Dict[str, LocationClosure] = {}  # location name -> active closure
         self.closure_log: List[dict] = []  # historical record: every closure ever triggered
         self.buy_markets: Dict[Tuple[str, str], Market] = {}
@@ -130,7 +138,7 @@ class World:
         # currently-active-only view.
         self.broad_event_log: List[dict] = []
         # Every Event object generated anywhere in the sim -- Global/
-        # Location/Worldwide/Local MarketEvents, AgentEvents (every
+        # Location/Worldwide/Local MarketEvents, TransportEvents (every
         # Captain's, picked up from Captain.event_log), and
         # LocationClosures -- appended in chronological order as they're
         # rolled, kept forever. Unlike broad_event_log/closure_log/
@@ -238,16 +246,16 @@ class World:
         if not affected_markets:
             return None
         for market in affected_markets:
-            market.apply_event(MarketEvent(**template, location=None))
-        tracking_event = MarketEvent(**template, location=None)
-        # Override MarketEvent.__post_init__'s auto-derived type/subject --
-        # it only sees `location` (None here), which can't tell a Global
+            market.apply_event(MarketEvent(**template, location=None, commodity=commodity))
+        tracking_event = MarketEvent(**template, location=None, commodity=commodity)
+        # Override MarketEvent.__post_init__'s auto-derived type -- it only
+        # sees `location` (None here), which can't tell a Global
         # commodity-wide event apart from a Worldwide one; World knows the
-        # real scope at the point it triggers each kind, so it stamps the
-        # correct type/subject itself.
+        # real type at the point it triggers each kind, so it stamps it
+        # itself (scope is already "Global" either way -- see
+        # MarketEvent.__post_init__).
         tracking_event.day = day
         tracking_event.type = "Global"
-        tracking_event.subject = commodity
         self.event_log.append(tracking_event)
         self.active_broad_events.append({
             "scope": "Global", "subject": commodity, "start_day": day,
@@ -274,10 +282,11 @@ class World:
         tracking_event = MarketEvent(**template, location=location)
         # See the matching comment in _maybe_trigger_global_event -- the
         # auto-derived type would read "Local" here since `location` is set,
-        # same as a per-market local event; override it to the real scope.
+        # same as a per-market local event; override it to the real type
+        # (scope is already `location` either way -- see
+        # MarketEvent.__post_init__).
         tracking_event.day = day
         tracking_event.type = "Location"
-        tracking_event.subject = location
         self.event_log.append(tracking_event)
         self.active_broad_events.append({
             "scope": "Location", "subject": location, "start_day": day,
@@ -303,10 +312,10 @@ class World:
         tracking_event = MarketEvent(**template, location=None)
         # See the matching comment in _maybe_trigger_global_event -- the
         # auto-derived type would read "Global" here too, since `location`
-        # is None either way; override it to the real scope.
+        # is None either way; override it to the real type (scope is
+        # already "Global" either way -- see MarketEvent.__post_init__).
         tracking_event.day = day
         tracking_event.type = "Worldwide"
-        tracking_event.subject = "Global"
         self.event_log.append(tracking_event)
         self.active_broad_events.append({
             "scope": "Worldwide", "subject": "Global", "start_day": day,
@@ -328,14 +337,14 @@ class World:
     def active_named_events(self) -> List[dict]:
         """
         Every currently active Global/Location-wide/Worldwide MarketEvent
-        (see active_broad_events) and per-Captain AgentEvent -- only the
+        (see active_broad_events) and per-Captain TransportEvent -- only the
         "fuel_discount"/"fixed_cost_discount" kinds persist over multiple
-        days (see AgentEvent's docstring / Captain._apply_agent_event); the
-        rest fire-and-resolve instantly in a single day, so there's nothing
-        ongoing to report for them here. Each entry is
+        days (see TransportEvent's docstring / Captain._apply_agent_event);
+        the rest fire-and-resolve instantly in a single day, so there's
+        nothing ongoing to report for them here. Each entry is
         {"scope", "subject", "name", "start_day", "days_remaining",
         "duration_days"} -- "scope" is "Global"/"Location"/"Worldwide" for a
-        MarketEvent or "Agent" for an AgentEvent, and "subject" is the
+        MarketEvent or "Agent" for a TransportEvent, and "subject" is the
         commodity/location/"Global"/Captain name a caller (e.g. exp-ui's
         network background or commodity history chart) would want to label
         it with; `duration_days` (together with `start_day`) lets a caller
@@ -382,6 +391,7 @@ class World:
         template = random.choice(LOCATION_CLOSURE_TEMPLATES)
         closure = LocationClosure(**template)
         closure.day = day
+        closure.scope = location
         closure.subject = location
         self.closed_locations[location] = closure
         self.event_log.append(closure)
@@ -390,6 +400,34 @@ class World:
             "duration_days": closure.duration_days,
         })
         return location, closure.name, closure.duration_days
+
+    def _maybe_trigger_company_events(self, day: int) -> List[Tuple[str, str]]:
+        """
+        Roll an independent `company_event_probability` chance PER plain
+        Company (see CompanyEvent's docstring for why `type(faction) is
+        Company` -- not `isinstance` -- excludes SoloTrader, which is a
+        Company subclass but doesn't pool cash) every day: a random cash
+        windfall or setback that moves that Company's shared pool directly.
+        Returns a (company_name, event_name) pair for every Company hit
+        today, for verbose logging.
+        """
+        triggered = []
+        for faction in self.factions:
+            if type(faction) is not Company:
+                continue
+            if random.random() >= self.company_event_probability:
+                continue
+            template = random.choice(COMPANY_EVENT_TEMPLATES)
+            event = CompanyEvent(**template)
+            event.day = day
+            event.subject = faction.name
+            if event.kind == "cash_gain":
+                faction.cash += event.magnitude
+            else:  # cash_loss
+                faction.cash = max(0.0, faction.cash - event.magnitude)
+            self.event_log.append(event)
+            triggered.append((faction.name, event.name))
+        return triggered
 
     def run(self, num_days: int, verbose: bool = True):
         commodities_present = self._commodities_present()
@@ -429,6 +467,11 @@ class World:
                 location, event_name, duration = closure_event
                 print(f"\n*** Day {day}: PORT CLOSURE - {event_name} @ {location}, "
                       f"closed for {duration} day(s) ***\n")
+
+            company_events = self._maybe_trigger_company_events(day)
+            if verbose:
+                for company_name, event_name in company_events:
+                    print(f"\n*** Day {day}: COMPANY EVENT - {event_name} @ {company_name} ***\n")
 
             # Traders act first, using the previous day's closing prices:
             # each one advances its own journey (ticking down travel time,

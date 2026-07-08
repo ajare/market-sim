@@ -8,7 +8,7 @@ from sim.state import SimState
 # here rather than importing that (module-private) dict, since the two
 # panels have no other dependency on each other. "Agent" isn't included --
 # World.broad_event_log only ever covers Global/Location/Worldwide events
-# (see its docstring), not per-Captain AgentEvents.
+# (see its docstring), not per-Captain TransportEvents.
 _EVENT_SCOPE_COLORS = {
     "Global": imgui.ImVec4(1.00, 0.85, 0.20, 1.00),     # yellow
     "Location": imgui.ImVec4(1.00, 0.55, 0.85, 1.00),   # pink

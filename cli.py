@@ -187,6 +187,7 @@ def build_world(commodities_csv: Optional[str] = None, locations_csv: Optional[s
         location_event_probability=0.04,
         worldwide_event_probability=0.02,
         location_closure_probability=0.015,
+        company_event_probability=0.05,
         seed=42,
         factions=factions,
     )

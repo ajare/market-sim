@@ -1,6 +1,7 @@
 """
 Random external events: market-wide demand/supply shocks (MarketEvent),
-per-agent shocks (AgentEvent), and whole-port shutdowns (LocationClosure).
+per-transport shocks (TransportEvent), whole-Company cash shocks
+(CompanyEvent), and whole-port shutdowns (LocationClosure).
 """
 import random
 from dataclasses import dataclass, field
@@ -15,18 +16,28 @@ from typing import Dict, List, Optional
 class Event:
     """
     Base class for every random external shock in the simulation
-    (MarketEvent, AgentEvent, LocationClosure). Each subclass keeps its own
-    domain-specific fields (e.g. MarketEvent's `name`/`duration_days`) so
-    existing call sites and reporting code don't need to change, but every
-    subclass's __post_init__ populates this shared `type`/`subject`/`day`/
-    `duration`/`message` view -- `type` categorizes the event (e.g. "Global"/
-    "Local" for a MarketEvent, "Agent", "Closure"), `subject` is the
-    commodity/location/captain it's about, `day` is when it started,
-    `duration` is how many days it lasts, and `message` is the human-readable
-    description. The day-by-day `days_remaining` bookkeeping and `tick()`
-    are shared here too.
+    (MarketEvent, TransportEvent, CompanyEvent, LocationClosure). Each
+    subclass keeps its own domain-specific fields (e.g. MarketEvent's
+    `name`/`duration_days`) so existing call sites and reporting code don't
+    need to change, but every subclass's __post_init__ populates this shared
+    `type`/`scope`/`subject`/`day`/`duration`/`message` view -- `type`
+    categorizes the event (e.g. "Global"/"Local" for a MarketEvent, "Agent",
+    "Company", "Closure"), `scope` is how broadly it applies: a Location's
+    name for anything tied to one location (a Local MarketEvent, a
+    Location-wide MarketEvent, or a LocationClosure), "Global" for anything
+    with no single-location focus (a Global commodity-wide MarketEvent or a
+    Worldwide one), "Transport" for a TransportEvent, or "Company" for a
+    CompanyEvent. `subject` is the specific thing the event is about: a
+    commodity name for a MarketEvent (blank for a Location-wide/Worldwide
+    one, which isn't about any single commodity), a Captain's name for a
+    TransportEvent, a Company's name for a CompanyEvent, or a Location's
+    name for a LocationClosure. `day` is when it started, `duration` is how
+    many days it lasts, and `message` is the human-readable description.
+    The day-by-day `days_remaining` bookkeeping and `tick()` are shared here
+    too.
     """
     type: str = field(init=False, default="")
+    scope: str = field(init=False, default="")
     subject: str = field(init=False, default="")
     message: str = field(init=False, default="")
     duration: int = field(init=False, default=1)
@@ -40,7 +51,7 @@ class Event:
 
     def __str__(self) -> str:
         day_str = f"day {self.day}, " if self.day is not None else ""
-        return f"[{self.type}] {self.subject}: {self.message} ({day_str}{self.days_remaining}/{self.duration}d remaining)"
+        return f"[{self.type}] {self.scope}: {self.message} ({day_str}{self.days_remaining}/{self.duration}d remaining)"
 
 
 @dataclass
@@ -56,13 +67,23 @@ class MarketEvent(Event):
     supply_multiplier: float = 1.0
     duration_days: int = 1
     location: Optional[str] = None  # None = affects all locations
+    # The commodity this event is about -- known (and passed by the caller)
+    # for a Local or Global commodity-wide event; left None for a
+    # Location-wide or Worldwide one, which isn't about any single
+    # commodity (see World._maybe_trigger_location_event/_maybe_trigger_worldwide_event).
+    commodity: Optional[str] = None
 
     def __post_init__(self):
         self.days_remaining = self.duration_days
         self.message = self.name
         self.duration = self.duration_days
-        self.subject = self.location or ""
+        # A Local event is scoped to its one location; a Global commodity
+        # event or a Worldwide one (both constructed with location=None,
+        # see World._maybe_trigger_global_event/_maybe_trigger_worldwide_event)
+        # both scope to "Global" -- neither is about any single location.
+        self.scope = self.location if self.location else "Global"
         self.type = "Local" if self.location else "Global"
+        self.subject = self.commodity or ""
 
 
 # Event templates are commodity-specific since a heatwave affects oil demand
@@ -133,9 +154,9 @@ EVENT_TEMPLATES["Aluminum"] = _make_commodity_events(
 
 
 @dataclass
-class AgentEvent(Event):
+class TransportEvent(Event):
     """
-    A random shock that hits a specific AGENT (transport) rather than a market --
+    A random shock that hits a specific TRANSPORT rather than a market --
     mechanical trouble, piracy, paperwork delays, windfalls, and so on.
     Unlike MarketEvents these don't move prices; they change what the transport
     itself can do. `kind` determines how Captain interprets
@@ -162,6 +183,9 @@ class AgentEvent(Event):
     # Lets a caller (e.g. exp-ui's active-events display) report when a
     # still-ongoing event actually started, not just how much is left.
     started_day: Optional[int] = None
+    # NOTE: `subject` (the Captain's name) isn't set here -- a TransportEvent
+    # is built generically from a template before it's tied to any
+    # particular agent, so Captain._apply_agent_event stamps it once it is.
 
     def __post_init__(self):
         self.days_remaining = self.duration_days
@@ -169,6 +193,10 @@ class AgentEvent(Event):
         self.duration = self.duration_days
         self.day = self.started_day
         self.type = "Agent"
+        # Always "Transport" -- a TransportEvent hits one specific Transport,
+        # but WHICH one isn't part of scope (see Captain._apply_agent_event/
+        # Captain.event_log for that).
+        self.scope = "Transport"
 
 
 # Instantaneous events ("delay", "cargo_loss", "cash_gain", "cash_loss") take
@@ -184,6 +212,51 @@ AGENT_EVENT_TEMPLATES: List[dict] = [
     dict(name="Unexpected repair bill", kind="cash_loss", magnitude=250.0, duration_days=1),
     dict(name="Favorable tailwinds improve fuel efficiency", kind="fuel_discount", magnitude=0.25, duration_days=6),
     dict(name="Preferred customer rate at the port", kind="fixed_cost_discount", magnitude=0.5, duration_days=8),
+]
+
+
+@dataclass
+class CompanyEvent(Event):
+    """
+    A random shock that hits a whole Company's shared cash pool directly --
+    a windfall or a setback that isn't tied to any single Transport or
+    market. Only ever rolled for a plain Company (see
+    World._maybe_trigger_company_event) -- never a SoloTrader (its captains
+    don't share a pool to hit), a PirateBrigade, or a PoliceFleet. `kind`
+    determines how the magnitude is applied to the Company's pooled cash:
+
+      - "cash_gain": added to the pool.
+      - "cash_loss": subtracted from the pool (floored at 0).
+    """
+    name: str
+    kind: str
+    magnitude: float
+    duration_days: int = 1
+
+    def __post_init__(self):
+        self.days_remaining = self.duration_days
+        self.message = self.name
+        self.duration = self.duration_days
+        self.type = "Company"
+        # Always "Company" -- scoped to one Company's shared pool, same way
+        # a TransportEvent always scopes to "Transport". `subject` (which
+        # Company) is stamped by World._maybe_trigger_company_event once
+        # it's known, the same way Captain._apply_agent_event stamps a
+        # TransportEvent's subject.
+        self.scope = "Company"
+
+
+# Company-wide cash windfalls/setbacks -- deliberately one-off
+# (duration_days=1) since there's no notion of an ongoing discount at the
+# whole-Company level the way TransportEvent's "fuel_discount"/
+# "fixed_cost_discount" work per-Transport.
+COMPANY_EVENT_TEMPLATES: List[dict] = [
+    dict(name="Insurance settlement received", kind="cash_gain", magnitude=5000.0, duration_days=1),
+    dict(name="Favorable trade financing arranged", kind="cash_gain", magnitude=2500.0, duration_days=1),
+    dict(name="Government subsidy for fleet modernization", kind="cash_gain", magnitude=6000.0, duration_days=1),
+    dict(name="Regulatory fine for safety violations", kind="cash_loss", magnitude=3000.0, duration_days=1),
+    dict(name="Corporate tax audit settlement", kind="cash_loss", magnitude=4000.0, duration_days=1),
+    dict(name="Embezzlement scandal costs the company", kind="cash_loss", magnitude=5500.0, duration_days=1),
 ]
 
 

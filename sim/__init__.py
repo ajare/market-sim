@@ -5,7 +5,7 @@ Multi-Location Commodity Market Simulation
 An agent-based simulation of commodity markets spread across several
 locations. See the individual submodules for the pieces:
 
-  - events:       MarketEvent/AgentEvent/LocationClosure
+  - events:       MarketEvent/TransportEvent/CompanyEvent/LocationClosure
   - location:     Location, TerminalType
   - world_data:   the commodity roster, geography (LOCATIONS, get_location, distance_between, ...)
   - routes:       Route/RouteType, the route network
@@ -48,9 +48,9 @@ from . import csv_loaders
 from . import world
 
 from .events import (
-    MarketEvent, AgentEvent, LocationClosure,
-    EVENT_TEMPLATES, AGENT_EVENT_TEMPLATES, LOCATION_EVENT_TEMPLATES,
-    WORLD_EVENT_TEMPLATES, LOCATION_CLOSURE_TEMPLATES,
+    MarketEvent, TransportEvent, CompanyEvent, LocationClosure,
+    EVENT_TEMPLATES, AGENT_EVENT_TEMPLATES, COMPANY_EVENT_TEMPLATES,
+    LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES, LOCATION_CLOSURE_TEMPLATES,
 )
 from .location import TerminalType, Location
 from .world_data import (
@@ -64,7 +64,8 @@ from .routes import (
 )
 from .pathfinding import find_shortest_path, path_node_sequence
 from .markets import (
-    PRICE_SENSITIVITY, DEFAULT_PRICE_SENSITIVITY, Market,
+    PRICE_SENSITIVITY, DEFAULT_PRICE_SENSITIVITY,
+    DEFICIT_PRICE_BOOST, DEFAULT_DEFICIT_PRICE_BOOST, Market,
 )
 from .transport import Transport, Ship, Train, Plane, SHIP_CLASSES, TransportStatus
 from .crew import Crew, Sailor

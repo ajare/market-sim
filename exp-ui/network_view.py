@@ -90,7 +90,7 @@ class NetworkBackground:
 
     def _render_active_events(self, world, viewport, draw_list) -> None:
         """A text list of every currently active Global/Location-wide/
-        Worldwide MarketEvent and per-Captain AgentEvent (see
+        Worldwide MarketEvent and per-Captain TransportEvent (see
         World.active_named_events), one line per event, colored by scope
         (_EVENT_SCOPE_COLORS) and stacked in the background's top-left
         corner. Local (single-market) events aren't included here -- see

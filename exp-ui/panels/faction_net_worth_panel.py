@@ -2,8 +2,16 @@ import numpy as np
 from imgui_bundle import imgui, implot
 
 from app import Panel
+from sim.events import CompanyEvent
 from sim.faction import Company, PirateBrigade, PoliceFleet, SoloTrader
 from sim.state import SimState
+
+# CompanyEvent.kind (see sim/events.py's COMPANY_EVENT_TEMPLATES) -> marker
+# color -- green for a windfall, red for a setback.
+_COMPANY_EVENT_KIND_COLORS = {
+    "cash_gain": imgui.ImVec4(0.30, 0.90, 0.30, 1.00),
+    "cash_loss": imgui.ImVec4(0.90, 0.25, 0.25, 1.00),
+}
 
 # Checked in this order since SoloTrader subclasses Company (see faction.py)
 # -- a plain isinstance(x, Company) check alone would misclassify every
@@ -73,6 +81,38 @@ class FactionNetWorthPanel(Panel):
                         self.selected_types.discard(type_name)
             imgui.end_popup()
 
+    def _plot_company_events(self, world, faction, recent: list[dict]) -> None:
+        """
+        One marker per CompanyEvent that hit `faction`, sat right on its net
+        worth line for that day -- green for a cash_gain, red for a
+        cash_loss (see _COMPANY_EVENT_KIND_COLORS) -- restricted to days
+        actually visible in `recent` (see render()'s day-window slider).
+        """
+        net_worth_by_day = {r["day"]: r["net_worth"] for r in recent}
+        events_by_kind: dict[str, list[tuple]] = {}
+        for event in world.event_log:
+            if not isinstance(event, CompanyEvent) or event.subject != faction.name:
+                continue
+            net_worth = net_worth_by_day.get(event.day)
+            if net_worth is None:
+                continue
+            events_by_kind.setdefault(event.kind, []).append((event.day, net_worth, event.name))
+
+        for kind, points in events_by_kind.items():
+            days = np.array([p[0] for p in points], dtype=np.float64)
+            net_worth = np.array([p[1] for p in points], dtype=np.float64)
+            color = _COMPANY_EVENT_KIND_COLORS.get(kind, _DEFAULT_FACTION_COLOR)
+            # Label includes the faction name since the same kind can recur
+            # across multiple factions -- ImPlot uses the label as this
+            # plot item's identity, so each faction's markers need their
+            # own legend entry rather than colliding under one shared label.
+            label = f"{faction.name}: {'Windfall' if kind == 'cash_gain' else 'Setback'}"
+            implot.plot_scatter(
+                label, days, net_worth,
+                implot.Spec(marker=implot.Marker_.diamond, marker_size=7,
+                            marker_fill_color=color, marker_line_color=color),
+            )
+
     def render(self) -> None:
         world = self.state.world
         self._render_type_filter()
@@ -101,4 +141,9 @@ class FactionNetWorthPanel(Panel):
                 net_worth = np.array([r["net_worth"] for r in recent], dtype=np.float64)
                 implot.plot_line(faction.name, days, net_worth,
                                   implot.Spec(line_color=_faction_color(faction)))
+                # Only a plain Company can ever take a CompanyEvent (see
+                # World._maybe_trigger_company_events) -- skip the lookup
+                # entirely for a SoloTrader/PirateBrigade, which never have any.
+                if type(faction) is Company:
+                    self._plot_company_events(world, faction, recent)
             implot.end_plot()

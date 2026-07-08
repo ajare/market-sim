@@ -1,9 +1,6 @@
 """Owns the live World instance the ImGui panels read from and drive."""
 from __future__ import annotations
 
-import contextlib
-import io
-from collections import deque
 from typing import List
 
 from .events import Event
@@ -13,21 +10,19 @@ class SimState:
     """Wraps a World + its Factions with play/pause/step controls.
 
     `step()` runs exactly one simulated day (reusing World.step(), which
-    tracks its own internal day counter) and captures whatever it would
-    normally print to stdout into a rolling log the UI can display,
-    instead of re-implementing World's console formatting.
+    tracks its own internal day counter); every panel reads its state
+    (locations, captains/trade logs, events, ...) directly off `self.world`
+    rather than off any console output.
     """
 
-    def __init__(self, max_log_lines: int = 2000):
-        self.max_log_lines = max_log_lines
-        self.log_lines: deque[str] = deque(maxlen=max_log_lines)
+    def __init__(self):
         self.playing = False
         self.days_per_second = 2.0
         self._accumulator = 0.0
         self.day = 0
         self.world = None
         self.factions = []
-        # Every Event (MarketEvent/AgentEvent/LocationClosure) generated
+        # Every Event (MarketEvent/TransportEvent/LocationClosure) generated
         # over the World's lifetime, in the order rolled -- just a reference
         # to World.event_log, since World is what actually creates events
         # and is already the single place that appends to it; re-bound in
@@ -48,15 +43,9 @@ class SimState:
         self.day = 0
         self.playing = False
         self._accumulator = 0.0
-        self.log_lines.clear()
 
     def step(self) -> None:
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            self.day = self.world.step(verbose=True)
-        for line in buffer.getvalue().splitlines():
-            if line.strip():
-                self.log_lines.append(line)
+        self.day = self.world.step(verbose=False)
 
     def tick(self, delta_time: float) -> None:
         if not self.playing:

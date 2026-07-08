@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 
-from .events import AgentEvent, AGENT_EVENT_TEMPLATES
+from .events import TransportEvent, AGENT_EVENT_TEMPLATES
 from .transport import Transport, Ship, TransportStatus
 from .world_data import distance_between, travel_days_between
 from .routes import get_route, Route
@@ -93,7 +93,7 @@ class Captain(Crew):
     execute immediately.
 
     AGENT-SPECIFIC EVENTS: separately from market-wide events, the agent
-    itself can be hit by its own random shocks each day -- see AgentEvent /
+    itself can be hit by its own random shocks each day -- see TransportEvent /
     AGENT_EVENT_TEMPLATES. These don't move any market price; they change
     what the SHIP can do: mechanical trouble or customs holds cost it days,
     piracy or spoilage costs it cargo, windfalls and repair bills move cash
@@ -165,13 +165,13 @@ class Captain(Crew):
         # Agent-specific events: instantaneous ones (delay/cargo_loss/cash)
         # are applied the moment they're rolled; the two discount kinds stay
         # active here and tick down like MarketEvents do on a Market.
-        self.active_agent_events: List[AgentEvent] = []
-        # Every AgentEvent ever rolled for this Captain, instantaneous or
+        self.active_agent_events: List[TransportEvent] = []
+        # Every TransportEvent ever rolled for this Captain, instantaneous or
         # persisting alike, kept forever (unlike active_agent_events, which
         # only tracks the still-ongoing discount kinds) -- lets a caller
         # (e.g. World.event_log) see the full history of what happened to
         # this agent, not just what's still in effect.
-        self.event_log: List[AgentEvent] = []
+        self.event_log: List[TransportEvent] = []
         self.grounded_days_remaining: int = 0  # extra days stuck at the dock
         self.agent_event_log: List[dict] = []  # every agent event that fired
 
@@ -463,10 +463,10 @@ class Captain(Crew):
         if not eligible:
             return
         template = random.choice(eligible)
-        event = AgentEvent(**template)
+        event = TransportEvent(**template)
         self._apply_agent_event(event, day)
 
-    def _apply_agent_event(self, event: "AgentEvent", day: int):
+    def _apply_agent_event(self, event: "TransportEvent", day: int):
         event.started_day = day
         event.day = day
         event.subject = self.name

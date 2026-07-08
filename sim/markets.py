@@ -23,6 +23,19 @@ PRICE_SENSITIVITY = {
 # never hand-tuned for without crashing.
 DEFAULT_PRICE_SENSITIVITY = 0.45
 
+# Extra multiplier applied on TOP of the sensitivity above, but only to the
+# LOCATION'S BUY price (see Market._stockpile_price's `side == "sell"`
+# check -- that's the side a Captain SELLS into) and only while that
+# location is running low (deviation > 0, i.e. below its min_stockpile).
+# Lets a commodity's shortage premium climb harder than its glut discount
+# eases off, to pull more Captains toward selling it in when it's scarce.
+# Coffee is boosted this way; everything else defaults to 1.0 (symmetric,
+# unchanged from the plain sensitivity above).
+DEFICIT_PRICE_BOOST = {
+    "Coffee": 2.0,
+}
+DEFAULT_DEFICIT_PRICE_BOOST = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Market (a single commodity traded at a single location)
@@ -124,7 +137,7 @@ class Market:
         """Randomly trigger a LOCAL event (scoped to this location only)."""
         if random.random() < self.event_probability:
             template = random.choice(EVENT_TEMPLATES[self.commodity_name])
-            event = MarketEvent(**template, location=self.location_name)
+            event = MarketEvent(**template, location=self.location_name, commodity=self.commodity_name)
             self.apply_event(event)
             return event
         return None
@@ -139,7 +152,11 @@ class Market:
         reference (a consumed commodity running low, or a produced one
         that's been sold down) pushes price up; above it (a consumed
         commodity that's been topped up, or a produced one piling up
-        unsold) pushes price down.
+        unsold) pushes price down. On the location's BUY side (`side ==
+        "sell"` -- a Captain selling TO the location) while it's running
+        low, some commodities get an extra boost on top of the plain
+        sensitivity (see DEFICIT_PRICE_BOOST) so the shortage premium pulls
+        harder on Captains than the symmetric formula alone would.
         """
         reference = self.location.reference_stockpile(self.commodity_name)
         if reference <= 0:
@@ -147,6 +164,8 @@ class Market:
         current = self.location.stockpiles.get(self.commodity_name, 0.0)
         deviation = max(-2.0, min(2.0, (reference - current) / reference))
         sensitivity = PRICE_SENSITIVITY.get(self.commodity_name, DEFAULT_PRICE_SENSITIVITY)
+        if deviation > 0 and self.side == "sell":
+            sensitivity *= DEFICIT_PRICE_BOOST.get(self.commodity_name, DEFAULT_DEFICIT_PRICE_BOOST)
         return max(0.5, self.base_price * (1 + sensitivity * deviation))
 
     def simulate_day(self, day: int, is_open: bool = True):

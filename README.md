@@ -64,7 +64,7 @@ world_data (Location, geography) -> routes (Route/RouteType) -> markets (Market)
 
 | Module | Responsibility |
 | --- | --- |
-| `events` | `MarketEvent`/`AgentEvent`/`LocationClosure` |
+| `events` | `MarketEvent`/`TransportEvent`/`LocationClosure` |
 | `location` | `Location`, `TerminalType` |
 | `world_data` | commodity roster, geography (`LOCATIONS`, `get_location`, `distance_between`, ...) |
 | `routes` | `Route`/`RouteType`, the route network |
