@@ -86,71 +86,10 @@ class MarketEvent(Event):
         self.subject = self.commodity or ""
 
 
-# Event templates are commodity-specific since a heatwave affects oil demand
-# differently than it affects gold demand, for example.
-EVENT_TEMPLATES: Dict[str, List[dict]] = {
-    "Crude Oil": [
-        dict(name="Heatwave boosts energy demand", demand_multiplier=1.4, supply_multiplier=1.0, duration_days=4),
-        dict(name="Port strike disrupts supply chain", demand_multiplier=1.0, supply_multiplier=0.6, duration_days=5),
-        dict(name="Geopolitical tension in producing region", demand_multiplier=1.1, supply_multiplier=0.7, duration_days=6),
-        dict(name="OPEC+ production cut", demand_multiplier=1.0, supply_multiplier=0.75, duration_days=6),
-    ],
-    "Copper": [
-        dict(name="Construction boom", demand_multiplier=1.3, supply_multiplier=1.0, duration_days=5),
-        dict(name="Mine collapse cuts output", demand_multiplier=1.0, supply_multiplier=0.65, duration_days=5),
-        dict(name="Technological breakthrough increases efficiency", demand_multiplier=1.0, supply_multiplier=1.3, duration_days=5),
-        dict(name="Recession fears dampen demand", demand_multiplier=0.75, supply_multiplier=1.0, duration_days=6),
-    ],
-    "Wheat": [
-        dict(name="Drought reduces harvest", demand_multiplier=1.0, supply_multiplier=0.6, duration_days=6),
-        dict(name="Bumper harvest / production surplus", demand_multiplier=1.0, supply_multiplier=1.4, duration_days=4),
-        dict(name="Export ban announced", demand_multiplier=1.2, supply_multiplier=0.8, duration_days=5),
-        dict(name="New trade agreement lowers tariffs", demand_multiplier=1.15, supply_multiplier=1.0, duration_days=4),
-    ],
-    "Gold": [
-        dict(name="Stock market turmoil drives safe-haven demand", demand_multiplier=1.35, supply_multiplier=1.0, duration_days=5),
-        dict(name="Positive economic growth report", demand_multiplier=0.85, supply_multiplier=1.0, duration_days=3),
-        dict(name="Central bank buying spree", demand_multiplier=1.25, supply_multiplier=1.0, duration_days=6),
-        dict(name="New mine discovery", demand_multiplier=1.0, supply_multiplier=1.2, duration_days=5),
-    ],
-    "Fuel": [
-        dict(name="Refinery outage cuts bunker fuel supply", demand_multiplier=1.0, supply_multiplier=0.6, duration_days=5),
-        dict(name="Shipping surge boosts bunker fuel demand", demand_multiplier=1.3, supply_multiplier=1.0, duration_days=4),
-        dict(name="OPEC+ supply cut ripples into fuel costs", demand_multiplier=1.0, supply_multiplier=0.75, duration_days=6),
-        dict(name="New refining capacity comes online", demand_multiplier=1.0, supply_multiplier=1.25, duration_days=5),
-        dict(name="Port congestion drives up local bunkering demand", demand_multiplier=1.2, supply_multiplier=0.9, duration_days=4),
-    ],
-}
-
-
-def _make_commodity_events(commodity: str, boom: str, disruption: str, glut: str, slump: str) -> List[dict]:
-    """
-    Generate a standard 4-event pack (demand boost / supply disruption /
-    oversupply / demand slump) for a commodity, using short driver phrases
-    to keep the flavor text distinct per commodity without hand-writing
-    every line. Used for commodities added beyond the original four, which
-    keep their fully bespoke lists above.
-    """
-    return [
-        dict(name=f"{boom} boosts {commodity} demand", demand_multiplier=1.3, supply_multiplier=1.0, duration_days=5),
-        dict(name=f"{disruption} disrupts {commodity} supply", demand_multiplier=1.0, supply_multiplier=0.65, duration_days=5),
-        dict(name=f"{glut} creates a {commodity} glut", demand_multiplier=1.0, supply_multiplier=1.3, duration_days=5),
-        dict(name=f"{slump} dampens {commodity} demand", demand_multiplier=0.8, supply_multiplier=1.0, duration_days=6),
-    ]
-
-
-EVENT_TEMPLATES["Silver"] = _make_commodity_events(
-    "Silver", "Surging industrial demand", "Mine strike", "New refining capacity", "Recession fears")
-EVENT_TEMPLATES["Natural Gas"] = _make_commodity_events(
-    "Natural Gas", "Cold snap", "Pipeline outage", "Mild winter", "Warm winter forecast")
-EVENT_TEMPLATES["Coffee"] = _make_commodity_events(
-    "Coffee", "Strong consumer demand", "Frost in growing regions", "Bumper harvest", "Weak consumer spending")
-EVENT_TEMPLATES["Cotton"] = _make_commodity_events(
-    "Cotton", "Textile industry boom", "Drought in growing regions", "Bumper harvest", "Synthetic fiber substitution")
-EVENT_TEMPLATES["Iron Ore"] = _make_commodity_events(
-    "Iron Ore", "Steel demand surge", "Mine flooding", "New mine coming online", "Steel industry slowdown")
-EVENT_TEMPLATES["Aluminum"] = _make_commodity_events(
-    "Aluminum", "Aerospace demand surge", "Smelter power outage", "New smelter capacity", "Automotive slowdown")
+# Per-commodity event templates now live on Commodity.event_templates (see
+# commodity.py / world_data.COMMODITIES) instead of a separate dict here --
+# Market._maybe_trigger_local_event / World._maybe_trigger_global_event read
+# world_data.COMMODITIES[name].event_templates.
 
 
 @dataclass
@@ -260,19 +199,20 @@ COMPANY_EVENT_TEMPLATES: List[dict] = [
 ]
 
 
-# EVENT_TEMPLATES above is commodity-specific: each event is drawn from a
-# pool tied to one commodity, then applied either LOCALLY (one location's
-# market for that commodity) or GLOBALLY (that commodity's market at every
-# location that trades it). The two pools below complete the picture with
-# commodity-AGNOSTIC shocks -- broad economic/political events that aren't
-# about any one commodity, applied either to every market at ONE location
-# (LOCATION-WIDE) or to every market in the entire world (WORLDWIDE):
+# Commodity.event_templates (see commodity.py / world_data.COMMODITIES) is
+# commodity-specific: each event is drawn from a pool tied to one commodity,
+# then applied either LOCALLY (one location's market for that commodity) or
+# GLOBALLY (that commodity's market at every location that trades it). The
+# two pools below complete the picture with commodity-AGNOSTIC shocks --
+# broad economic/political events that aren't about any one commodity,
+# applied either to every market at ONE location (LOCATION-WIDE) or to
+# every market in the entire world (WORLDWIDE):
 #
-#                       one commodity          every commodity
-#   one location        EVENT_TEMPLATES        LOCATION_EVENT_TEMPLATES
-#                       (local)                (location-wide)
-#   every location       EVENT_TEMPLATES        WORLD_EVENT_TEMPLATES
-#                       (global)               (worldwide)
+#                       one commodity              every commodity
+#   one location        Commodity.event_templates  LOCATION_EVENT_TEMPLATES
+#                       (local)                    (location-wide)
+#   every location       Commodity.event_templates  WORLD_EVENT_TEMPLATES
+#                       (global)                   (worldwide)
 LOCATION_EVENT_TEMPLATES: List[dict] = [
     dict(name="Port strike halts local trade", demand_multiplier=1.0, supply_multiplier=0.5, duration_days=5),
     dict(name="Regional economic boom", demand_multiplier=1.3, supply_multiplier=1.0, duration_days=5),

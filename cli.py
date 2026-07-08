@@ -2,13 +2,13 @@
 main(): builds (procedurally, or from CSVs) a full world/fleet and runs
 the simulation end to end -- plus the argparse CLI wrapper around it.
 
-Reassigning world state (COMMODITIES/BASE_PRICES/LOCATIONS/
-LOCATION_COORDINATES/ROUTES) is done via the OWNING submodule's attribute
-(`world_data.LOCATIONS = ...`, `routes_mod.ROUTES = ...`) rather than a
-`global` statement here, since `global` would only rebind a name in THIS
-module -- every other module's `distance_between`/`get_route`/etc. would
-keep reading the old value. Module-attribute assignment is what every
-other function (defined in those modules) actually observes.
+Reassigning world state (COMMODITIES/LOCATIONS/LOCATION_COORDINATES/ROUTES)
+is done via the OWNING submodule's attribute (`world_data.LOCATIONS = ...`,
+`routes_mod.ROUTES = ...`) rather than a `global` statement here, since
+`global` would only rebind a name in THIS module -- every other module's
+`distance_between`/`get_route`/etc. would keep reading the old value.
+Module-attribute assignment is what every other function (defined in
+those modules) actually observes.
 """
 import argparse
 import os
@@ -53,7 +53,7 @@ def build_world(commodities_csv: Optional[str] = None, locations_csv: Optional[s
     if locations_csv is not None:
         world_data.LOCATIONS, world_data.LOCATION_COORDINATES = load_locations_csv(locations_csv)
     elif commodities_csv is not None:
-        world_data.COMMODITIES, world_data.BASE_PRICES = load_commodities_csv(commodities_csv)
+        world_data.COMMODITIES = load_commodities_csv(commodities_csv)
         world_data.LOCATIONS = _generate_locations(ALL_LOCATION_NAMES, world_data.COMMODITIES)
 
     if routes_csv is not None:

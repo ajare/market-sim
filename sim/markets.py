@@ -5,36 +5,10 @@ day-to-day price update.
 import random
 from typing import List, Optional
 
-from .events import MarketEvent, EVENT_TEMPLATES
+from . import world_data
+from .commodity import DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST
+from .events import MarketEvent
 from .location import Location
-
-# How strongly a commodity's price reacts to its stockpile sitting away from
-# its reference level (see Market._stockpile_price) -- e.g. 0.6 means a
-# stockpile fully depleted (or, symmetrically, doubled) relative to its
-# reference moves price by 60%. Larger values make a commodity's price swing
-# harder on the same deficit/surplus.
-PRICE_SENSITIVITY = {
-    "Crude Oil": 0.6, "Copper": 0.5, "Wheat": 0.45, "Gold": 0.25, "Silver": 0.35,
-    "Natural Gas": 0.55, "Coffee": 0.45, "Cotton": 0.45, "Iron Ore": 0.45, "Aluminum": 0.45,
-}
-
-# Fallback sensitivity for a commodity with no explicit entry above -- lets a
-# custom commodities_csv (see main()) introduce commodities this dict was
-# never hand-tuned for without crashing.
-DEFAULT_PRICE_SENSITIVITY = 0.45
-
-# Extra multiplier applied on TOP of the sensitivity above, but only to the
-# LOCATION'S BUY price (see Market._stockpile_price's `side == "sell"`
-# check -- that's the side a Captain SELLS into) and only while that
-# location is running low (deviation > 0, i.e. below its min_stockpile).
-# Lets a commodity's shortage premium climb harder than its glut discount
-# eases off, to pull more Captains toward selling it in when it's scarce.
-# Coffee is boosted this way; everything else defaults to 1.0 (symmetric,
-# unchanged from the plain sensitivity above).
-DEFICIT_PRICE_BOOST = {
-    "Coffee": 2.0,
-}
-DEFAULT_DEFICIT_PRICE_BOOST = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -134,13 +108,20 @@ class Market:
         self.active_events.append(event)
 
     def _maybe_trigger_local_event(self):
-        """Randomly trigger a LOCAL event (scoped to this location only)."""
-        if random.random() < self.event_probability:
-            template = random.choice(EVENT_TEMPLATES[self.commodity_name])
-            event = MarketEvent(**template, location=self.location_name, commodity=self.commodity_name)
-            self.apply_event(event)
-            return event
-        return None
+        """Randomly trigger a LOCAL event (scoped to this location only).
+        No-op (not an error) if this commodity has no Commodity entry in
+        world_data.COMMODITIES -- e.g. a custom --locations-csv world
+        introducing a commodity never registered via a matching
+        --commodities-csv -- or that entry has no event templates."""
+        if random.random() >= self.event_probability:
+            return None
+        commodity = world_data.COMMODITIES.get(self.commodity_name)
+        if commodity is None or not commodity.event_templates:
+            return None
+        template = random.choice(commodity.event_templates)
+        event = MarketEvent(**template, location=self.location_name, commodity=self.commodity_name)
+        self.apply_event(event)
+        return event
 
     def _update_events(self):
         self.active_events = [e for e in self.active_events if e.tick()]
@@ -155,17 +136,20 @@ class Market:
         unsold) pushes price down. On the location's BUY side (`side ==
         "sell"` -- a Captain selling TO the location) while it's running
         low, some commodities get an extra boost on top of the plain
-        sensitivity (see DEFICIT_PRICE_BOOST) so the shortage premium pulls
-        harder on Captains than the symmetric formula alone would.
+        sensitivity (see Commodity.deficit_price_boost) so the shortage
+        premium pulls harder on Captains than the symmetric formula alone
+        would.
         """
         reference = self.location.reference_stockpile(self.commodity_name)
         if reference <= 0:
             return self.base_price
         current = self.location.stockpiles.get(self.commodity_name, 0.0)
         deviation = max(-2.0, min(2.0, (reference - current) / reference))
-        sensitivity = PRICE_SENSITIVITY.get(self.commodity_name, DEFAULT_PRICE_SENSITIVITY)
+        commodity = world_data.COMMODITIES.get(self.commodity_name)
+        sensitivity = commodity.price_sensitivity if commodity is not None else DEFAULT_PRICE_SENSITIVITY
         if deviation > 0 and self.side == "sell":
-            sensitivity *= DEFICIT_PRICE_BOOST.get(self.commodity_name, DEFAULT_DEFICIT_PRICE_BOOST)
+            boost = commodity.deficit_price_boost if commodity is not None else DEFAULT_DEFICIT_PRICE_BOOST
+            sensitivity *= boost
         return max(0.5, self.base_price * (1 + sensitivity * deviation))
 
     def simulate_day(self, day: int, is_open: bool = True):

@@ -10,8 +10,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 
+from . import world_data
 from .events import (
-    Event, MarketEvent, EVENT_TEMPLATES, LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES,
+    Event, MarketEvent, LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES,
     LocationClosure, LOCATION_CLOSURE_TEMPLATES, CompanyEvent, COMPANY_EVENT_TEMPLATES,
 )
 from .location import Location
@@ -241,7 +242,10 @@ class World:
         if random.random() >= self.global_event_probability:
             return None
         commodity = random.choice(self._commodities_present())
-        template = random.choice(EVENT_TEMPLATES[commodity])
+        commodity_data = world_data.COMMODITIES.get(commodity)
+        if commodity_data is None or not commodity_data.event_templates:
+            return None  # e.g. a custom --locations-csv world's commodity with no matching Commodity entry
+        template = random.choice(commodity_data.event_templates)
         affected_markets = [m for m in self._all_markets() if m.commodity_name == commodity]
         if not affected_markets:
             return None

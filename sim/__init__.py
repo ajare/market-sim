@@ -6,6 +6,7 @@ An agent-based simulation of commodity markets spread across several
 locations. See the individual submodules for the pieces:
 
   - events:       MarketEvent/TransportEvent/CompanyEvent/LocationClosure
+  - commodity:    Commodity (per-commodity price/sensitivity/event data), build_commodities
   - location:     Location, TerminalType
   - world_data:   the commodity roster, geography (LOCATIONS, get_location, distance_between, ...)
   - routes:       Route/RouteType, the route network
@@ -34,6 +35,7 @@ since every function that reads these (distance_between, get_route, ...)
 looks them up in its own defining module's globals, not this one's.
 """
 from . import location
+from . import commodity
 from . import world_data
 from . import routes
 from . import pathfinding
@@ -49,12 +51,13 @@ from . import world
 
 from .events import (
     MarketEvent, TransportEvent, CompanyEvent, LocationClosure,
-    EVENT_TEMPLATES, AGENT_EVENT_TEMPLATES, COMPANY_EVENT_TEMPLATES,
+    AGENT_EVENT_TEMPLATES, COMPANY_EVENT_TEMPLATES,
     LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES, LOCATION_CLOSURE_TEMPLATES,
 )
+from .commodity import Commodity, build_commodities, DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST
 from .location import TerminalType, Location
 from .world_data import (
-    COMMODITIES, BASE_PRICES, LOCATION_NAMES,
+    COMMODITIES, FUEL_BASE_PRICE, LOCATION_NAMES,
     FUEL_DEPOT_NAMES, ALL_LOCATION_NAMES, WORLD_GEN_SEED, LOCATIONS,
     LOCATION_COORDINATES, SHIP_SPEED_UNITS_PER_DAY,
     distance_between, travel_days_between, get_location,
@@ -63,10 +66,7 @@ from .routes import (
     RouteType, ROUTE_TERMINAL_COMPATIBILITY, Route, ROUTES, get_route,
 )
 from .pathfinding import find_shortest_path, path_node_sequence
-from .markets import (
-    PRICE_SENSITIVITY, DEFAULT_PRICE_SENSITIVITY,
-    DEFICIT_PRICE_BOOST, DEFAULT_DEFICIT_PRICE_BOOST, Market,
-)
+from .markets import Market
 from .transport import Transport, Ship, Train, Plane, SHIP_CLASSES, TransportStatus
 from .crew import Crew, Sailor
 from .captain import Captain

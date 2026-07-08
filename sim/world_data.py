@@ -1,32 +1,40 @@
 """
 The commodity roster and the world's geography (coordinates, distance,
 travel time). Holds the mutable module-level world state (COMMODITIES,
-BASE_PRICES, LOCATIONS, LOCATION_COORDINATES) that main() / the CSV
-loaders may replace wholesale -- always access these via
-`world_data.NAME` (not `from .world_data import NAME`) from other modules
-so a reassignment here is actually seen everywhere. See location.py for
-the Location/TerminalType classes themselves.
+LOCATIONS, LOCATION_COORDINATES) that main() / the CSV loaders may replace
+wholesale -- always access these via `world_data.NAME` (not
+`from .world_data import NAME`) from other modules so a reassignment here
+is actually seen everywhere. See location.py for the Location/TerminalType
+classes themselves, and commodity.py for the Commodity class itself.
 """
 import math
 import random
 from typing import Dict, List, Optional, Tuple
 
+from .commodity import Commodity, build_commodities
 from .location import Location, TerminalType
 
+# Fuel is tracked separately from the tradeable Commodity roster below --
+# it's an input every transport needs, not something arbitraged for its
+# own sake, priced per-Location (Location.fuel_price) and never
+# fluctuating (see World.__init__, which marks every Fuel market
+# fixed_price=True).
+FUEL_BASE_PRICE = 1.25
 
-# The full commodity roster (Fuel is tracked separately -- it's an input
-# every transport needs, not something arbitraged for its own sake) and a base
-# price for each, used to seed every location's local price around a
-# common reference point (with per-location variation applied below).
-COMMODITIES: List[str] = [
-    "Crude Oil", "Copper", "Wheat", "Gold", "Silver",
-    "Natural Gas", "Coffee", "Cotton", "Iron Ore", "Aluminum",
-]
-BASE_PRICES: Dict[str, float] = {
-    "Crude Oil": 75.0, "Copper": 82.0, "Wheat": 6.5, "Gold": 2300.0,
-    "Silver": 28.0, "Natural Gas": 3.5, "Coffee": 1.85, "Cotton": 0.85,
-    "Iron Ore": 110.0, "Aluminum": 95.0, "Fuel": 1.25,
-}
+# The full tradeable commodity roster, each carrying its own base price,
+# price-reaction sensitivity, deficit-price boost, and random-event
+# templates (see commodity.Commodity) -- used to seed every location's
+# local price around a common reference point (with per-location variation
+# applied below).
+COMMODITIES: Dict[str, Commodity] = build_commodities(
+    names=["Crude Oil", "Copper", "Wheat", "Gold", "Silver",
+           "Natural Gas", "Coffee", "Cotton", "Iron Ore", "Aluminum"],
+    base_prices={
+        "Crude Oil": 75.0, "Copper": 82.0, "Wheat": 6.5, "Gold": 2300.0,
+        "Silver": 28.0, "Natural Gas": 3.5, "Coffee": 1.85, "Cotton": 0.85,
+        "Iron Ore": 110.0, "Aluminum": 95.0,
+    },
+)
 
 # 30 trading hubs. With this many locations and commodities, hand-writing
 # every buy/sell list, price, and distance pair (435 of them) stops being
@@ -61,23 +69,24 @@ ALL_LOCATION_NAMES: List[str] = LOCATION_NAMES + FUEL_DEPOT_NAMES
 WORLD_GEN_SEED = 2024  # fixed seed for the static network layout, independent of the simulation's own seed
 
 
-def _generate_locations(names: List[str], commodities: List[str], seed: int = WORLD_GEN_SEED,
+def _generate_locations(names: List[str], commodities: Dict[str, Commodity], seed: int = WORLD_GEN_SEED,
                          consumed_stockpile_factor: float = 2.0) -> List[Location]:
     """
     Assign each location a handful of produced and consumed commodities
     (never every commodity, and never the same commodity in both roles --
     that keeps the "not everywhere trades everything" flavor at any scale),
     a starting stockpile of each, and per-location base prices scattered
-    +/-15% around each commodity's base price, using a dedicated RNG so
-    this doesn't consume from (or get disrupted by) the simulation's own
-    random stream. Names in FUEL_DEPOT_NAMES are the exception: they only
-    ever deal in Fuel, nothing else.
+    +/-15% around each commodity's own `Commodity.base_price`, using a
+    dedicated RNG so this doesn't consume from (or get disrupted by) the
+    simulation's own random stream. Names in FUEL_DEPOT_NAMES are the
+    exception: they only ever deal in Fuel, nothing else.
 
     `consumed_stockpile_factor` sets a consumed commodity's starting
     stockpile as a straight multiple of its minimum (2x by default, i.e.
     every location starts comfortably above the point where it would buy).
     """
     rng = random.Random(seed)
+    commodity_names = list(commodities)
     locations = []
     for name in names:
         if name in FUEL_DEPOT_NAMES:
@@ -91,13 +100,13 @@ def _generate_locations(names: List[str], commodities: List[str], seed: int = WO
                 stockpiles={},
                 min_stockpiles={},
                 base_prices={},
-                fuel_price=BASE_PRICES["Fuel"],
+                fuel_price=FUEL_BASE_PRICE,
                 terminal_types=frozenset({TerminalType.Port}),
             ))
             continue
 
-        produced = rng.sample(commodities, rng.randint(2, 4))
-        remaining = [c for c in commodities if c not in produced]
+        produced = rng.sample(commodity_names, rng.randint(2, 4))
+        remaining = [c for c in commodity_names if c not in produced]
         consumed = rng.sample(remaining, min(rng.randint(2, 4), len(remaining)))
 
         produced_commodities = {c: round(rng.uniform(3, 15), 2) for c in produced}
@@ -109,13 +118,13 @@ def _generate_locations(names: List[str], commodities: List[str], seed: int = WO
         for c, rate in produced_commodities.items():
             # 10-25 days of accumulated output as the starting/reference level.
             stockpiles[c] = round(rate * rng.uniform(10, 25), 2)
-            base_prices[c] = round(BASE_PRICES[c] * rng.uniform(0.85, 1.15), 2)
+            base_prices[c] = round(commodities[c].base_price * rng.uniform(0.85, 1.15), 2)
         for c, rate in consumed_commodities.items():
             # A 5-10 day buffer as the minimum, with the starting stockpile
             # set as a straight multiple of it (see consumed_stockpile_factor).
             min_stockpiles[c] = round(rate * rng.uniform(5, 10), 2)
             stockpiles[c] = round(min_stockpiles[c] * consumed_stockpile_factor, 2)
-            base_prices[c] = round(BASE_PRICES[c] * rng.uniform(0.85, 1.15), 2)
+            base_prices[c] = round(commodities[c].base_price * rng.uniform(0.85, 1.15), 2)
 
         # Every location has a Port, plus a random subset of the other
         # terminal kinds so the network has room to grow into land/air/rail
@@ -135,7 +144,7 @@ def _generate_locations(names: List[str], commodities: List[str], seed: int = WO
             stockpiles=stockpiles,
             min_stockpiles=min_stockpiles,
             base_prices=base_prices,
-            fuel_price=BASE_PRICES["Fuel"],
+            fuel_price=FUEL_BASE_PRICE,
             terminal_types=terminal_types,
         ))
     return locations

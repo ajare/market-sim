@@ -9,6 +9,7 @@ import csv
 from dataclasses import replace
 from typing import Dict, FrozenSet, List, Tuple
 
+from .commodity import Commodity, build_commodities
 from .location import Location, TerminalType
 from .routes import Route, RouteType
 from .transport import Transport, Ship, Train, Plane, SHIP_CLASSES
@@ -36,15 +37,22 @@ def _parse_float_map(value: str) -> Dict[str, float]:
     return numbers
 
 
-def load_commodities_csv(path: str) -> Tuple[List[str], Dict[str, float]]:
-    """Load commodity names + base prices from a CSV with columns: name,base_price."""
+def load_commodities_csv(path: str) -> Dict[str, Commodity]:
+    """
+    Load Commodities from a CSV with columns: name,base_price. Only
+    base_price is CSV-driven -- price_sensitivity/deficit_price_boost/
+    event_templates are filled in by build_commodities, which falls back
+    to DEFAULT_PRICE_SENSITIVITY/DEFAULT_DEFICIT_PRICE_BOOST and a generic
+    event four-pack for any name it has no hand-tuned entry for (see
+    commodity.py).
+    """
     names = []
     base_prices = {}
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             names.append(row["name"])
             base_prices[row["name"]] = float(row["base_price"])
-    return names, base_prices
+    return build_commodities(names, base_prices)
 
 
 def load_locations_csv(path: str) -> Tuple[List["Location"], Dict[str, Tuple[float, float]]]:

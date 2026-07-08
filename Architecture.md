@@ -54,7 +54,8 @@ world_data (Location, geography) -> routes (Route/RouteType) -> markets (Market)
 | Module | Responsibility |
 | --- | --- |
 | `location.py` | `Location`, `TerminalType` — a trading hub's produce/consume/stockpile model |
-| `world_data.py` | The commodity roster and procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `get_location`, `distance_between`, `travel_days_between`) |
+| `commodity.py` | `Commodity` — per-commodity base price/sensitivity/deficit-boost/event-templates, and `build_commodities()` |
+| `world_data.py` | The commodity roster (`COMMODITIES: Dict[str, Commodity]`) and procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `get_location`, `distance_between`, `travel_days_between`) |
 | `routes.py` | `Route`/`RouteType`, the procedurally generated route network (`ROUTES`, `get_route`) |
 | `pathfinding.py` | Dijkstra shortest-path routing over the Route network, restricted per-Transport |
 | `events.py` | `Event` base class and its four kinds: `MarketEvent`, `TransportEvent`, `CompanyEvent`, `LocationClosure` |
@@ -74,7 +75,7 @@ with console/CSV/JSON reporting.
 
 ### Mutable module-level world state
 
-`world_data.LOCATIONS`/`LOCATION_COORDINATES`/`COMMODITIES`/`BASE_PRICES` and
+`world_data.LOCATIONS`/`LOCATION_COORDINATES`/`COMMODITIES` and
 `routes.ROUTES` are reassigned wholesale when `cli.build_world()` builds a
 world from CSVs, or when tests monkeypatch coordinates for a fixture world.
 Any code that needs to observe such a reassignment must read the attribute
@@ -90,7 +91,7 @@ entry automatically.
 ## 3. Economic design: production, consumption, and stockpile-driven pricing
 
 This is the heart of the simulation's economics, implemented across
-`location.py` and `markets.py`.
+`location.py`, `commodity.py`, and `markets.py`.
 
 ### 3.1 A Location is a produce/consume/stockpile machine
 
@@ -173,9 +174,11 @@ def _stockpile_price(self) -> float:
         return self.base_price
     current = self.location.stockpiles.get(self.commodity_name, 0.0)
     deviation = max(-2.0, min(2.0, (reference - current) / reference))
-    sensitivity = PRICE_SENSITIVITY.get(self.commodity_name, DEFAULT_PRICE_SENSITIVITY)
+    commodity = world_data.COMMODITIES.get(self.commodity_name)
+    sensitivity = commodity.price_sensitivity if commodity is not None else DEFAULT_PRICE_SENSITIVITY
     if deviation > 0 and self.side == "sell":
-        sensitivity *= DEFICIT_PRICE_BOOST.get(self.commodity_name, DEFAULT_DEFICIT_PRICE_BOOST)
+        boost = commodity.deficit_price_boost if commodity is not None else DEFAULT_DEFICIT_PRICE_BOOST
+        sensitivity *= boost
     return max(0.5, self.base_price * (1 + sensitivity * deviation))
 ```
 
@@ -185,22 +188,43 @@ consumed one has been drawn down toward/past its minimum) and negative when
 it sits **above** the reference (a produced surplus is piling up unsold, or
 a consumed commodity has just been topped up). Price moves in the same
 direction as deviation, scaled by a per-commodity `sensitivity`
-(`PRICE_SENSITIVITY`, e.g. Crude Oil reacts harder than Gold) — so scarcity
-raises price and surplus lowers it, symmetric by default, clamped to a
-[-2, 2] deviation range and a $0.50 floor so a completely depleted or wildly
-oversupplied commodity can't blow up or invert.
+(`Commodity.price_sensitivity`, e.g. Crude Oil reacts harder than Gold) —
+so scarcity raises price and surplus lowers it, symmetric by default,
+clamped to a [-2, 2] deviation range and a $0.50 floor so a completely
+depleted or wildly oversupplied commodity can't blow up or invert. The
+`world_data.COMMODITIES.get(...)` lookup (rather than direct indexing)
+falls back to the `DEFAULT_PRICE_SENSITIVITY`/`DEFAULT_DEFICIT_PRICE_BOOST`
+constants for a commodity with no registered `Commodity` at all — e.g. a
+custom `--locations-csv` world referencing a name never registered via a
+matching `--commodities-csv` — so an unusual world configuration degrades
+gracefully rather than crashing every time this market's price is computed.
 
 **Deficit price boost.** On top of the symmetric formula, a location's
 BUY side — where a Captain *sells into* the location (`side == "sell"`,
 i.e. a consumed commodity) — can get an extra multiplier
-(`DEFICIT_PRICE_BOOST`) applied to sensitivity, but *only* while it's
-running low (`deviation > 0`). This lets a commodity's shortage premium
-climb harder than its glut discount eases off, deliberately pulling more
-Captains toward selling it in when a location badly needs it. Currently
-only Coffee is boosted (2x); the discount side and every other commodity
-stay symmetric. This is intentionally asymmetric and one-sided — it never
-touches the produced/BUY-from-location side, and never touches the surplus
-case.
+(`Commodity.deficit_price_boost`) applied to sensitivity, but *only* while
+it's running low (`deviation > 0`). This lets a commodity's shortage
+premium climb harder than its glut discount eases off, deliberately
+pulling more Captains toward selling it in when a location badly needs it.
+Every commodity gets some boost (1.2x-2.0x, Coffee highest); the
+surplus/glut side stays symmetric for all of them. This is intentionally
+asymmetric and one-sided — it never touches the produced/BUY-from-location
+side, and never touches the surplus case.
+
+**`Commodity` (`commodity.py`)** is what actually carries `price_sensitivity`/
+`deficit_price_boost` (and, see §7.1, `event_templates`) per commodity now —
+previously these lived in three separate dicts (`markets.PRICE_SENSITIVITY`,
+`markets.DEFICIT_PRICE_BOOST`, `events.EVENT_TEMPLATES`) all hand-keyed by
+the same commodity name. `world_data.COMMODITIES: Dict[str, Commodity]` is
+the single roster every one of those pieces of data now lives on, built by
+`commodity.build_commodities(names, base_prices)` — which fills in the
+ten default commodities' hand-tuned sensitivity/boost/event-template values
+(`commodity._PRICE_SENSITIVITY`/`_DEFICIT_PRICE_BOOST`/`_BESPOKE_EVENT_TEMPLATES`/
+`_GENERATED_EVENT_DRIVERS`), or the `DEFAULT_PRICE_SENSITIVITY`/
+`DEFAULT_DEFICIT_PRICE_BOOST` constants and a generic four-event pack
+(`_GENERIC_EVENT_DRIVERS`) for anything else, e.g. a custom
+`--commodities-csv` roster. Fuel is deliberately **not** a `Commodity` —
+see §3.4.
 
 That raw stockpile price is then combined with the active `MarketEvent`
 multipliers for the day (`price *= demand_mult / supply_mult` — see §7.1)
@@ -279,14 +303,16 @@ The per-day record dict includes `day`, `location`, `commodity`, `side`,
 
 ### 3.4 Fuel is deliberately outside this system
 
-Fuel is priced per-location (`Location.fuel_price`) but **never
-fluctuates** and is **never** part of the produce/consume/stockpile model
-at all — it isn't tracked as a stockpile, doesn't appear in
-`produced_commodities`/`consumed_commodities`, and its `Market` is always
-constructed with `fixed_price=True`. Every Location, including the three
-pure "fuel depot" locations (which trade nothing else), always has a
-buyable Fuel market. This mirrors the real intent: Fuel is an input every
-Transport needs, not something arbitraged for its own sake.
+Fuel is priced per-location (`Location.fuel_price`, seeded from
+`world_data.FUEL_BASE_PRICE`) but **never fluctuates** and is **never**
+part of the produce/consume/stockpile model at all — it isn't tracked as a
+stockpile, doesn't appear in `produced_commodities`/`consumed_commodities`,
+is **not** a `Commodity` (it has no entry in `world_data.COMMODITIES`), and
+its `Market` is always constructed with `fixed_price=True`. Every Location,
+including the three pure "fuel depot" locations (which trade nothing
+else), always has a buyable Fuel market. This mirrors the real intent:
+Fuel is an input every Transport needs, not something arbitraged for its
+own sake.
 
 ### 3.5 Procedural generation (`world_data._generate_locations`)
 
@@ -301,13 +327,13 @@ non-depot location:
   `consumed_commodities` (same rate range) — guaranteeing no overlap.
 - For each produced commodity: `stockpiles[c] = rate * U(10, 25)` (10-25
   days of accumulated output as the starting/reference level) and
-  `base_prices[c] = BASE_PRICES[c] * U(0.85, 1.15)`.
+  `base_prices[c] = COMMODITIES[c].base_price * U(0.85, 1.15)`.
 - For each consumed commodity: `min_stockpiles[c] = rate * U(5, 10)` (a
   5-10 day buffer) and `stockpiles[c] = min_stockpiles[c] *
   consumed_stockpile_factor` (default `2.0` — every location starts
   comfortably above the point where it would buy) and the same base-price
   randomization.
-- `fuel_price = BASE_PRICES["Fuel"]` — identical everywhere in the
+- `fuel_price = FUEL_BASE_PRICE` (`1.25`) — identical everywhere in the
   procedural world (still independently overridable per-location via a
   custom CSV).
 - Terminal types: always includes `Port`, plus 0-2 random other kinds,
@@ -556,15 +582,25 @@ matrix:
 
 |  | one commodity | every commodity |
 | --- | --- | --- |
-| **one location** | `EVENT_TEMPLATES[commodity]` (Local, rolled per-`Market` via `event_probability`) | `LOCATION_EVENT_TEMPLATES` (Location-wide, `location_event_probability`) |
-| **every location** | `EVENT_TEMPLATES[commodity]` (Global, `global_event_probability`) | `WORLD_EVENT_TEMPLATES` (Worldwide, `worldwide_event_probability`) |
+| **one location** | `Commodity.event_templates` (Local, rolled per-`Market` via `event_probability`) | `LOCATION_EVENT_TEMPLATES` (Location-wide, `location_event_probability`) |
+| **every location** | `Commodity.event_templates` (Global, `global_event_probability`) | `WORLD_EVENT_TEMPLATES` (Worldwide, `worldwide_event_probability`) |
 
-`EVENT_TEMPLATES` is commodity-specific (a heatwave affects oil demand
-differently than gold demand): the four original commodities (Crude Oil,
-Copper, Wheat, Gold, plus Fuel) have fully bespoke template lists; the six
-added later (Silver, Natural Gas, Coffee, Cotton, Iron Ore, Aluminum) use
-`_make_commodity_events` to generate a standard boom/disruption/glut/slump
-four-pack from short driver phrases, rather than hand-writing every line.
+`Commodity.event_templates` (`commodity.py`, populated by
+`build_commodities` — see §3.2) is commodity-specific (a heatwave affects
+oil demand differently than gold demand): the four original commodities
+(Crude Oil, Copper, Wheat, Gold) have fully bespoke template lists
+(`commodity._BESPOKE_EVENT_TEMPLATES`); six more (Silver, Natural Gas,
+Coffee, Cotton, Iron Ore, Aluminum) use `_make_commodity_events` with
+hand-picked driver phrases (`_GENERATED_EVENT_DRIVERS`) to generate a
+standard boom/disruption/glut/slump four-pack rather than hand-writing
+every line; anything else (e.g. a custom `--commodities-csv` commodity)
+gets the same four-pack generated from fully generic driver phrases
+(`_GENERIC_EVENT_DRIVERS`) instead of being left without any events at all.
+Both `Market._maybe_trigger_local_event` and `World._maybe_trigger_global_event`
+look up `world_data.COMMODITIES.get(commodity)` and skip the roll entirely
+(rather than crashing) if that commodity has no registered `Commodity` or
+no `event_templates` — the same graceful-degradation the pricing formula
+uses (§3.2).
 
 A Global or Worldwide event applies a **separate `MarketEvent` copy** to
 every affected Market (so each one ticks its own copy down independently),
@@ -822,11 +858,14 @@ generalized to build a whole world (or fleet) rather than a small
 hand-authored test one. Five independent pieces can each be swapped for a
 file-driven one:
 
-- **`load_commodities_csv`** (`name,base_price`) — a custom commodity
-  roster + base prices, used to regenerate the procedural world with a
-  different commodity set (`--locations-csv` and `--commodities-csv` are
-  mutually exclusive branches in `cli.build_world`; only one, if either, is
-  used per run).
+- **`load_commodities_csv`** (`name,base_price`) — returns a
+  `Dict[str, Commodity]` directly (built via `commodity.build_commodities`,
+  so every loaded name gets a hand-tuned or generic-fallback
+  `price_sensitivity`/`deficit_price_boost`/`event_templates` the same way
+  `world_data.COMMODITIES` does), used to regenerate the procedural world
+  with a different commodity set (`--locations-csv` and `--commodities-csv`
+  are mutually exclusive branches in `cli.build_world`; only one, if
+  either, is used per run).
 - **`load_locations_csv`** — columns
   `name,x,y,produced_commodities,consumed_commodities,stockpiles,min_stockpiles,base_prices,fuel_price,terminal_types`,
   where the five dict-shaped columns are semicolon-joined `"commodity:number"`
@@ -952,12 +991,15 @@ agent outcomes vary with that seed.
 
 ## 14. Where to extend things
 
-- **New commodity**: add to `world_data.COMMODITIES`/`BASE_PRICES`, and
-  either add a bespoke `EVENT_TEMPLATES` entry or let it fall back to
-  `DEFAULT_PRICE_SENSITIVITY`/`_make_commodity_events`-style generation.
-- **New pricing behavior for a specific commodity**: tune
-  `markets.PRICE_SENSITIVITY` or `markets.DEFICIT_PRICE_BOOST` per-commodity
-  rather than touching `_stockpile_price` itself.
+- **New commodity**: add its name/base price to `world_data.COMMODITIES`'s
+  `build_commodities(...)` call, and optionally a bespoke entry in
+  `commodity._PRICE_SENSITIVITY`/`_DEFICIT_PRICE_BOOST`/
+  `_BESPOKE_EVENT_TEMPLATES`/`_GENERATED_EVENT_DRIVERS` — or just leave it
+  out and let it fall back to `DEFAULT_PRICE_SENSITIVITY`/
+  `DEFAULT_DEFICIT_PRICE_BOOST`/a generic-driver event four-pack.
+- **New pricing behavior for a specific commodity**: tune that commodity's
+  entry in `commodity._PRICE_SENSITIVITY` or `commodity._DEFICIT_PRICE_BOOST`
+  rather than touching `Market._stockpile_price` itself.
 - **New Transport type**: subclass `Transport`, override
   `allowed_route_types()` if it's physically restricted, add it to
   `SHIP_CLASSES` if it's ship-like, and teach `csv_loaders._build_transport_from_csv`
@@ -976,3 +1018,214 @@ agent outcomes vary with that seed.
 - **New report/export format**: follow the existing `build_*_daily_reports`
   → `print_*`/`save_*_csv` pattern on `World`/`Faction`, which all already
   share the same "flat rows keyed by day" shape CSV/console output wants.
+
+## 15. Tuning reference: which variables change economic behavior
+
+This is a pure parameter-tuning reference — no code restructuring needed,
+just editing the constants/defaults below. Grouped by the effect you're
+after; current defaults noted in parentheses.
+
+### 15.1 How sharply prices react to scarcity/surplus
+
+- **`commodity._PRICE_SENSITIVITY`** (per-commodity, e.g. Crude Oil `0.6`,
+  Gold `0.25`, feeding `Commodity.price_sensitivity`) / **`commodity.DEFAULT_PRICE_SENSITIVITY`**
+  (`0.45`, the fallback `build_commodities` uses for anything not listed) —
+  the core lever in `Market._stockpile_price` (§3.2): how many percent a
+  commodity's price moves per 100% of deviation from its reference
+  stockpile. Raise a commodity's entry to make its price swing harder on
+  the same deficit/surplus (more volatile, more dramatic arbitrage
+  opportunities); lower it for a duller, more stable commodity.
+- **`commodity._DEFICIT_PRICE_BOOST`** (per-commodity, e.g. Coffee `2.0`,
+  Gold `1.2`, everything else `1.3`-`1.6`, feeding `Commodity.deficit_price_boost`)
+  / **`commodity.DEFAULT_DEFICIT_PRICE_BOOST`** (`1.4`, the fallback for a
+  commodity with no explicit entry) — an extra multiplier applied only on
+  the location's buy side (a Captain selling *in*) while it's running low,
+  on top of `price_sensitivity`. Every commodity currently has some boost;
+  push an entry above its neighbors for a commodity whose shortage premium
+  should climb harder than its glut discount eases off (pulls more
+  Captains toward selling it in during a squeeze); set an entry to `1.0`
+  to make that one commodity fully symmetric again.
+- **Deviation clamp and price floor** — hardcoded in
+  `Market._stockpile_price` as `max(-2.0, min(2.0, ...))` and
+  `max(0.5, ...)`. Widening the clamp lets a badly depleted/oversupplied
+  commodity's price swing further before it's capped; the floor stops price
+  from ever hitting zero or negative.
+- **Daily price noise** — `random.gauss(0, 0.01)` in
+  `Market.simulate_day`. Raise the standard deviation for a noisier,
+  less-predictable day-to-day price on top of the deterministic stockpile
+  formula; set to `0` for a fully deterministic price given the same
+  stockpile state.
+- **Captain's own price impact** — `Captain.price_impact` (default `0.01`,
+  a per-Captain constructor argument), used in `_apply_price_impact`
+  (`magnitude = price_impact * units / (units + 50)`). Higher values mean a
+  single large trade visibly moves the market on top of the stockpile
+  formula (faster-eroding arbitrage, more caution needed about trade size);
+  `0.0` makes a Captain a pure price-taker with no footprint at all.
+
+### 15.2 How big a stockpile locations start with, and how tight the buy/sell trigger is
+
+All of the below live in `world_data._generate_locations` and only affect
+the *procedurally generated* world — a custom `--locations-csv` sets these
+figures directly per location instead (§10).
+
+- **Production/consumption rate range** — `rng.uniform(3, 15)` (units/day)
+  for both produced and consumed commodities. Raising this raises how fast
+  stockpiles move every day, which (via `daily_update` and the reference
+  stockpile) raises how fast prices can swing day to day.
+- **`consumed_stockpile_factor`** (default `2.0`, a keyword argument on
+  `_generate_locations`) — a consumed commodity's starting stockpile as a
+  straight multiple of its minimum. Push this toward `1.0` for a world
+  where locations start much closer to running out (more immediate
+  buy-side arbitrage from day one); raise it well above `2.0` for a world
+  that takes longer to develop any deficits at all.
+- **Minimum-stockpile buffer** — `rng.uniform(5, 10)` (days of consumption)
+  used to compute `min_stockpiles[c] = rate * U(5, 10)`. A smaller range
+  means locations tolerate less buffer before wanting to buy (more
+  frequent, smaller-scale deficits); a larger range means slower, rarer,
+  but potentially larger deficits.
+- **Produced-commodity starting stockpile (its price reference)** —
+  `rng.uniform(10, 25)` (days of accumulated output) used for
+  `stockpiles[c] = rate * U(10, 25)`. Since this doubles as the frozen
+  price reference for a produced commodity (`_reference_stockpiles`),
+  raising it raises the "normal" level prices are measured against —
+  effectively how much surplus has to build up before its price starts
+  dropping noticeably.
+- **Base price randomization** — `rng.uniform(0.85, 1.15)` applied to
+  `commodities[c].base_price` when seeding a Location's own `base_prices`.
+  Widen this range for more price variation between locations trading the
+  same commodity at day one (bigger baseline arbitrage gaps before any
+  stockpile drift even happens).
+- **How many commodities each location deals in** —
+  `rng.randint(2, 4)` (independently for produced and consumed). More
+  commodities per location means more simultaneous trade opportunities
+  there but a thinner, more diffuse world; fewer means a sparser network
+  with more specialized locations.
+- **The `base_prices` dict passed to `commodity.build_commodities(...)`**
+  (in `world_data.COMMODITIES`'s own construction) — the actual reference
+  price per commodity world-wide. Changing these directly rescales a
+  commodity's absolute price level (and, since cargo cost scales with
+  price, how much capital a trade in it ties up) without touching how
+  *volatile* it is.
+
+### 15.3 How often random shocks happen, and how big they are
+
+All six probabilities below are `World.__init__` keyword arguments (see
+§9); `cli.py`'s default world passes them explicitly.
+
+| Probability | Default (`World`) | Default (`cli.py`) | Governs |
+| --- | --- | --- | --- |
+| `local_event_probability` | 0.08 | 0.08 | Local MarketEvent, per Market per day |
+| `global_event_probability` | 0.06 | 0.06 | Global commodity-wide MarketEvent |
+| `location_event_probability` | 0.04 | 0.04 | Location-wide MarketEvent |
+| `worldwide_event_probability` | 0.02 | 0.02 | Worldwide MarketEvent |
+| `location_closure_probability` | 0.01 | 0.015 | Whole-port LocationClosure |
+| `company_event_probability` | 0.05 | 0.05 | CompanyEvent, per plain Company per day |
+
+Raise any of these for a rowdier, shock-driven economy; lower them (or set
+to `0.0`) to isolate the underlying stockpile-driven pricing with minimal
+external noise — useful when tuning §15.1/§15.2 in isolation, since a
+MarketEvent's demand/supply multipliers otherwise stack on top of (and can
+mask) the stockpile formula's own effect.
+
+The *magnitude* of each shock lives in its template list -- per-commodity
+ones in `commodity.py`, commodity-agnostic ones in `events.py`:
+
+- **`Commodity.event_templates`** (`commodity.py`, see §3.2/§7.1) —
+  `demand_multiplier`/`supply_multiplier`/`duration_days` per named event,
+  feeding both Local and Global MarketEvents. `commodity._make_commodity_events`
+  generates a standard four-pack for any commodity without a fully bespoke
+  list; edit its multiplier constants (`1.3`/`0.65`/etc.) to change how
+  strong a "generic" boom/disruption/glut/slump is across the board, or add
+  a bespoke entry to `commodity._BESPOKE_EVENT_TEMPLATES` for a specific
+  commodity the way Crude Oil/Copper/Wheat/Gold already have.
+- **`LOCATION_EVENT_TEMPLATES`** / **`WORLD_EVENT_TEMPLATES`** (`events.py`) — the
+  commodity-agnostic Location-wide/Worldwide shock pool; same
+  multiplier/duration shape.
+- **`AGENT_EVENT_TEMPLATES`** — `magnitude`/`duration_days` per
+  TransportEvent kind (`delay` days, `cargo_loss`/`fuel_discount`/
+  `fixed_cost_discount` fractions, `cash_gain`/`cash_loss` dollar amounts).
+  Also gated by **`Captain.agent_event_probability`** (default `0.05`, a
+  per-Captain constructor argument) — raise it for a Captain that's
+  chronically unlucky/lucky relative to the fleet.
+- **`COMPANY_EVENT_TEMPLATES`** — `magnitude` dollar amounts per
+  CompanyEvent (`cash_gain`/`cash_loss`); all currently one-off
+  (`duration_days=1`).
+- **`LOCATION_CLOSURE_TEMPLATES`** — `duration_days` per closure reason
+  (4-10 days). Longer durations mean a bigger, rarer disruption to a
+  location's trade once one does trigger.
+
+### 15.4 Route economics: travel cost, time, and profitability threshold
+
+- **`Captain.min_daily_return_pct`** (default `0.02`, a per-Captain
+  constructor argument, varied per-ship in `cli.py`'s default fleet via
+  `0.012 + 0.002 * (i % 5)`) — the profitability bar a route must clear
+  (§6.2). Lower it for a more aggressive Captain that takes thinner
+  margins; raise it for one that only takes fat, obviously-profitable
+  trades. This is the single biggest lever on how much trading volume the
+  simulation generates overall.
+- **`Captain.reposition_return_multiplier`** (default `1.25`) — how much
+  stiffer the bar is for a speculative empty repositioning move (§6.2) vs.
+  a trade already in hand. Push it toward `1.0` to make Captains reposition
+  almost as readily as they trade normally; raise it to make repositioning
+  rare and only for very lopsided opportunities.
+- **Transport hardware** (`transport.py`, per-instance or via
+  `SHIP_CLASSES` presets) — `cargo_capacity` (how much capital/profit one
+  voyage can move), `speed_units_per_day` (travel time, and thus how long
+  capital and crew wages are tied up), `fuel_consumption_per_unit_distance`
+  / `reposition_fuel_consumption_per_distance` (fuel cost per trip, loaded
+  vs. empty), `fixed_shipment_cost` (a flat per-voyage tax that punishes
+  small/thin trades disproportionately), and `fuel_capacity` (how far a
+  Transport can go before needing an intermediate refueling stop). Add a
+  new named preset to `SHIP_CLASSES` to give a whole fleet a different
+  cost/speed/capacity profile without changing `Captain` at all.
+- **Crew wages** — `Crew.daily_wages` (default `0.0`) / `Sailor`'s default
+  (`20.0`), owed only while `InTransit` (§6.3). Raising wages makes long
+  voyages costlier per day of transit (favoring short, fast routes over
+  long, slow ones) and makes an underfunded Faction's ships go `Inactive`
+  sooner.
+
+### 15.5 Faction- and fleet-level economics
+
+- **`Company`/`SoloTrader`/`PirateBrigade` `starting_cash`** — how much
+  capital a fleet has to work with; a low starting pool means early trades
+  are capped by affordability rather than cargo capacity or route
+  economics.
+- **`PirateBrigade.raid_fraction`** (default `0.10`) — how much of a
+  non-pooling victim's cash is stolen per attack (§8.2); `Location.fence_fraction`
+  (default `0.5`, per-Location) — how much of a seized cargo's market value
+  a pirate actually recovers when fencing it (vary per-location for a
+  "lawless port fences for more" flavor).
+- **`PirateBrigade.max_carousing_to_attack`** / `carousing_cost_per_crew`
+  / `carousing_increase_per_day` / `max_carousing` — how often a pirate
+  crew is too distracted by shore leave to raid a co-located victim;
+  raising `max_carousing_to_attack` (or lowering the increase rate) makes
+  pirates attack more consistently.
+- **`PirateBrigade.laziness`** (default `1`) — how many days between
+  re-scans of where target Companies' ships are concentrated; higher
+  values make a brigade slower to notice a fleet has moved on but cheaper
+  to run.
+- **`PoliceFleet.patrol_interval_days`** (default `5`) / `num_police_ships`
+  (a `World.__init__` argument, default `3`) — since `PoliceFleet` presence
+  is what deters a `PirateBrigade` attack at a shared location
+  (`_police_present_at`), more ships or a shorter patrol interval indirectly
+  suppresses raiding economics without touching `PirateBrigade` itself.
+
+### 15.6 Geography (indirect economic effects via travel time/fuel cost)
+
+- **`world_data.WORLD_GEN_SEED`** (`2024`) — reseeds the *network's*
+  independent RNG streams (locations, coordinates, routes — see §13); the
+  network layout itself, not trading, changes with this.
+  **`World(seed=...)`** (`cli.py` passes `42`) separately reseeds the
+  simulation's own trading/event randomness — the one to change for a
+  different *run* of the same world.
+- **`world_data._generate_coordinates`'s `min_distance`** (default `200.0`)
+  — the minimum synthetic-map distance enforced between any two locations;
+  raising it spreads the network out (longer average routes, more fuel
+  cost and transit time per trade).
+- **`routes.ROUTE_TYPE_DISTANCE_SCALE`** (Air `1.0`, Sea `0.8`, Railroad
+  `0.5`) and the `max_route_distance` passed to `_generate_routes`/`cli.build_world`
+  (`exp-ui`'s `SimState.reset()` uses `1000`) — how far apart two locations
+  can be and still get a direct Route of a given type. A smaller cap (or a
+  smaller Railroad scale) prunes the network down to a denser web of
+  shorter hops, forcing more multi-hop Dijkstra routing and changing which
+  arbitrage pairs are even reachable directly.
