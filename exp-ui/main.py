@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 # cli.py / sim/ live one directory up from exp-ui/ -- must be on sys.path
-# before any exp-ui module (network_view, sim_state) imports from them.
+# before any exp-ui module (network_view, sim.state) imports from them.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import App, AppConfig
@@ -13,7 +13,7 @@ from panels.events_panel import EventsPanel
 from panels.faction_net_worth_panel import FactionNetWorthPanel
 from panels.fleet_panel import FleetPanel
 from panels.locations_panel import LocationsPanel
-from sim_state import SimState
+from sim.state import SimState
 
 
 def main() -> None:

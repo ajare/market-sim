@@ -17,7 +17,7 @@ from sim.pathfinding import path_node_sequence
 from sim.routes import ROUTE_TERMINAL_COMPATIBILITY, RouteType
 from sim.transport import TransportStatus
 from sim.world_data import LOCATION_COORDINATES, travel_days_between
-from sim_state import SimState
+from sim.state import SimState
 
 _ROUTE_COLORS = {
     RouteType.Sea: imgui.ImVec4(0.20, 0.55, 1.00, 1.00),

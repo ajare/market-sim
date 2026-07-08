@@ -3,7 +3,7 @@ from imgui_bundle import imgui, implot
 
 from app import Panel
 from sim.faction import Company, PirateBrigade, PoliceFleet, SoloTrader
-from sim_state import SimState
+from sim.state import SimState
 
 # Checked in this order since SoloTrader subclasses Company (see faction.py)
 # -- a plain isinstance(x, Company) check alone would misclassify every

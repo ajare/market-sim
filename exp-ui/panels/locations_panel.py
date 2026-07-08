@@ -1,7 +1,7 @@
 from imgui_bundle import imgui
 
 from app import Panel
-from sim_state import SimState
+from sim.state import SimState
 
 
 class LocationsPanel(Panel):

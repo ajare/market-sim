@@ -3,7 +3,7 @@ Per-(location, commodity, side) Market: buyer/seller generation and the
 day-to-day price-clearing (tatonnement) mechanism.
 """
 import random
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from .events import Buyer, Seller, MarketEvent, EVENT_TEMPLATES
 
@@ -89,6 +89,12 @@ class Market:
         self.fixed_price = fixed_price
         self.active_events: List[MarketEvent] = []
         self.history = []  # list of dicts, one per day
+        # The MarketEvent (if any) _maybe_trigger_local_event rolled on the
+        # most recent simulate_day() call -- None otherwise. Lets a caller
+        # (e.g. World.event_log) pick up just-triggered LOCAL events without
+        # re-deriving them from `active_events`, which also holds events
+        # rolled on earlier days that are still ticking down.
+        self.last_triggered_event: Optional[MarketEvent] = None
 
     def _current_multipliers(self):
         demand_mult = 1.0
@@ -142,6 +148,7 @@ class Market:
         return new_price, total_demand, total_supply, volume_traded
 
     def simulate_day(self, day: int, is_open: bool = True):
+        self.last_triggered_event = None
         if self.fixed_price:
             # No clearing, no events, no price movement -- just a flat daily
             # record so this market's history reads the same shape as every
@@ -189,6 +196,9 @@ class Market:
             return record
 
         triggered_event = self._maybe_trigger_local_event()
+        if triggered_event is not None:
+            triggered_event.day = day
+            self.last_triggered_event = triggered_event
         demand_mult, supply_mult = self._current_multipliers()
 
         new_price, total_demand, total_supply, volume_traded = self._clear_market(demand_mult, supply_mult)

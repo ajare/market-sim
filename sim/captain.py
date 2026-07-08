@@ -166,6 +166,12 @@ class Captain(Crew):
         # are applied the moment they're rolled; the two discount kinds stay
         # active here and tick down like MarketEvents do on a Market.
         self.active_agent_events: List[AgentEvent] = []
+        # Every AgentEvent ever rolled for this Captain, instantaneous or
+        # persisting alike, kept forever (unlike active_agent_events, which
+        # only tracks the still-ongoing discount kinds) -- lets a caller
+        # (e.g. World.event_log) see the full history of what happened to
+        # this agent, not just what's still in effect.
+        self.event_log: List[AgentEvent] = []
         self.grounded_days_remaining: int = 0  # extra days stuck at the dock
         self.agent_event_log: List[dict] = []  # every agent event that fired
 
@@ -461,6 +467,10 @@ class Captain(Crew):
         self._apply_agent_event(event, day)
 
     def _apply_agent_event(self, event: "AgentEvent", day: int):
+        event.started_day = day
+        event.day = day
+        event.subject = self.name
+        self.event_log.append(event)
         detail = ""
         if event.kind == "delay":
             days = int(event.magnitude)
@@ -482,7 +492,6 @@ class Captain(Crew):
             self.cash = max(0.0, self.cash - event.magnitude)
             detail = f"-${paid:,.2f} cash"
         elif event.kind in ("fuel_discount", "fixed_cost_discount"):
-            event.started_day = day
             self.active_agent_events.append(event)
             detail = f"{event.magnitude:.0%} off for {event.duration_days}d"
 

@@ -2,7 +2,7 @@ import numpy as np
 from imgui_bundle import imgui, implot
 
 from app import Panel
-from sim_state import SimState
+from sim.state import SimState
 
 # Matches network_view.py's _EVENT_SCOPE_COLORS, kept as its own constant
 # here rather than importing that (module-private) dict, since the two

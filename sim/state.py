@@ -3,14 +3,10 @@ from __future__ import annotations
 
 import contextlib
 import io
-import sys
 from collections import deque
-from pathlib import Path
+from typing import List
 
-# cli.py / sim/ live one directory up from exp-ui/.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from cli import build_world  # noqa: E402
+from .events import Event
 
 
 class SimState:
@@ -31,10 +27,24 @@ class SimState:
         self.day = 0
         self.world = None
         self.factions = []
+        # Every Event (MarketEvent/AgentEvent/LocationClosure) generated
+        # over the World's lifetime, in the order rolled -- just a reference
+        # to World.event_log, since World is what actually creates events
+        # and is already the single place that appends to it; re-bound in
+        # reset() whenever a new World replaces the old one.
+        self.events: List[Event] = []
         self.reset()
 
     def reset(self) -> None:
+        # Imported lazily (rather than at module load) since build_world
+        # lives in the root-level cli.py, which sits ABOVE sim/ (it imports
+        # from sim, not the other way around -- see CLAUDE.md's module
+        # map). Deferring the import here keeps sim/ import-safe on its own
+        # while still letting this UI-facing helper reuse cli.py's world
+        # assembly instead of duplicating it.
+        from cli import build_world
         self.world, self.factions = build_world(max_route_distance=1000)
+        self.events = self.world.event_log
         self.day = 0
         self.playing = False
         self._accumulator = 0.0

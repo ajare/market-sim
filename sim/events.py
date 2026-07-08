@@ -46,7 +46,39 @@ class Seller:
 # ---------------------------------------------------------------------------
 
 @dataclass
-class MarketEvent:
+class Event:
+    """
+    Base class for every random external shock in the simulation
+    (MarketEvent, AgentEvent, LocationClosure). Each subclass keeps its own
+    domain-specific fields (e.g. MarketEvent's `name`/`duration_days`) so
+    existing call sites and reporting code don't need to change, but every
+    subclass's __post_init__ populates this shared `type`/`subject`/`day`/
+    `duration`/`message` view -- `type` categorizes the event (e.g. "Global"/
+    "Local" for a MarketEvent, "Agent", "Closure"), `subject` is the
+    commodity/location/captain it's about, `day` is when it started,
+    `duration` is how many days it lasts, and `message` is the human-readable
+    description. The day-by-day `days_remaining` bookkeeping and `tick()`
+    are shared here too.
+    """
+    type: str = field(init=False, default="")
+    subject: str = field(init=False, default="")
+    message: str = field(init=False, default="")
+    duration: int = field(init=False, default=1)
+    day: Optional[int] = field(init=False, default=None)
+    days_remaining: int = field(init=False, default=0)
+
+    def tick(self) -> bool:
+        """Advance the event by one day. Returns True if still active."""
+        self.days_remaining -= 1
+        return self.days_remaining > 0
+
+    def __str__(self) -> str:
+        day_str = f"day {self.day}, " if self.day is not None else ""
+        return f"[{self.type}] {self.subject}: {self.message} ({day_str}{self.days_remaining}/{self.duration}d remaining)"
+
+
+@dataclass
+class MarketEvent(Event):
     """
     A random external shock that temporarily modifies demand and/or supply
     for a specific commodity. If `location` is None the event is GLOBAL and
@@ -58,15 +90,13 @@ class MarketEvent:
     supply_multiplier: float = 1.0
     duration_days: int = 1
     location: Optional[str] = None  # None = affects all locations
-    days_remaining: int = field(init=False)
 
     def __post_init__(self):
         self.days_remaining = self.duration_days
-
-    def tick(self) -> bool:
-        """Advance the event by one day. Returns True if still active."""
-        self.days_remaining -= 1
-        return self.days_remaining > 0
+        self.message = self.name
+        self.duration = self.duration_days
+        self.subject = self.location or ""
+        self.type = "Local" if self.location else "Global"
 
 
 # Event templates are commodity-specific since a heatwave affects oil demand
@@ -137,7 +167,7 @@ EVENT_TEMPLATES["Aluminum"] = _make_commodity_events(
 
 
 @dataclass
-class AgentEvent:
+class AgentEvent(Event):
     """
     A random shock that hits a specific AGENT (transport) rather than a market --
     mechanical trouble, piracy, paperwork delays, windfalls, and so on.
@@ -166,14 +196,13 @@ class AgentEvent:
     # Lets a caller (e.g. exp-ui's active-events display) report when a
     # still-ongoing event actually started, not just how much is left.
     started_day: Optional[int] = None
-    days_remaining: int = field(init=False)
 
     def __post_init__(self):
         self.days_remaining = self.duration_days
-
-    def tick(self) -> bool:
-        self.days_remaining -= 1
-        return self.days_remaining > 0
+        self.message = self.name
+        self.duration = self.duration_days
+        self.day = self.started_day
+        self.type = "Agent"
 
 
 # Instantaneous events ("delay", "cargo_loss", "cash_gain", "cash_loss") take
@@ -223,7 +252,7 @@ WORLD_EVENT_TEMPLATES: List[dict] = [
 
 
 @dataclass
-class LocationClosure:
+class LocationClosure(Event):
     """
     A binary shock, distinct from the demand/supply-multiplier events
     above: while active, a location's port is simply CLOSED -- no buying,
@@ -233,14 +262,12 @@ class LocationClosure:
     """
     name: str
     duration_days: int = 1
-    days_remaining: int = field(init=False)
 
     def __post_init__(self):
         self.days_remaining = self.duration_days
-
-    def tick(self) -> bool:
-        self.days_remaining -= 1
-        return self.days_remaining > 0
+        self.message = self.name
+        self.duration = self.duration_days
+        self.type = "Closure"
 
 
 # Reasons a whole port might shut down completely, regardless of commodity --

@@ -11,7 +11,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 
 from .events import (
-    MarketEvent, EVENT_TEMPLATES, LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES,
+    Event, MarketEvent, EVENT_TEMPLATES, LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES,
     LocationClosure, LOCATION_CLOSURE_TEMPLATES,
 )
 from .location import Location
@@ -129,6 +129,17 @@ class World:
         # ones long since expired) -- see active_named_events for the
         # currently-active-only view.
         self.broad_event_log: List[dict] = []
+        # Every Event object generated anywhere in the sim -- Global/
+        # Location/Worldwide/Local MarketEvents, AgentEvents (every
+        # Captain's, picked up from Captain.event_log), and
+        # LocationClosures -- appended in chronological order as they're
+        # rolled, kept forever. Unlike broad_event_log/closure_log/
+        # agent_event_log (plain dicts, one shape per event kind), this is
+        # the real Event objects, so a caller (e.g. SimState) gets one
+        # unified feed with a consistent type/subject/day/duration/message
+        # view (see Event) instead of stitching several report formats
+        # together itself.
+        self.event_log: List[Event] = []
         # A plain Faction has no direct_fleet, so World.run() simply skips
         # the coordinated-routing step for it (see below) and its ships act
         # entirely autonomously. Copied (not aliased) since the
@@ -224,9 +235,19 @@ class World:
             return None
         for market in affected_markets:
             market.apply_event(MarketEvent(**template, location=None))
+        tracking_event = MarketEvent(**template, location=None)
+        # Override MarketEvent.__post_init__'s auto-derived type/subject --
+        # it only sees `location` (None here), which can't tell a Global
+        # commodity-wide event apart from a Worldwide one; World knows the
+        # real scope at the point it triggers each kind, so it stamps the
+        # correct type/subject itself.
+        tracking_event.day = day
+        tracking_event.type = "Global"
+        tracking_event.subject = commodity
+        self.event_log.append(tracking_event)
         self.active_broad_events.append({
             "scope": "Global", "subject": commodity, "start_day": day,
-            "event": MarketEvent(**template, location=None),
+            "event": tracking_event,
         })
         self.broad_event_log.append({
             "scope": "Global", "subject": commodity, "name": template["name"],
@@ -246,9 +267,17 @@ class World:
             return None
         for market in affected_markets:
             market.apply_event(MarketEvent(**template, location=location))
+        tracking_event = MarketEvent(**template, location=location)
+        # See the matching comment in _maybe_trigger_global_event -- the
+        # auto-derived type would read "Local" here since `location` is set,
+        # same as a per-market local event; override it to the real scope.
+        tracking_event.day = day
+        tracking_event.type = "Location"
+        tracking_event.subject = location
+        self.event_log.append(tracking_event)
         self.active_broad_events.append({
             "scope": "Location", "subject": location, "start_day": day,
-            "event": MarketEvent(**template, location=location),
+            "event": tracking_event,
         })
         self.broad_event_log.append({
             "scope": "Location", "subject": location, "name": template["name"],
@@ -267,9 +296,17 @@ class World:
             return None
         for market in affected_markets:
             market.apply_event(MarketEvent(**template, location=None))
+        tracking_event = MarketEvent(**template, location=None)
+        # See the matching comment in _maybe_trigger_global_event -- the
+        # auto-derived type would read "Global" here too, since `location`
+        # is None either way; override it to the real scope.
+        tracking_event.day = day
+        tracking_event.type = "Worldwide"
+        tracking_event.subject = "Global"
+        self.event_log.append(tracking_event)
         self.active_broad_events.append({
             "scope": "Worldwide", "subject": "Global", "start_day": day,
-            "event": MarketEvent(**template, location=None),
+            "event": tracking_event,
         })
         self.broad_event_log.append({
             "scope": "Worldwide", "subject": "Global", "name": template["name"],
@@ -340,7 +377,10 @@ class World:
         location = random.choice(candidates)
         template = random.choice(LOCATION_CLOSURE_TEMPLATES)
         closure = LocationClosure(**template)
+        closure.day = day
+        closure.subject = location
         self.closed_locations[location] = closure
+        self.event_log.append(closure)
         self.closure_log.append({
             "day": day, "location": location, "event": closure.name,
             "duration_days": closure.duration_days,
@@ -409,6 +449,7 @@ class World:
             for trader in todays_order:
                 trader.act(day, self.buy_markets, self.sell_markets, commodities_present,
                            closed_locations, directed_routes.get(trader))
+                self.event_log.extend(e for e in trader.event_log if e.day == day)
                 if verbose:
                     for e in trader.agent_event_log:
                         if e["day"] == day:
@@ -459,6 +500,8 @@ class World:
             for market in self._all_markets():
                 record = market.simulate_day(day, is_open=self.is_location_open(market.location_name))
                 self.combined_history.append(record)
+                if market.last_triggered_event is not None:
+                    self.event_log.append(market.last_triggered_event)
                 if verbose:
                     if record["closed"]:
                         print(f"Day {day:3d} | {record['location']:<17} | {record['commodity']:<10} "
