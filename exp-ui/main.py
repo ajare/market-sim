@@ -13,6 +13,7 @@ from panels.events_panel import EventsPanel
 from panels.faction_net_worth_panel import FactionNetWorthPanel
 from panels.fleet_panel import FleetPanel
 from panels.locations_panel import LocationsPanel
+from panels.stockpile_history_panel import StockpileHistoryPanel
 from sim.state import SimState
 
 
@@ -27,6 +28,7 @@ def main() -> None:
     app.add_panel(FleetPanel(state))
     app.add_panel(EventsPanel(state))
     app.add_panel(CommodityHistoryPanel(state))
+    app.add_panel(StockpileHistoryPanel(state))
     app.add_panel(FactionNetWorthPanel(state))
     app.run()
 

@@ -225,13 +225,17 @@ def main(commodities_csv: Optional[str] = None, locations_csv: Optional[str] = N
     companies = [f for f in factions if not isinstance(f, PirateBrigade)]
     pirate_brigades = [f for f in factions if isinstance(f, PirateBrigade)]
 
-    print("=== Locations: what they buy and sell ===")
+    print("=== Locations: what they produce and consume ===")
     for loc in world_data.LOCATIONS:
-        buy_str = ", ".join(f"{c} @ {loc.buy_prices[c]:.2f}" for c in loc.buyable_commodities) or "(none)"
-        sell_str = ", ".join(f"{c} @ {loc.sell_prices[c]:.2f}" for c in loc.sellable_commodities) or "(none)"
+        buy_str = ", ".join(
+            f"{c} @ {world.buy_markets[(loc.name, c)].price:.2f}" for c in loc.produced_commodities
+        ) or "(none)"
+        sell_str = ", ".join(
+            f"{c} @ {world.sell_markets[(loc.name, c)].price:.2f}" for c in loc.consumed_commodities
+        ) or "(none)"
         print(f"  {loc.name}")
-        print(f"    Buy:  {buy_str}")
-        print(f"    Sell: {sell_str}")
+        print(f"    Produces (buyable):  {buy_str}")
+        print(f"    Consumes (sellable): {sell_str}")
 
     print("\n=== Fleet (by company) ===")
     for company in companies:
@@ -258,8 +262,10 @@ def main(commodities_csv: Optional[str] = None, locations_csv: Optional[str] = N
 
     print("\n=== Arbitrage routes (cheapest buy -> priciest sell, at day 0) ===")
     for commodity in world._commodities_present():
-        buy_options = [(loc.name, loc.buy_prices[commodity]) for loc in world_data.LOCATIONS if loc.can_buy(commodity)]
-        sell_options = [(loc.name, loc.sell_prices[commodity]) for loc in world_data.LOCATIONS if loc.can_sell(commodity)]
+        buy_options = [(loc.name, world.buy_markets[(loc.name, commodity)].price)
+                        for loc in world_data.LOCATIONS if loc.can_buy(commodity)]
+        sell_options = [(loc.name, world.sell_markets[(loc.name, commodity)].price)
+                         for loc in world_data.LOCATIONS if loc.can_sell(commodity)]
         if not buy_options or not sell_options:
             print(f"  {commodity}: not arbitrageable (missing a buy or sell side)")
             continue

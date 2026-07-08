@@ -61,15 +61,21 @@ ALL_LOCATION_NAMES: List[str] = LOCATION_NAMES + FUEL_DEPOT_NAMES
 WORLD_GEN_SEED = 2024  # fixed seed for the static network layout, independent of the simulation's own seed
 
 
-def _generate_locations(names: List[str], commodities: List[str], seed: int = WORLD_GEN_SEED) -> List[Location]:
+def _generate_locations(names: List[str], commodities: List[str], seed: int = WORLD_GEN_SEED,
+                         consumed_stockpile_factor: float = 2.0) -> List[Location]:
     """
-    Assign each location a handful of buyable and sellable commodities
-    (never every commodity -- that keeps the "not everywhere trades
-    everything" flavor at any scale) and per-location prices scattered
+    Assign each location a handful of produced and consumed commodities
+    (never every commodity, and never the same commodity in both roles --
+    that keeps the "not everywhere trades everything" flavor at any scale),
+    a starting stockpile of each, and per-location base prices scattered
     +/-15% around each commodity's base price, using a dedicated RNG so
     this doesn't consume from (or get disrupted by) the simulation's own
     random stream. Names in FUEL_DEPOT_NAMES are the exception: they only
-    ever buy/sell Fuel, nothing else.
+    ever deal in Fuel, nothing else.
+
+    `consumed_stockpile_factor` sets a consumed commodity's starting
+    stockpile as a straight multiple of its minimum (2x by default, i.e.
+    every location starts comfortably above the point where it would buy).
     """
     rng = random.Random(seed)
     locations = []
@@ -80,19 +86,37 @@ def _generate_locations(names: List[str], commodities: List[str], seed: int = WO
             # per-location randomization, unlike every other commodity.
             locations.append(Location(
                 name=name,
-                buyable_commodities=["Fuel"],
-                sellable_commodities=[],
-                buy_prices={"Fuel": BASE_PRICES["Fuel"]},
-                sell_prices={},
+                produced_commodities={},
+                consumed_commodities={},
+                stockpiles={},
+                min_stockpiles={},
+                base_prices={},
+                fuel_price=BASE_PRICES["Fuel"],
                 terminal_types=frozenset({TerminalType.Port}),
             ))
             continue
 
-        buyable = rng.sample(commodities, rng.randint(3, 5))
-        sellable = rng.sample(commodities, rng.randint(2, 4))
-        buy_prices = {c: round(BASE_PRICES[c] * rng.uniform(0.85, 1.15), 2) for c in buyable}
-        buy_prices["Fuel"] = BASE_PRICES["Fuel"]
-        sell_prices = {c: round(BASE_PRICES[c] * rng.uniform(0.85, 1.15), 2) for c in sellable}
+        produced = rng.sample(commodities, rng.randint(2, 4))
+        remaining = [c for c in commodities if c not in produced]
+        consumed = rng.sample(remaining, min(rng.randint(2, 4), len(remaining)))
+
+        produced_commodities = {c: round(rng.uniform(3, 15), 2) for c in produced}
+        consumed_commodities = {c: round(rng.uniform(3, 15), 2) for c in consumed}
+
+        stockpiles: Dict[str, float] = {}
+        min_stockpiles: Dict[str, float] = {}
+        base_prices: Dict[str, float] = {}
+        for c, rate in produced_commodities.items():
+            # 10-25 days of accumulated output as the starting/reference level.
+            stockpiles[c] = round(rate * rng.uniform(10, 25), 2)
+            base_prices[c] = round(BASE_PRICES[c] * rng.uniform(0.85, 1.15), 2)
+        for c, rate in consumed_commodities.items():
+            # A 5-10 day buffer as the minimum, with the starting stockpile
+            # set as a straight multiple of it (see consumed_stockpile_factor).
+            min_stockpiles[c] = round(rate * rng.uniform(5, 10), 2)
+            stockpiles[c] = round(min_stockpiles[c] * consumed_stockpile_factor, 2)
+            base_prices[c] = round(BASE_PRICES[c] * rng.uniform(0.85, 1.15), 2)
+
         # Every location has a Port, plus a random subset of the other
         # terminal kinds so the network has room to grow into land/air/rail
         # routes -- except Platform, which is exclusive (see
@@ -106,10 +130,12 @@ def _generate_locations(names: List[str], commodities: List[str], seed: int = WO
             terminal_types = frozenset([TerminalType.Port] + other_terminals)
         locations.append(Location(
             name=name,
-            buyable_commodities=buyable + ["Fuel"],
-            sellable_commodities=sellable,
-            buy_prices=buy_prices,
-            sell_prices=sell_prices,
+            produced_commodities=produced_commodities,
+            consumed_commodities=consumed_commodities,
+            stockpiles=stockpiles,
+            min_stockpiles=min_stockpiles,
+            base_prices=base_prices,
+            fuel_price=BASE_PRICES["Fuel"],
             terminal_types=terminal_types,
         ))
     return locations

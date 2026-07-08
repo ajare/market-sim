@@ -28,12 +28,12 @@ def _split_list(value: str) -> List[str]:
     return [v for v in value.split(";") if v] if value else []
 
 
-def _parse_price_map(value: str) -> Dict[str, float]:
-    prices = {}
+def _parse_float_map(value: str) -> Dict[str, float]:
+    numbers = {}
     for pair in _split_list(value):
-        commodity, price = pair.split(":")
-        prices[commodity] = float(price)
-    return prices
+        commodity, number = pair.split(":")
+        numbers[commodity] = float(number)
+    return numbers
 
 
 def load_commodities_csv(path: str) -> Tuple[List[str], Dict[str, float]]:
@@ -50,9 +50,10 @@ def load_commodities_csv(path: str) -> Tuple[List[str], Dict[str, float]]:
 def load_locations_csv(path: str) -> Tuple[List["Location"], Dict[str, Tuple[float, float]]]:
     """
     Load Locations + their (x, y) coordinates from a CSV with columns:
-    name,x,y,buyable_commodities,sellable_commodities,buy_prices,sell_prices,terminal_types
-    (semicolon-separated lists; buy_prices/sell_prices are "commodity:price"
-    pairs joined by semicolons; terminal_types are TerminalType member names).
+    name,x,y,produced_commodities,consumed_commodities,stockpiles,min_stockpiles,base_prices,fuel_price,terminal_types
+    (produced_commodities/consumed_commodities/stockpiles/min_stockpiles/
+    base_prices are semicolon-separated "commodity:number" pairs;
+    fuel_price is a bare float; terminal_types are TerminalType member names).
     """
     locations = []
     coordinates = {}
@@ -60,10 +61,12 @@ def load_locations_csv(path: str) -> Tuple[List["Location"], Dict[str, Tuple[flo
         for row in csv.DictReader(f):
             locations.append(Location(
                 name=row["name"],
-                buyable_commodities=_split_list(row["buyable_commodities"]),
-                sellable_commodities=_split_list(row["sellable_commodities"]),
-                buy_prices=_parse_price_map(row["buy_prices"]),
-                sell_prices=_parse_price_map(row["sell_prices"]),
+                produced_commodities=_parse_float_map(row["produced_commodities"]),
+                consumed_commodities=_parse_float_map(row["consumed_commodities"]),
+                stockpiles=_parse_float_map(row["stockpiles"]),
+                min_stockpiles=_parse_float_map(row["min_stockpiles"]),
+                base_prices=_parse_float_map(row["base_prices"]),
+                fuel_price=float(row["fuel_price"]),
                 terminal_types=frozenset(TerminalType[t] for t in _split_list(row["terminal_types"])),
             ))
             coordinates[row["name"]] = (float(row["x"]), float(row["y"]))

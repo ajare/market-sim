@@ -283,7 +283,7 @@ class NetworkBackground:
             closure = world.closed_locations[location.name]
             imgui.text_colored(_CLOSED_COLOR, f"CLOSED ({closure.name})")
         imgui.separator()
-        commodities = sorted(set(location.buyable_commodities) | set(location.sellable_commodities))
+        commodities = sorted(set(location.produced_commodities) | set(location.consumed_commodities))
         if commodities and imgui.begin_table("tooltip_prices", 3, imgui.TableFlags_.borders):
             imgui.table_setup_column("Commodity")
             imgui.table_setup_column("Buy Price")

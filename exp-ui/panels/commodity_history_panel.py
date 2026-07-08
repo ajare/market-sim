@@ -26,7 +26,7 @@ class CommodityHistoryPanel(Panel):
         self.num_days = 30
 
     def _commodities_at(self, location) -> list[str]:
-        return sorted(set(location.buyable_commodities) | set(location.sellable_commodities))
+        return sorted(set(location.produced_commodities) | set(location.consumed_commodities))
 
     def render(self) -> None:
         world = self.state.world

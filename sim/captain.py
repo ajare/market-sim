@@ -597,7 +597,7 @@ class Captain(Crew):
         if self.cargo is None:
             return
         market = sell_markets.get((self.location, self.cargo["commodity"]))
-        if market is None:
+        if market is None or not market.is_available:
             return  # can't offload here; keep carrying it until somewhere will take it
 
         sell_price = market.price
@@ -607,6 +607,7 @@ class Captain(Crew):
         self.cash += proceeds
         self.realized_profit += profit
         self._apply_price_impact(market, self.cargo["quantity"], direction="sell")
+        market.apply_trade(self.cargo["quantity"])
 
         self.trade_log.append({
             "day": day,
@@ -650,18 +651,19 @@ class Captain(Crew):
         best = None
         for commodity in commodities:
             buy_market = buy_markets.get((self.location, commodity))
-            if buy_market is None or buy_market.price <= 0:
+            if buy_market is None or not buy_market.is_available:
                 continue  # not buyable here
 
             sell_candidates = [
                 (loc, m) for (loc, com), m in sell_markets.items()
                 if com == commodity and loc != self.location and loc not in closed_locations
-                and (commodity, loc) not in exclude_routes
+                and (commodity, loc) not in exclude_routes and m.is_available
             ]
             if not sell_candidates:
                 continue  # nowhere open will take it
 
-            trial_quantity = min(self.transport.cargo_capacity, self.cash / buy_market.price)
+            trial_quantity = min(self.transport.cargo_capacity, self.cash / buy_market.price,
+                                  buy_market.available_quantity)
             if trial_quantity < 1:
                 continue
 
@@ -710,8 +712,11 @@ class Captain(Crew):
         sell_market = sell_markets.get((destination, commodity))
         if origin_market is None or sell_market is None:
             return
+        if not origin_market.is_available or not sell_market.is_available:
+            return
 
-        quantity = min(self.transport.cargo_capacity, self.cash / origin_market.price)
+        quantity = min(self.transport.cargo_capacity, self.cash / origin_market.price,
+                        origin_market.available_quantity)
         if quantity < 1:
             return
 
@@ -744,6 +749,7 @@ class Captain(Crew):
         self.total_fuel_units_consumed += leg1_fuel_units
         self.total_fixed_fees_spent += self.transport.fixed_shipment_cost
         self._apply_price_impact(origin_market, quantity, direction="buy")
+        origin_market.apply_trade(quantity)
         # Refueling at the origin draws down local fuel supply too, so it
         # pushes that location's fuel price up a little, just like buying
         # the cargo commodity does.
@@ -831,19 +837,18 @@ class Captain(Crew):
             buy_candidates = [
                 (loc, m) for (loc, com), m in buy_markets.items()
                 if com == commodity and loc != self.location and loc not in closed_locations
-                and self.transport.can_use_route(get_route(self.location, loc))
+                and self.transport.can_use_route(get_route(self.location, loc)) and m.is_available
             ]
             sell_candidates = [
                 (loc, m) for (loc, com), m in sell_markets.items()
-                if com == commodity and loc not in closed_locations
+                if com == commodity and loc not in closed_locations and m.is_available
             ]
             if not buy_candidates or not sell_candidates:
                 continue
 
             for target_loc, target_buy_market in buy_candidates:
-                if target_buy_market.price <= 0:
-                    continue
-                trial_quantity = min(self.transport.cargo_capacity, self.cash / target_buy_market.price)
+                trial_quantity = min(self.transport.cargo_capacity, self.cash / target_buy_market.price,
+                                      target_buy_market.available_quantity)
                 if trial_quantity < 1:
                     continue
 

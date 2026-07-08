@@ -7,40 +7,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
-@dataclass
-class Buyer:
-    """A market participant who wants to purchase units of a commodity."""
-    name: str
-    max_price: float          # highest price willing to pay per unit
-    base_demand: float        # baseline quantity desired per day
-    price_sensitivity: float  # how strongly demand falls as price rises
-
-    def quantity_demanded(self, price: float, demand_multiplier: float = 1.0) -> float:
-        """Demand falls off as price approaches/exceeds max_price."""
-        if price >= self.max_price:
-            return 0.0
-        price_ratio = price / self.max_price
-        raw_demand = self.base_demand * (1 - price_ratio) ** self.price_sensitivity
-        return max(0.0, raw_demand * demand_multiplier)
-
-
-@dataclass
-class Seller:
-    """A market participant who supplies units of a commodity."""
-    name: str
-    min_price: float          # lowest price willing to accept per unit
-    base_supply: float        # baseline quantity offered per day
-    price_sensitivity: float  # how strongly supply rises with price
-
-    def quantity_supplied(self, price: float, supply_multiplier: float = 1.0) -> float:
-        """Supply grows as price rises above min_price."""
-        if price <= self.min_price:
-            return 0.0
-        price_ratio = price / self.min_price
-        raw_supply = self.base_supply * (price_ratio - 1) ** 0.5 * self.price_sensitivity
-        return max(0.0, raw_supply * supply_multiplier)
-
-
 # ---------------------------------------------------------------------------
 # External Events
 # ---------------------------------------------------------------------------

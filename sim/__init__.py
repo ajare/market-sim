@@ -5,12 +5,12 @@ Multi-Location Commodity Market Simulation
 An agent-based simulation of commodity markets spread across several
 locations. See the individual submodules for the pieces:
 
-  - events:       Buyer/Seller, MarketEvent/AgentEvent/LocationClosure
+  - events:       MarketEvent/AgentEvent/LocationClosure
   - location:     Location, TerminalType
   - world_data:   the commodity roster, geography (LOCATIONS, get_location, distance_between, ...)
   - routes:       Route/RouteType, the route network
   - pathfinding:  Dijkstra shortest-path routing over the Route network
-  - markets:      Market, buyer/seller generation
+  - markets:      Market, stockpile-deviation pricing
   - transport:    Transport/Ship/Train/Plane, SHIP_CLASSES
   - crew:         Crew (base class for anyone who operates a Transport) and Sailor (a generic waged deckhand)
   - captain:      Captain (the trading agent, a Crew subclass)
@@ -48,7 +48,7 @@ from . import csv_loaders
 from . import world
 
 from .events import (
-    Buyer, Seller, MarketEvent, AgentEvent, LocationClosure,
+    MarketEvent, AgentEvent, LocationClosure,
     EVENT_TEMPLATES, AGENT_EVENT_TEMPLATES, LOCATION_EVENT_TEMPLATES,
     WORLD_EVENT_TEMPLATES, LOCATION_CLOSURE_TEMPLATES,
 )
@@ -64,7 +64,7 @@ from .routes import (
 )
 from .pathfinding import find_shortest_path, path_node_sequence
 from .markets import (
-    COMMODITY_PROFILES, DEFAULT_COMMODITY_PROFILE, generate_buyers_and_sellers, Market,
+    PRICE_SENSITIVITY, DEFAULT_PRICE_SENSITIVITY, Market,
 )
 from .transport import Transport, Ship, Train, Plane, SHIP_CLASSES, TransportStatus
 from .crew import Crew, Sailor

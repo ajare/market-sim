@@ -56,11 +56,15 @@ class TestFixtureLoading:
 
         alpha = by_name["Testport Alpha"]
         assert alpha.can_buy("Crude Oil")
-        assert alpha.can_sell("Crude Oil")
-        assert alpha.buy_prices["Fuel"] == 1.20
+        assert not alpha.can_sell("Crude Oil")  # Alpha PRODUCES Crude Oil, never consumes it
+        assert alpha.fuel_price == 1.20
         assert alpha.terminal_types == frozenset({TerminalType.Port})
 
+        beta = by_name["Testport Beta"]
+        assert not beta.can_sell("Wheat")  # starts above its min -- not running low yet
+
         delta = by_name["Testport Delta"]
+        assert delta.can_sell("Wheat")  # starts below its min -- running low, will buy
         assert delta.terminal_types == frozenset({TerminalType.Station})  # no Port -- land-only stop
 
     def test_routes_are_only_defined_where_terminals_are_compatible(self, fixture_world):
@@ -145,13 +149,13 @@ class TestFixtureLoading:
             "Crude Oil": 70.00, "Wheat": 6.00, "Gold": 2200.00, "Fuel": 1.20,
         }
 
-    def test_commodity_base_prices_match_location_buy_prices(self, fixture_world):
-        # Alpha's Crude Oil/Fuel buy prices were authored to match the
-        # commodities fixture's base prices, so the two CSVs stay consistent.
+    def test_commodity_base_prices_match_location_base_prices(self, fixture_world):
+        # Alpha's Crude Oil base price and fuel_price were authored to match
+        # the commodities fixture's base prices, so the two CSVs stay consistent.
         alpha = next(loc for loc in fixture_world["locations"] if loc.name == "Testport Alpha")
         base_prices = fixture_world["commodity_base_prices"]
-        assert alpha.buy_prices["Crude Oil"] == base_prices["Crude Oil"]
-        assert alpha.buy_prices["Fuel"] == base_prices["Fuel"]
+        assert alpha.base_prices["Crude Oil"] == base_prices["Crude Oil"]
+        assert alpha.fuel_price == base_prices["Fuel"]
 
 
 class TestPirateBrigadeShipsOnly:
@@ -198,8 +202,9 @@ class TestLocationPlatformIsExclusive:
 
     def _location(self, terminal_types):
         return Location(
-            name="Test Rig", buyable_commodities=[], sellable_commodities=[],
-            buy_prices={}, sell_prices={}, terminal_types=frozenset(terminal_types),
+            name="Test Rig", produced_commodities={}, consumed_commodities={},
+            stockpiles={}, min_stockpiles={}, base_prices={}, fuel_price=1.25,
+            terminal_types=frozenset(terminal_types),
         )
 
     def test_platform_alone_is_accepted(self):

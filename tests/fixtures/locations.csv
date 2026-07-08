@@ -1,5 +1,5 @@
-name,x,y,buyable_commodities,sellable_commodities,buy_prices,sell_prices,terminal_types
-Testport Alpha,0,0,Crude Oil;Fuel,Crude Oil,Crude Oil:70.00;Fuel:1.20,Crude Oil:75.00,Port
-Testport Beta,500,0,Wheat;Fuel,Wheat,Wheat:6.00;Fuel:1.30,Wheat:6.50,Port;Station
-Testport Gamma,250,400,Gold;Fuel,Gold,Gold:2200.00;Fuel:1.10,Gold:2300.00,Port;Airport
-Testport Delta,900,50,Wheat;Fuel,Wheat,Wheat:6.20;Fuel:1.25,Wheat:6.60,Station
+name,x,y,produced_commodities,consumed_commodities,stockpiles,min_stockpiles,base_prices,fuel_price,terminal_types
+Testport Alpha,0,0,Crude Oil:10,,Crude Oil:200,,Crude Oil:70.00,1.20,Port
+Testport Beta,500,0,,Wheat:8,Wheat:50,Wheat:40,Wheat:6.00,1.30,Port;Station
+Testport Gamma,250,400,Gold:2,,Gold:20,,Gold:2200.00,1.10,Port;Airport
+Testport Delta,900,50,,Wheat:8,Wheat:30,Wheat:40,Wheat:6.00,1.25,Station

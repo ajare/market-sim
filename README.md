@@ -64,12 +64,12 @@ world_data (Location, geography) -> routes (Route/RouteType) -> markets (Market)
 
 | Module | Responsibility |
 | --- | --- |
-| `events` | `Buyer`/`Seller`, `MarketEvent`/`AgentEvent`/`LocationClosure` |
+| `events` | `MarketEvent`/`AgentEvent`/`LocationClosure` |
 | `location` | `Location`, `TerminalType` |
 | `world_data` | commodity roster, geography (`LOCATIONS`, `get_location`, `distance_between`, ...) |
 | `routes` | `Route`/`RouteType`, the route network |
 | `pathfinding` | Dijkstra shortest-path routing over the route network |
-| `markets` | `Market`, buyer/seller generation |
+| `markets` | `Market`, stockpile-deviation pricing |
 | `transport` | `Transport`/`Ship`/`Train`/`Plane`, `SHIP_CLASSES` |
 | `crew` | `Crew` (base class for anyone operating a `Transport`) and `Sailor` (a generic waged deckhand) |
 | `captain` | `Captain` (the trading agent, a `Crew` subclass) |
@@ -83,10 +83,13 @@ procedurally or from CSVs and running it end to end.
 
 ### Key relationships
 
-- **Location / Route**: `Location` is a trading hub with per-commodity
-  buy/sell prices and a set of `TerminalType`s (Port/Station/Airport/
-  Platform). `Route` connects two locations with a typed mode (Sea/
-  Railroad/Air); a route only exists where both ends share a compatible
+- **Location / Route**: `Location` is a trading hub that produces some
+  commodities (added to its stockpile daily, sold off as surplus) and
+  consumes others (drawn from its stockpile daily, bought once it runs
+  below a minimum) -- price moves with how far the stockpile sits from
+  that reference level. It also carries a set of `TerminalType`s (Port/
+  Station/Airport/Platform). `Route` connects two locations with a typed
+  mode (Sea/Railroad/Air); a route only exists where both ends share a compatible
   terminal type. Both are generated procedurally from fixed seeds,
   independent of the simulation's own RNG, so the world stays
   reproducible across runs regardless of trading randomness.

@@ -15,7 +15,7 @@ from .events import (
     LocationClosure, LOCATION_CLOSURE_TEMPLATES,
 )
 from .location import Location
-from .markets import Market, generate_buyers_and_sellers
+from .markets import Market
 from .transport import Ship
 from .captain import Captain
 from .names import ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES
@@ -184,31 +184,35 @@ class World:
         self.agent_order_fn = agent_order_fn
 
         for location in locations:
-            for commodity in location.buyable_commodities:
-                base_price = location.buy_prices[commodity]
-                buyers, sellers = generate_buyers_and_sellers(commodity, base_price, location.name)
+            for commodity, rate in location.produced_commodities.items():
+                base_price = location.base_prices[commodity]
                 market = Market(
-                    commodity_name=commodity, location_name=location.name, buyers=buyers,
-                    sellers=sellers, starting_price=base_price, side="buy",
+                    commodity_name=commodity, location_name=location.name, location=location,
+                    starting_price=base_price, base_price=base_price, side="buy",
                     event_probability=local_event_probability,
-                    # Fuel is priced identically everywhere and never fluctuates
-                    # (see world_data._generate_locations, which gives every
-                    # location the same flat Fuel price) -- so its market never
-                    # clears/takes events, unlike every tradeable commodity.
-                    fixed_price=(commodity == "Fuel"),
                 )
                 self.buy_markets[(location.name, commodity)] = market
 
-            for commodity in location.sellable_commodities:
-                base_price = location.sell_prices[commodity]
-                buyers, sellers = generate_buyers_and_sellers(commodity, base_price, location.name)
+            for commodity, rate in location.consumed_commodities.items():
+                base_price = location.base_prices[commodity]
                 market = Market(
-                    commodity_name=commodity, location_name=location.name, buyers=buyers,
-                    sellers=sellers, starting_price=base_price, side="sell",
+                    commodity_name=commodity, location_name=location.name, location=location,
+                    starting_price=base_price, base_price=base_price, side="sell",
                     event_probability=local_event_probability,
-                    fixed_price=(commodity == "Fuel"),
                 )
                 self.sell_markets[(location.name, commodity)] = market
+
+            # Fuel is priced identically everywhere (per-location, but never
+            # fluctuating -- see world_data._generate_locations) and isn't
+            # part of the produce/consume stockpile system at all: every
+            # location can always buy fuel, regardless of what it produces
+            # or consumes.
+            fuel_market = Market(
+                commodity_name="Fuel", location_name=location.name, location=location,
+                starting_price=location.fuel_price, base_price=location.fuel_price, side="buy",
+                event_probability=local_event_probability, fixed_price=True,
+            )
+            self.buy_markets[(location.name, "Fuel")] = fuel_market
 
     def _all_markets(self) -> List[Market]:
         return list(self.buy_markets.values()) + list(self.sell_markets.values())
@@ -219,7 +223,7 @@ class World:
     def _commodities_present(self) -> List[str]:
         seen = []
         for location in self.locations:
-            for c in location.buyable_commodities + location.sellable_commodities:
+            for c in list(location.produced_commodities) + list(location.consumed_commodities):
                 if c not in seen:
                     seen.append(c)
         return seen
@@ -497,6 +501,14 @@ class World:
                 print(f"\n*** Day {day}: WORLDWIDE EVENT - {event_name} "
                       f"affecting all {num_markets} markets ***\n")
 
+            # Production/consumption are physical processes that keep
+            # happening regardless of whether the port can currently load or
+            # unload anyone -- only actual trading is blocked by a closure
+            # (see Market.simulate_day's is_open branch), so this runs
+            # unconditionally for every location, closed or not.
+            for location in self.locations:
+                location.daily_update()
+
             for market in self._all_markets():
                 record = market.simulate_day(day, is_open=self.is_location_open(market.location_name))
                 self.combined_history.append(record)
@@ -511,7 +523,7 @@ class World:
                         print(
                             f"Day {day:3d} | {record['location']:<17} | {record['commodity']:<10} "
                             f"({record['side']:<4}) | Price: {record['price']:8.2f} | "
-                            f"Demand: {record['demand']:6.1f} | Supply: {record['supply']:6.1f} | "
+                            f"Stockpile: {record['stockpile']:8.1f} (ref {record['reference_stockpile']:8.1f}) | "
                             f"Traded: {record['volume_traded']:6.1f}{event_note}"
                         )
 

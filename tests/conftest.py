@@ -25,12 +25,12 @@ def _split(value: str) -> List[str]:
     return [v for v in value.split(";") if v] if value else []
 
 
-def _price_map(value: str) -> Dict[str, float]:
-    prices = {}
+def _float_map(value: str) -> Dict[str, float]:
+    numbers = {}
     for pair in _split(value):
-        commodity, price = pair.split(":")
-        prices[commodity] = float(price)
-    return prices
+        commodity, number = pair.split(":")
+        numbers[commodity] = float(number)
+    return numbers
 
 
 def load_fixture_commodities(path: str = None) -> Tuple[List[str], Dict[str, float]]:
@@ -54,10 +54,12 @@ def load_fixture_locations(path: str = None) -> Tuple[List[Location], Dict[str, 
         for row in csv.DictReader(f):
             locations.append(Location(
                 name=row["name"],
-                buyable_commodities=_split(row["buyable_commodities"]),
-                sellable_commodities=_split(row["sellable_commodities"]),
-                buy_prices=_price_map(row["buy_prices"]),
-                sell_prices=_price_map(row["sell_prices"]),
+                produced_commodities=_float_map(row["produced_commodities"]),
+                consumed_commodities=_float_map(row["consumed_commodities"]),
+                stockpiles=_float_map(row["stockpiles"]),
+                min_stockpiles=_float_map(row["min_stockpiles"]),
+                base_prices=_float_map(row["base_prices"]),
+                fuel_price=float(row["fuel_price"]),
                 terminal_types=frozenset(TerminalType[t] for t in _split(row["terminal_types"])),
             ))
             coordinates[row["name"]] = (float(row["x"]), float(row["y"]))
