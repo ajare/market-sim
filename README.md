@@ -13,6 +13,14 @@ generated procedurally from fixed seeds, or built entirely from CSVs.
 
 ## Getting started
 
+Create the virtual environment and install dependencies (including
+`pytest`) from `pyproject.toml`:
+
+```
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[test]"
+```
+
 There's no global install -- use the project's venv interpreter directly:
 
 ```
