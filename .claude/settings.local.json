@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "PowerShell(python -m pytest test_sim.py -v)",
+      "PowerShell(New-Item *)",
+      "PowerShell(python -m pytest -v)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_json_report.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; \\(Get-Content sim.py | Measure-Object -Line\\).Lines)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_main_csv.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_main_csv.py\" 2>&1 | Select-Object -First 30)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_main_csv.py\" 2>&1 | Select-Object -Last 30)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_main_csv.py\" > out.txt 2>&1; Get-Content out.txt -Tail 40)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; \\(Get-Content out.txt -Raw\\).Length; $LASTEXITCODE)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; \\(Get-Content sim.py\\).Count)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; \\(Get-Content sim.py\\)[2533-1])",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_plain_faction.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_main_default.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_main_csv2.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_status_json.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_current_fuel.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_current_fuel2.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_current_fuel3.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_current_fuel4.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"import sim\" 2>&1)",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"import sim; print\\('ok'\\)\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_crew_requirement.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_crew_salary.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_wages_in_transit_only.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_inactive_status.py\")",
+      "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_inactive_status2.py\")",
+      "Bash(.venv/Scripts/python.exe -c \"import sim.world, cli\")",
+      "Bash(.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(.venv/Scripts/python.exe -c ' *)"
+    ]
+  }
+}

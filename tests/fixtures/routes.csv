@@ -1,0 +1,5 @@
+origin,destination,route_type
+Testport Alpha,Testport Beta,Sea
+Testport Alpha,Testport Gamma,Sea
+Testport Beta,Testport Gamma,Sea
+Testport Beta,Testport Delta,Railroad
