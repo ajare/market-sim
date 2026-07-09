@@ -2,6 +2,7 @@
 from cli import main, _parse_args
 
 if __name__ == "__main__":
+    # Parse
     args = _parse_args()
     main(
         commodities_csv=args.commodities_csv,
