@@ -36,7 +36,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   factions: [],
   day: 0,
   playing: false,
-  daysPerSecond: 2.0,
+  daysPerSecond: 1.0,
   version: 0,
 
   reset: () => {
