@@ -17,9 +17,10 @@ import { Captain, type Directive, type TradeDirective } from "./captain";
 import { Sailor } from "./crew";
 import { Ship, type Transport } from "./transport";
 import { getRoute } from "./routes";
-import { getLocation } from "./worldData";
+import { getLocation, distanceBetween } from "./worldData";
 import { Market, marketKey } from "./markets";
 import { randChoice } from "./simRandom";
+import type { Contract } from "./contracts";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
@@ -98,6 +99,7 @@ export class Faction {
     _sellMarkets: Map<string, Market>,
     _commodities: string[],
     _closedLocations: ReadonlySet<string> = new Set(),
+    _contracts: readonly Contract[] = [],
   ): Map<Captain, Directive> {
     return new Map();
   }
@@ -107,25 +109,47 @@ export class Faction {
  * A Faction that actively directs its fleet: coordinated routing (every
  * idle transport's best local route is scored and assigned in descending
  * daily-return order, spreading coverage rather than piling onto one
- * route) plus shared capital (inherited from Faction).
+ * route) plus shared capital (inherited from Faction). Also the only kind
+ * of Faction that claims and services supply Contracts (see
+ * `acceptsContracts`, overridden to false on SoloTrader) -- claimed
+ * contracts are serviced before any arbitrage routing is even considered.
  */
 export class Company extends Faction {
+  /** Contracts claimed by this Company -- see claimOpenContracts/serviceContracts. */
+  contracts: Contract[] = [];
+
+  get acceptsContracts(): boolean {
+    return true;
+  }
+
   directFleet(
-    _day: number,
+    day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     commodities: string[],
     closedLocations: ReadonlySet<string> = new Set(),
+    openContracts: readonly Contract[] = [],
   ): Map<Captain, Directive> {
     const idle = this.captains.filter((t) => t.isIdleInPort(closedLocations));
     if (idle.length === 0) return new Map();
 
+    const directives = new Map<Captain, Directive>();
+    const assigned = new Set<Captain>();
+
+    if (this.acceptsContracts) {
+      this.claimOpenContracts(openContracts);
+      this.serviceContracts(day, idle, assigned, directives, buyMarkets, closedLocations);
+    }
+
+    const arbitrageIdle = idle.filter((t) => !assigned.has(t));
+    if (arbitrageIdle.length === 0) return directives;
+
     const candidates: Array<[Captain, TradeDirective]> = [];
-    for (const trader of idle) {
+    for (const trader of arbitrageIdle) {
       const best = trader.findBestLocalRoute(buyMarkets, sellMarkets, commodities, closedLocations);
       if (best !== null) candidates.push([trader, best]);
     }
-    if (candidates.length === 0) return new Map();
+    if (candidates.length === 0) return directives;
 
     candidates.sort((a, b) => b[1].dailyReturnPct - a[1].dailyReturnPct);
 
@@ -135,7 +159,6 @@ export class Company extends Faction {
     // every route at a single ship. The first ship onto a route is always
     // let through regardless of deficit size, matching the old one-per-day
     // fallback for routes with no measurable deficit (e.g. fuel depots).
-    const directives = new Map<Captain, Directive>();
     const claimedQuantity = new Map<string, number>();
     const fullRoutes = new Set<string>();
     for (let [trader, best] of candidates) {
@@ -160,6 +183,76 @@ export class Company extends Faction {
     return directives;
   }
 
+  /**
+   * Claim any still-unclaimed Contract, capped at roughly one contract's
+   * worth of dedicated capacity per ship (`contracts.length < captains.length`)
+   * so a single Company (especially whichever happens to act first each day)
+   * can't monopolize every contract in the world -- leaving the rest for
+   * other Companies to pick up.
+   */
+  private claimOpenContracts(openContracts: readonly Contract[]): void {
+    for (const contract of openContracts) {
+      if (this.contracts.length >= this.captains.length) break;
+      if (contract.company === null) {
+        contract.company = this;
+        this.contracts.push(contract);
+      }
+    }
+  }
+
+  /**
+   * Assign idle captains to due, not-already-in-flight contracts before any
+   * arbitrage routing runs. Prefers a captain already sitting at a valid
+   * producer (immediate CONTRACT_DELIVER); otherwise repositions the nearest
+   * available idle captain toward the nearest valid producer, to be handed
+   * the delivery once it arrives (a future day's directFleet call will find
+   * it idle-at-producer and take the first branch).
+   */
+  private serviceContracts(
+    day: number,
+    idle: Captain[],
+    assigned: Set<Captain>,
+    directives: Map<Captain, Directive>,
+    buyMarkets: Map<string, Market>,
+    closedLocations: ReadonlySet<string>,
+  ): void {
+    for (const contract of this.contracts) {
+      if (assigned.size >= idle.length) break;
+      if (contract.inFlightCaptain !== null) continue;
+      const due = contract.lastDeliveryDay === null || day - contract.lastDeliveryDay >= contract.intervalDays;
+      if (!due) continue;
+
+      const readyCaptain = idle.find((c) => {
+        if (assigned.has(c)) return false;
+        const market = buyMarkets.get(marketKey(c.location, contract.commodity));
+        return market !== undefined && market.isAvailable;
+      });
+      if (readyCaptain !== undefined) {
+        directives.set(readyCaptain, { action: "CONTRACT_DELIVER", contract });
+        assigned.add(readyCaptain);
+        continue;
+      }
+
+      let best: { captain: Captain; destination: string; distance: number } | null = null;
+      for (const captain of idle) {
+        if (assigned.has(captain)) continue;
+        for (const market of buyMarkets.values()) {
+          if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
+          if (closedLocations.has(market.locationName)) continue;
+          if (!captain.transport!.canUseRoute(getRoute(captain.location, market.locationName))) continue;
+          const dist = distanceBetween(captain.location, market.locationName);
+          if (best === null || dist < best.distance) {
+            best = { captain, destination: market.locationName, distance: dist };
+          }
+        }
+      }
+      if (best !== null) {
+        directives.set(best.captain, { action: "REPOSITION", destination: best.destination });
+        assigned.add(best.captain);
+      }
+    }
+  }
+
   /** Deficit still open at a destination for a commodity -- floors at 0 so a destination already at/above its minimum doesn't block the first ship either. */
   private remainingDemand(commodity: string, destination: string): number {
     const location = getLocation(destination);
@@ -172,10 +265,16 @@ export class Company extends Faction {
 /**
  * A Company that still gets coordinated routing but does NOT pool its
  * fleet's cash into one shared balance -- each captain keeps their own
- * private balance.
+ * private balance. Also opts out of the Contract system entirely: Locations
+ * only offer contracts to (and SoloTrader never claims from) pooled
+ * Companies.
  */
 export class SoloTrader extends Company {
   override get poolsCash(): boolean {
+    return false;
+  }
+
+  override get acceptsContracts(): boolean {
     return false;
   }
 }
@@ -332,6 +431,7 @@ export class PirateBrigade extends Faction {
     sellMarkets: Map<string, Market>,
     _commodities: string[],
     closedLocations: ReadonlySet<string> = new Set(),
+    _contracts: readonly Contract[] = [],
   ): Map<Captain, Directive> {
     for (const captain of this.captains) {
       if (captain.status === "AtLocation") this.applyDailyCarousing(captain);
@@ -418,6 +518,7 @@ export class PoliceFleet extends Faction {
     sellMarkets: Map<string, Market>,
     _commodities: string[],
     closedLocations: ReadonlySet<string> = new Set(),
+    _contracts: readonly Contract[] = [],
   ): Map<Captain, Directive> {
     const allLocations = new Set<string>();
     for (const m of buyMarkets.values()) allLocations.add(m.locationName);

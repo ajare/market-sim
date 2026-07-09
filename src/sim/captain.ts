@@ -14,6 +14,7 @@ import { getRoute, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randRandom, randChoice } from "./simRandom";
+import type { Contract } from "./contracts";
 
 export interface CargoState {
   commodity: string;
@@ -29,6 +30,8 @@ export interface CargoState {
   fuelCostTotal: number;
   totalCost: number;
   departureDay: number;
+  /** Set when this cargo is being delivered against a supply Contract rather than sold on the open market -- see Captain.fulfillContract. */
+  contract: Contract | null;
 }
 
 export type TradeAction = "BUY" | "SELL" | "REFUEL" | "REPOSITION" | "ATTACK";
@@ -96,10 +99,20 @@ export interface RepositionDirective {
   destination: string;
 }
 
-export type Directive = TradeDirective | RepositionDirective;
+/** Directs an idle captain, already sitting at a valid producer, to buy and ship a due Contract's delivery. */
+export interface ContractDeliveryDirective {
+  action: "CONTRACT_DELIVER";
+  contract: Contract;
+}
+
+export type Directive = TradeDirective | RepositionDirective | ContractDeliveryDirective;
 
 function isRepositionDirective(d: Directive): d is RepositionDirective {
   return "action" in d && d.action === "REPOSITION";
+}
+
+function isContractDeliveryDirective(d: Directive): d is ContractDeliveryDirective {
+  return "action" in d && d.action === "CONTRACT_DELIVER";
 }
 
 function fmt1(n: number): string {
@@ -344,6 +357,8 @@ export class Captain extends Crew {
       if (directedRoute !== null) {
         if (isRepositionDirective(directedRoute)) {
           this.executeDirectedReposition(directedRoute.destination, day, buyMarkets);
+        } else if (isContractDeliveryDirective(directedRoute)) {
+          this.executeContractDelivery(directedRoute.contract, day, buyMarkets);
         } else {
           this.executeLocalRoute(directedRoute, day, buyMarkets, sellMarkets);
         }
@@ -478,6 +493,10 @@ export class Captain extends Crew {
 
   private sellCargoIfPossible(day: number, sellMarkets: Map<string, Market>): void {
     if (this.cargo === null) return;
+    if (this.cargo.contract !== null) {
+      this.fulfillContract(day, sellMarkets);
+      return;
+    }
     const market = sellMarkets.get(marketKey(this.location, this.cargo.commodity));
     if (market === undefined || !market.isAvailable) return;
 
@@ -504,6 +523,50 @@ export class Captain extends Crew {
       fuelPrice: round2(this.cargo.fuelPricePaid),
       fuelUnitsConsumed: round2(this.cargo.fuelUnitsConsumed),
       fuelCostPaid: round2(this.cargo.fuelCostTotal),
+      profit: round2(profit),
+    });
+    this.cargo = null;
+  }
+
+  /**
+   * Contract payout: the Location reimburses the stock cost and fuel cost
+   * already paid up front, plus a fixed delivery fee -- unlike a market SELL,
+   * the price paid has nothing to do with the destination market's price (the
+   * Location's cash pool is unlimited), and delivering the stock doesn't move
+   * the market price the way a normal trade would.
+   */
+  private fulfillContract(day: number, sellMarkets: Map<string, Market>): void {
+    const cargo = this.cargo!;
+    const contract = cargo.contract!;
+    if (this.location !== contract.location) return;
+
+    const stockCost = cargo.unitCost * cargo.quantity;
+    const reimbursement = stockCost + cargo.fuelCostTotal;
+    const proceeds = reimbursement + contract.deliveryFee;
+    const profit = proceeds - cargo.totalCost;
+
+    this.cash += proceeds;
+    this.realizedProfit += profit;
+    contract.lastDeliveryDay = day;
+    contract.inFlightCaptain = null;
+
+    const market = sellMarkets.get(marketKey(this.location, cargo.commodity));
+    if (market !== undefined) market.applyTrade(cargo.quantity);
+
+    this.tradeLog.push({
+      day,
+      action: "SELL",
+      commodity: cargo.commodity,
+      location: this.location,
+      destination: null,
+      quantity: round2(cargo.quantity),
+      price: null,
+      distance: cargo.distance,
+      routeType: cargo.routeType,
+      travelDays: cargo.travelDays,
+      fuelPrice: round2(cargo.fuelPricePaid),
+      fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
+      fuelCostPaid: round2(cargo.fuelCostTotal),
       profit: round2(profit),
     });
     this.cargo = null;
@@ -623,6 +686,7 @@ export class Captain extends Crew {
       fuelCostTotal: leg1FuelCost,
       totalCost: upfrontCost,
       departureDay: day,
+      contract: null,
     };
     this.status = "InTransit";
     this.transport!.refuel(leg1FuelUnits);
@@ -645,6 +709,103 @@ export class Captain extends Crew {
       distance: econ.distance,
       routeType: econ.routeType,
       travelDays: econ.travelDays,
+      fuelPrice: round2(fuelPrice),
+      fuelUnitsConsumed: round2(leg1FuelUnits),
+      fuelCostPaid: round2(leg1FuelCost),
+      profit: null,
+    });
+  }
+
+  /**
+   * Buy at the current (producer) location and depart toward the contract's
+   * Location, marking the cargo as contract-bound so fulfillContract pays it
+   * out on arrival instead of selling at the destination's market price.
+   * Unlike executeLocalRoute, there's no profitability gate: a due Contract
+   * is an obligation the Company committed to, not an opportunistic trade --
+   * matching Company.directFleet prioritizing contracts over arbitrage.
+   */
+  private executeContractDelivery(contract: Contract, day: number, buyMarkets: Map<string, Market>): void {
+    const originMarket = buyMarkets.get(marketKey(this.location, contract.commodity));
+    if (originMarket === undefined || !originMarket.isAvailable) return;
+
+    const quantity = Math.min(
+      this.transport!.cargoCapacity,
+      contract.quantityPerDelivery,
+      originMarket.availableQuantity,
+      this.cash / originMarket.price,
+    );
+    if (quantity < 1) return;
+
+    const path = findShortestPath(this.location, contract.location, (r) => this.transport!.canUseRoute(r));
+    if (path === null || path.length === 0) return;
+
+    const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+    const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
+
+    const firstLeg = path[0];
+    const originLocation = this.location;
+    const leg1FuelUnits = firstLeg.distance * this.currentFuelConsumptionRate() * quantity;
+    const leg1FuelCost = leg1FuelUnits * fuelPrice;
+    const upfrontCost = quantity * originMarket.price + leg1FuelCost + this.currentFixedShipmentCost();
+    if (upfrontCost > this.cash) return;
+
+    const buyPrice = originMarket.price;
+    this.cash -= upfrontCost;
+    this.totalFuelSpent += leg1FuelCost;
+    this.totalFuelUnitsConsumed += leg1FuelUnits;
+    this.totalFixedFeesSpent += this.transport!.fixedShipmentCost;
+    this.applyPriceImpact(originMarket, quantity, "buy");
+    originMarket.applyTrade(quantity);
+    if (fuelMarket !== undefined) this.applyPriceImpact(fuelMarket, leg1FuelUnits, "buy");
+
+    const nodes = pathNodeSequence(originLocation, path);
+    let totalDistance = 0.0;
+    let totalDays = 0;
+    const routeTypes: RouteType[] = [];
+    for (let i = 0; i < path.length; i++) {
+      totalDistance += path[i].distance;
+      totalDays += travelDaysBetween(nodes[i], nodes[i + 1], this.transport!.speedUnitsPerDay);
+      if (!routeTypes.includes(path[i].routeType)) routeTypes.push(path[i].routeType);
+    }
+
+    contract.inFlightCaptain = this;
+    this.cargo = {
+      commodity: contract.commodity,
+      quantity,
+      unitCost: buyPrice,
+      origin: originLocation,
+      destination: contract.location,
+      distance: totalDistance,
+      routeType: routeTypes.join("+"),
+      travelDays: totalDays,
+      fuelPricePaid: fuelPrice,
+      fuelUnitsConsumed: leg1FuelUnits,
+      fuelCostTotal: leg1FuelCost,
+      totalCost: upfrontCost,
+      departureDay: day,
+      contract,
+    };
+    this.status = "InTransit";
+    this.transport!.refuel(leg1FuelUnits);
+
+    this.currentNode = originLocation;
+    this.path = path.slice(1);
+    const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
+    this.destination = nextNode;
+    this.daysRemaining = travelDaysBetween(originLocation, nextNode, this.transport!.speedUnitsPerDay);
+    this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
+
+    this.tradeLog.push({
+      day,
+      action: "BUY",
+      commodity: contract.commodity,
+      location: originLocation,
+      destination: contract.location,
+      quantity: round2(quantity),
+      price: round2(buyPrice),
+      distance: totalDistance,
+      routeType: routeTypes.join("+"),
+      travelDays: totalDays,
       fuelPrice: round2(fuelPrice),
       fuelUnitsConsumed: round2(leg1FuelUnits),
       fuelCostPaid: round2(leg1FuelCost),

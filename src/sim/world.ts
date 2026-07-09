@@ -21,6 +21,7 @@ import { ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES } from "./names";
 import { Faction, Company, PirateBrigade, PoliceFleet } from "./faction";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randRandom, randChoice, randInt, randShuffle, seedSimRandom } from "./simRandom";
+import { generateContracts, type Contract } from "./contracts";
 
 export type AgentOrderFn = (traders: Captain[], day: number) => Captain[];
 
@@ -73,6 +74,8 @@ export interface WorldInit {
   factions?: Faction[];
   agentOrderFn?: AgentOrderFn;
   numPoliceShips?: number;
+  /** Supply contracts on offer; defaults to one per (Location, consumed commodity) pair via generateContracts. */
+  contracts?: Contract[];
 }
 
 export class World {
@@ -94,6 +97,7 @@ export class World {
   policeFleet: PoliceFleet | null;
   captains: Captain[];
   agentOrderFn: AgentOrderFn;
+  contracts: Contract[];
   private nextDay = 1;
 
   constructor(init: WorldInit) {
@@ -106,6 +110,7 @@ export class World {
     primeRouteGraphCache();
 
     this.locations = init.locations;
+    this.contracts = init.contracts ?? generateContracts(init.locations);
     this.globalEventProbability = init.globalEventProbability ?? 0.06;
     this.locationEventProbability = init.locationEventProbability ?? 0.04;
     this.worldwideEventProbability = init.worldwideEventProbability ?? 0.02;
@@ -338,7 +343,9 @@ export class World {
     const closedLocations = new Set(this.closedLocations.keys());
     const directedRoutes = new Map<Captain, Directive>();
     for (const faction of this.factions) {
-      const directives = faction.directFleet(day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations);
+      const directives = faction.directFleet(
+        day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations, this.contracts,
+      );
       for (const [captain, directive] of directives) directedRoutes.set(captain, directive);
     }
 
