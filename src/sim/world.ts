@@ -91,7 +91,7 @@ export class World {
   broadEventLog: BroadEventLogEntry[] = [];
   eventLog: Event[] = [];
   factions: Faction[];
-  policeFleet: PoliceFleet;
+  policeFleet: PoliceFleet | null;
   captains: Captain[];
   agentOrderFn: AgentOrderFn;
   private nextDay = 1;
@@ -115,23 +115,27 @@ export class World {
 
     this.factions = init.factions ? [...init.factions] : [];
 
-    const policeCrew: Array<[Ship, Captain, string]> = [];
     const numPoliceShips = init.numPoliceShips ?? 3;
-    for (let i = 0; i < numPoliceShips; i++) {
-      const homeLocation = randChoice(init.locations).name;
-      const ship = new Ship({ name: `Police Ship ${i + 1}`, crewRequirement: randInt(1, 5) });
-      const captainName = `${randChoice(ENGLISH_FIRST_NAMES)} ${randChoice(ENGLISH_LAST_NAMES)}`;
-      const captain = new Captain(captainName, homeLocation);
-      policeCrew.push([ship, captain, homeLocation]);
-    }
-    this.policeFleet = new PoliceFleet(
-      "Coast Guard",
-      policeCrew,
-      this.factions.filter((f): f is PirateBrigade => f instanceof PirateBrigade),
-    );
-    this.factions.push(this.policeFleet);
-    for (const faction of this.factions) {
-      if (faction instanceof PirateBrigade) faction.policeFleets.push(this.policeFleet);
+    if (numPoliceShips > 0) {
+      const policeCrew: Array<[Ship, Captain, string]> = [];
+      for (let i = 0; i < numPoliceShips; i++) {
+        const homeLocation = randChoice(init.locations).name;
+        const ship = new Ship({ name: `Police Ship ${i + 1}`, crewRequirement: randInt(1, 5) });
+        const captainName = `${randChoice(ENGLISH_FIRST_NAMES)} ${randChoice(ENGLISH_LAST_NAMES)}`;
+        const captain = new Captain(captainName, homeLocation);
+        policeCrew.push([ship, captain, homeLocation]);
+      }
+      this.policeFleet = new PoliceFleet(
+        "Coast Guard",
+        policeCrew,
+        this.factions.filter((f): f is PirateBrigade => f instanceof PirateBrigade),
+      );
+      this.factions.push(this.policeFleet);
+      for (const faction of this.factions) {
+        if (faction instanceof PirateBrigade) faction.policeFleets.push(this.policeFleet);
+      }
+    } else {
+      this.policeFleet = null;
     }
 
     this.captains = [...(init.traders ?? []), ...this.factions.flatMap((f) => f.captains)];

@@ -12,10 +12,8 @@ import {
 import { generateRoutes, setRoutes } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
-import {
-  DUTCH_FIRST_NAMES, DUTCH_LAST_NAMES, SPANISH_FIRST_NAMES, SPANISH_LAST_NAMES, randomName,
-} from "./names";
-import { Faction, Company, SoloTrader, PirateBrigade } from "./faction";
+import { DUTCH_FIRST_NAMES, DUTCH_LAST_NAMES, randomName } from "./names";
+import { Faction, Company, SoloTrader } from "./faction";
 import { World } from "./world";
 
 export interface BuiltWorld {
@@ -77,32 +75,7 @@ export function buildWorld(maxRouteDistance: number | undefined = 1000): BuiltWo
     companies.push(new FactionCls(name, crew, cashPerShip * crew.length));
   });
 
-  // Pirate brigades hunting the merchant companies -- Speedsters make
-  // natural pirate hulls (cheapest, fastest transport class).
-  const pirateRng = new Rng(100);
-  const pirateHomePorts = pirateRng.sample(availableHomePorts, Math.min(6, availableHomePorts.length));
-  const pirateBrigadeSpecs: Array<{ name: string; homePorts: string[] }> = [
-    { name: "Blackwater Raiders", homePorts: pirateHomePorts.slice(0, 3) },
-    { name: "Crimson Corsairs", homePorts: pirateHomePorts.slice(3, 6) },
-  ];
-
-  const pirateBrigades: PirateBrigade[] = [];
-  for (const spec of pirateBrigadeSpecs) {
-    if (spec.homePorts.length === 0) continue;
-    const crew: Array<[Transport, Captain, string]> = spec.homePorts.map((homePort, i) => {
-      const transport = SHIP_CLASSES.Speedster.clone({
-        name: `${spec.name.split(" ")[0]}-${pad2(i + 1)}`,
-        crewRequirement: pirateRng.randint(1, 5),
-      });
-      const captain = new Captain(randomName(pirateRng, SPANISH_FIRST_NAMES, SPANISH_LAST_NAMES), homePort);
-      return [transport, captain, homePort];
-    });
-    pirateBrigades.push(
-      new PirateBrigade(spec.name, crew, companies, 3_000.0 * spec.homePorts.length),
-    );
-  }
-
-  const factions: Faction[] = [...companies, ...pirateBrigades];
+  const factions: Faction[] = [...companies];
 
   const world = new World({
     locations,
@@ -114,6 +87,7 @@ export function buildWorld(maxRouteDistance: number | undefined = 1000): BuiltWo
     companyEventProbability: 0.05,
     seed: 42,
     factions,
+    numPoliceShips: 0,
   });
 
   return { world, factions };
