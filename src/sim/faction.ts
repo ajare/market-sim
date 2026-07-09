@@ -129,23 +129,43 @@ export class Company extends Faction {
 
     candidates.sort((a, b) => b[1].dailyReturnPct - a[1].dailyReturnPct);
 
+    // Multiple ships may share a (commodity, destination) route -- capped by
+    // how much of the destination's deficit is still uncovered, so fleet
+    // coordination scales shipping with actual demand instead of capping
+    // every route at a single ship. The first ship onto a route is always
+    // let through regardless of deficit size, matching the old one-per-day
+    // fallback for routes with no measurable deficit (e.g. fuel depots).
     const directives = new Map<Captain, Directive>();
-    const claimedRoutes = new Set<string>();
+    const claimedQuantity = new Map<string, number>();
+    const fullRoutes = new Set<string>();
     for (let [trader, best] of candidates) {
       if (directives.has(trader)) continue;
       let routeKey = `${best.commodity}||${best.destination}`;
-      if (claimedRoutes.has(routeKey)) {
+      if (fullRoutes.has(routeKey)) {
         const alt = trader.findBestLocalRoute(
-          buyMarkets, sellMarkets, commodities, closedLocations, new Set(claimedRoutes),
+          buyMarkets, sellMarkets, commodities, closedLocations, new Set(fullRoutes),
         );
         if (alt === null) continue;
         best = alt;
         routeKey = `${best.commodity}||${best.destination}`;
+        if (fullRoutes.has(routeKey)) continue;
       }
       directives.set(trader, best);
-      claimedRoutes.add(routeKey);
+      const claimed = (claimedQuantity.get(routeKey) ?? 0) + best.quantity;
+      claimedQuantity.set(routeKey, claimed);
+      if (claimed >= this.remainingDemand(best.commodity, best.destination)) {
+        fullRoutes.add(routeKey);
+      }
     }
     return directives;
+  }
+
+  /** Deficit still open at a destination for a commodity -- floors at 0 so a destination already at/above its minimum doesn't block the first ship either. */
+  private remainingDemand(commodity: string, destination: string): number {
+    const location = getLocation(destination);
+    if (location === undefined) return 0;
+    const deficit = (location.minStockpiles[commodity] ?? 0) - (location.stockpiles[commodity] ?? 0);
+    return Math.max(deficit, 0);
   }
 }
 

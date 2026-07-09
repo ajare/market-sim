@@ -3,7 +3,7 @@
  * day-to-day price update. Ported from sim/markets.py.
  */
 import { COMMODITIES } from "./worldData";
-import { DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST } from "./commodity";
+import { DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST, DEFAULT_EXCESS_PRICE_BOOST } from "./commodity";
 import { MarketEvent } from "./events";
 import type { Location } from "./location";
 import { randRandom, randChoice, randGauss } from "./simRandom";
@@ -129,9 +129,33 @@ export class Market {
     const deviation = Math.max(-2.0, Math.min(2.0, (reference - current) / reference));
     const commodity = COMMODITIES[this.commodityName];
     let sensitivity = commodity !== undefined ? commodity.priceSensitivity : DEFAULT_PRICE_SENSITIVITY;
-    if (deviation > 0 && this.side === "sell") {
+    // Consumer deficit boost (sell markets): the boost kicks in early, once
+    // stock falls below 1.3x the reference level, not just once it's a true
+    // deficit (below 1x). boostProgress is 0 right at that 1.3x threshold and
+    // rises to 1 as the stockpile is drawn down to zero, so raising the boost
+    // to that power ramps sensitivity up an exponential curve -- flat (no
+    // boost) at 1.3x the reference, full deficitPriceBoost only once truly out
+    // of stock. Deviation is positive here, so a higher sensitivity means a
+    // higher buy-price -- luring traders to deliver into the shortage.
+    const deficitThreshold = 1.3 * reference;
+    if (current < deficitThreshold && this.side === "sell") {
+      const boostProgress = Math.max(0, Math.min(1, (deficitThreshold - current) / deficitThreshold));
       const boost = commodity !== undefined ? commodity.deficitPriceBoost : DEFAULT_DEFICIT_PRICE_BOOST;
-      sensitivity *= boost;
+      sensitivity *= Math.pow(boost, boostProgress);
+    }
+
+    // Producer excess boost (buy markets): the mirror of the deficit boost.
+    // As a producer's stock climbs ABOVE its reference (normal) level, drop
+    // the sell-price along an exponential curve so traders are drawn to buy up
+    // the surplus. excessProgress is 0 right at the reference and rises to 1 as
+    // stock reaches 3x the reference -- the point the deviation itself
+    // saturates at -2. Deviation is negative here, so a higher sensitivity
+    // means a lower (steeper-discounted) buy-price.
+    const excessCeiling = 3 * reference;
+    if (current > reference && this.side === "buy") {
+      const excessProgress = Math.min(1, (current - reference) / (excessCeiling - reference));
+      const boost = commodity !== undefined ? commodity.excessPriceBoost : DEFAULT_EXCESS_PRICE_BOOST;
+      sensitivity *= Math.pow(boost, excessProgress);
     }
     return Math.max(0.5, this.basePrice * (1 + sensitivity * deviation));
   }

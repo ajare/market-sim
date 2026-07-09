@@ -82,6 +82,8 @@ export interface RouteEconomics {
   dailyReturnPct: number;
   path: Route[] | null;
   crewCost: number;
+  /** Cargo quantity this estimate was costed against -- lets a Faction gauge how much of a route's demand one ship covers. */
+  quantity: number;
 }
 
 export interface TradeDirective extends RouteEconomics {
@@ -242,7 +244,7 @@ export class Captain extends Crew {
       distance: 0.0, routeType: "unreachable", travelDays: 0,
       fuelPrice, fuelUnitsConsumed: 0.0, fuelCostPerUnit: 0.0,
       totalCost: 0.0, expectedRevenue: 0.0, expectedProfit: -1.0,
-      dailyReturnPct: -1.0, path: null, crewCost: 0.0,
+      dailyReturnPct: -1.0, path: null, crewCost: 0.0, quantity: 0.0,
     };
 
     const path = findShortestPath(origin, destination, (r) => this.transport!.canUseRoute(r));
@@ -295,6 +297,7 @@ export class Captain extends Crew {
       dailyReturnPct,
       path,
       crewCost,
+      quantity,
     };
   }
 

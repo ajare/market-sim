@@ -1,4 +1,5 @@
 import { useSimStore } from "../state/useSimStore";
+import { travelDaysBetween } from "../sim/worldData";
 
 export function FleetPanel() {
   const world = useSimStore((s) => s.world);
@@ -16,6 +17,7 @@ export function FleetPanel() {
               <th>Faction</th>
               <th>Location</th>
               <th>Destination</th>
+              <th>Days</th>
               <th>Status</th>
               <th>Cash</th>
               <th>Net worth</th>
@@ -25,6 +27,10 @@ export function FleetPanel() {
             {world.captains.map((captain) => {
               const snapshot = captain.portfolioHistory[captain.portfolioHistory.length - 1];
               const netWorth = snapshot !== undefined ? snapshot.totalValue : captain.cash;
+              const totalDays =
+                captain.destination !== null && captain.transport !== null
+                  ? travelDaysBetween(captain.currentNode, captain.destination, captain.transport.speedUnitsPerDay)
+                  : null;
               return (
                 <tr key={captain.name}>
                   <td>{captain.name}</td>
@@ -32,6 +38,7 @@ export function FleetPanel() {
                   <td>{captain.company?.name ?? "(independent)"}</td>
                   <td>{captain.location}</td>
                   <td>{captain.destination ?? "-"}</td>
+                  <td>{totalDays !== null ? `${captain.daysRemaining}d of ${totalDays}d` : "-"}</td>
                   <td>{captain.status}</td>
                   <td>${captain.cash.toFixed(2)}</td>
                   <td>${netWorth.toFixed(2)}</td>

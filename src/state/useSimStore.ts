@@ -20,13 +20,13 @@ interface SimStore {
   factions: Faction[];
   day: number;
   playing: boolean;
-  daysPerSecond: number;
+  secondsPerDay: number;
   version: number;
   reset: () => void;
   step: () => void;
   tick: (deltaTimeSeconds: number) => void;
   setPlaying: (playing: boolean) => void;
-  setDaysPerSecond: (daysPerSecond: number) => void;
+  setSecondsPerDay: (secondsPerDay: number) => void;
 }
 
 let accumulator = 0;
@@ -36,7 +36,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   factions: [],
   day: 0,
   playing: false,
-  daysPerSecond: 1.0,
+  secondsPerDay: 1.0,
   version: 0,
 
   reset: () => {
@@ -53,17 +53,17 @@ export const useSimStore = create<SimStore>((set, get) => ({
   },
 
   tick: (deltaTimeSeconds: number) => {
-    const { playing, daysPerSecond, step } = get();
+    const { playing, secondsPerDay, step } = get();
     if (!playing) return;
-    accumulator += deltaTimeSeconds * daysPerSecond;
-    while (accumulator >= 1.0) {
+    accumulator += deltaTimeSeconds;
+    while (accumulator >= secondsPerDay) {
       step();
-      accumulator -= 1.0;
+      accumulator -= secondsPerDay;
     }
   },
 
   setPlaying: (playing: boolean) => set({ playing }),
-  setDaysPerSecond: (daysPerSecond: number) => set({ daysPerSecond }),
+  setSecondsPerDay: (secondsPerDay: number) => set({ secondsPerDay }),
 }));
 
 // Build the initial world immediately, mirroring SimState.__init__ calling reset().

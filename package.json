@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sweep": "vitest run --config vitest.sweep.config.ts"
   },
   "dependencies": {
     "react": "^19.2.7",

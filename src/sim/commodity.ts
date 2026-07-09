@@ -7,6 +7,8 @@
 
 export const DEFAULT_PRICE_SENSITIVITY = 0.45;
 export const DEFAULT_DEFICIT_PRICE_BOOST = 1.4;
+/** Mirror of DEFAULT_DEFICIT_PRICE_BOOST for the producer/excess side (see Market.stockpilePrice). */
+export const DEFAULT_EXCESS_PRICE_BOOST = 1.4;
 
 export interface EventTemplate {
   name: string;
@@ -19,7 +21,10 @@ export class Commodity {
   name: string;
   basePrice: number;
   priceSensitivity: number;
+  /** How steeply the consumer buy-price climbs as stock runs BELOW its reference (deficit). */
   deficitPriceBoost: number;
+  /** How steeply the producer sell-price falls as stock builds ABOVE its reference (excess). */
+  excessPriceBoost: number;
   eventTemplates: EventTemplate[];
 
   constructor(
@@ -27,12 +32,14 @@ export class Commodity {
     basePrice: number,
     priceSensitivity: number = DEFAULT_PRICE_SENSITIVITY,
     deficitPriceBoost: number = DEFAULT_DEFICIT_PRICE_BOOST,
+    excessPriceBoost: number = DEFAULT_EXCESS_PRICE_BOOST,
     eventTemplates: EventTemplate[] = [],
   ) {
     this.name = name;
     this.basePrice = basePrice;
     this.priceSensitivity = priceSensitivity;
     this.deficitPriceBoost = deficitPriceBoost;
+    this.excessPriceBoost = excessPriceBoost;
     this.eventTemplates = eventTemplates;
   }
 }
@@ -121,6 +128,12 @@ const DEFICIT_PRICE_BOOST: Record<string, number> = {
   Aluminum: 1.3,
 };
 
+// Per-commodity producer-side excess boost. Empty by default: each commodity
+// falls back to its own deficit boost (symmetric elasticity). Add entries
+// here to make a commodity's surplus price react more or less sharply than
+// its shortage price.
+const EXCESS_PRICE_BOOST: Record<string, number> = {};
+
 function eventTemplatesFor(name: string): EventTemplate[] {
   if (name in BESPOKE_EVENT_TEMPLATES) return BESPOKE_EVENT_TEMPLATES[name];
   const drivers = GENERATED_EVENT_DRIVERS[name] ?? GENERIC_EVENT_DRIVERS;
@@ -130,7 +143,10 @@ function eventTemplatesFor(name: string): EventTemplate[] {
 /**
  * Build one Commodity per name, pulling hand-tuned price sensitivity/
  * deficit boost/event templates where they exist and falling back to the
- * DEFAULT_* / generic-driver values otherwise.
+ * DEFAULT_* / generic-driver values otherwise. The producer-side excess
+ * boost defaults to the commodity's own deficit boost, so each commodity is
+ * as price-elastic to surplus as it is to shortage -- override per commodity
+ * later if you want the two sides tuned independently.
  */
 export function buildCommodities(
   names: string[],
@@ -138,11 +154,13 @@ export function buildCommodities(
 ): Record<string, Commodity> {
   const result: Record<string, Commodity> = {};
   for (const name of names) {
+    const deficitBoost = DEFICIT_PRICE_BOOST[name] ?? DEFAULT_DEFICIT_PRICE_BOOST;
     result[name] = new Commodity(
       name,
       basePrices[name],
       PRICE_SENSITIVITY[name] ?? DEFAULT_PRICE_SENSITIVITY,
-      DEFICIT_PRICE_BOOST[name] ?? DEFAULT_DEFICIT_PRICE_BOOST,
+      deficitBoost,
+      EXCESS_PRICE_BOOST[name] ?? deficitBoost,
       eventTemplatesFor(name),
     );
   }

@@ -3,6 +3,7 @@ import { useSimLoop } from "./state/useSimLoop";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { LocationsPanel } from "./components/LocationsPanel";
 import { FleetPanel } from "./components/FleetPanel";
+import { NetworkView } from "./components/NetworkView";
 import "./App.css";
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
     <div className="app">
       <h1>Commodity Sim</h1>
       <ControlsPanel />
+      <NetworkView />
       <div className="panels">
         <LocationsPanel />
         <FleetPanel />

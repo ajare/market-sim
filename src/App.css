@@ -56,3 +56,70 @@
   max-height: 60vh;
   overflow-y: auto;
 }
+
+.network-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0 4px;
+}
+
+.network-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.legend-diamond {
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+
+.legend-underline {
+  width: 10px;
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-bottom: 1.5px solid var(--muted);
+}
+
+.network-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.network-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  cursor: default;
+}
+
+.network-tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%) translateY(-10px);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.network-tooltip-title {
+  font-weight: 600;
+  color: var(--text-h);
+}

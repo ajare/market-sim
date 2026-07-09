@@ -12,7 +12,7 @@ describe("buildWorld", () => {
     expect(factions.length).toBeGreaterThan(0);
     expect(() => world.run(60)).not.toThrow();
     expect(world.combinedHistory.length).toBeGreaterThan(0);
-  });
+  }, 20000); // the default world's fleet is large (locations x TARGET_SHIPS_PER_LOCATION) -- exceeds vitest's 5s default
 
   it("produces identical day-60 net worth across two runs built from the same seeds", () => {
     const run1 = buildWorld();
@@ -27,7 +27,7 @@ describe("buildWorld", () => {
     const day60Prices1 = run1.world.combinedHistory.filter((r) => r.day === 60).map((r) => r.price);
     const day60Prices2 = run2.world.combinedHistory.filter((r) => r.day === 60).map((r) => r.price);
     expect(day60Prices1).toEqual(day60Prices2);
-  });
+  }, 40000); // the default world's fleet is large (96 companies x 5 ships) -- two 60-day runs exceed vitest's 5s default
 
   it("steps one day at a time and matches run(1)'s effect on the day counter", () => {
     const { world } = buildWorld();

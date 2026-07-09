@@ -52,6 +52,16 @@ export const WORLD_GEN_SEED = 2024;
 
 const OTHER_TERMINAL_TYPES: TerminalType[] = ["Station", "Airport", "Platform"];
 
+interface LocationDraft {
+  name: string;
+  isDepot: boolean;
+  produced: string[];
+  consumed: string[];
+  producedCommodities: Record<string, number>;
+  consumedCommodities: Record<string, number>;
+  otherTerminals: TerminalType[];
+}
+
 export function generateLocations(
   names: string[],
   commodities: Record<string, Commodity>,
@@ -60,22 +70,18 @@ export function generateLocations(
 ): Location[] {
   const rng = new Rng(seed);
   const commodityNames = Object.keys(commodities);
-  const locations: Location[] = [];
 
+  // Pass 1: draw each location's produced/consumed commodities and their
+  // (still unbalanced) per-day rates -- same RNG call sequence as before
+  // this function grew a balancing pass, so a fixed seed still reproduces
+  // the same world modulo the deliberate rescaling below.
+  const drafts: LocationDraft[] = [];
   for (const name of names) {
     if (FUEL_DEPOT_NAMES.includes(name)) {
-      locations.push(
-        new Location({
-          name,
-          producedCommodities: {},
-          consumedCommodities: {},
-          stockpiles: {},
-          minStockpiles: {},
-          basePrices: {},
-          fuelPrice: FUEL_BASE_PRICE,
-          terminalTypes: new Set(["Port"]),
-        }),
-      );
+      drafts.push({
+        name, isDepot: true, produced: [], consumed: [],
+        producedCommodities: {}, consumedCommodities: {}, otherTerminals: [],
+      });
       continue;
     }
 
@@ -88,32 +94,84 @@ export function generateLocations(
     const consumedCommodities: Record<string, number> = {};
     for (const c of consumed) consumedCommodities[c] = round2(rng.uniform(3, 15));
 
+    const otherTerminals = rng.sample(OTHER_TERMINAL_TYPES, rng.randint(0, 2));
+    drafts.push({ name, isDepot: false, produced, consumed, producedCommodities, consumedCommodities, otherTerminals });
+  }
+
+  // Pass 2: balance each commodity's world-wide daily production against its
+  // world-wide daily consumption. Left alone, independently-rolled produce/
+  // consume rates create a structural, permanent glut or shortage that no
+  // amount of trading can fix -- a different problem from the throughput-
+  // limited scarcity tuned elsewhere (fleet size, cargo capacity, pricing).
+  // Rescaling both sides toward their average preserves each location's
+  // relative share of world supply/demand for that commodity.
+  for (const commodityName of commodityNames) {
+    let totalProduced = 0;
+    let totalConsumed = 0;
+    for (const d of drafts) {
+      totalProduced += d.producedCommodities[commodityName] ?? 0;
+      totalConsumed += d.consumedCommodities[commodityName] ?? 0;
+    }
+    if (totalProduced <= 0 || totalConsumed <= 0) continue;
+
+    const target = (totalProduced + totalConsumed) / 2;
+    const produceScale = target / totalProduced;
+    const consumeScale = target / totalConsumed;
+    for (const d of drafts) {
+      if (commodityName in d.producedCommodities) {
+        d.producedCommodities[commodityName] = round2(d.producedCommodities[commodityName] * produceScale);
+      }
+      if (commodityName in d.consumedCommodities) {
+        d.consumedCommodities[commodityName] = round2(d.consumedCommodities[commodityName] * consumeScale);
+      }
+    }
+  }
+
+  // Pass 3: derive stockpiles/minStockpiles/basePrices off the now-balanced
+  // rates, continuing the same RNG draw order the original single pass used.
+  const locations: Location[] = [];
+  for (const d of drafts) {
+    if (d.isDepot) {
+      locations.push(
+        new Location({
+          name: d.name,
+          producedCommodities: {},
+          consumedCommodities: {},
+          stockpiles: {},
+          minStockpiles: {},
+          basePrices: {},
+          fuelPrice: FUEL_BASE_PRICE,
+          terminalTypes: new Set(["Port"]),
+        }),
+      );
+      continue;
+    }
+
     const stockpiles: Record<string, number> = {};
     const minStockpiles: Record<string, number> = {};
     const basePrices: Record<string, number> = {};
 
-    for (const c of produced) {
-      const rate = producedCommodities[c];
+    for (const c of d.produced) {
+      const rate = d.producedCommodities[c];
       stockpiles[c] = round2(rate * rng.uniform(10, 25));
       basePrices[c] = round2(commodities[c].basePrice * rng.uniform(0.85, 1.15));
     }
-    for (const c of consumed) {
-      const rate = consumedCommodities[c];
+    for (const c of d.consumed) {
+      const rate = d.consumedCommodities[c];
       minStockpiles[c] = round2(rate * rng.uniform(5, 10));
       stockpiles[c] = round2(minStockpiles[c] * consumedStockpileFactor);
       basePrices[c] = round2(commodities[c].basePrice * rng.uniform(0.85, 1.15));
     }
 
-    const otherTerminals = rng.sample(OTHER_TERMINAL_TYPES, rng.randint(0, 2));
-    const terminalTypes: Set<TerminalType> = otherTerminals.includes("Platform")
+    const terminalTypes: Set<TerminalType> = d.otherTerminals.includes("Platform")
       ? new Set(["Platform"])
-      : new Set<TerminalType>(["Port", ...otherTerminals]);
+      : new Set<TerminalType>(["Port", ...d.otherTerminals]);
 
     locations.push(
       new Location({
-        name,
-        producedCommodities,
-        consumedCommodities,
+        name: d.name,
+        producedCommodities: d.producedCommodities,
+        consumedCommodities: d.consumedCommodities,
         stockpiles,
         minStockpiles,
         basePrices,

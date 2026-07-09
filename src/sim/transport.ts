@@ -151,29 +151,29 @@ export class Plane extends Transport {
 // cargo; large and slow moves a lot but ties up more capital per voyage.
 export const SHIP_CLASSES: Record<string, Ship> = {
   Speedster: new Ship({
-    name: "Speedster", cargoCapacity: 8.0, speedUnitsPerDay: 800.0,
+    name: "Speedster", cargoCapacity: 80.0, speedUnitsPerDay: 800.0,
     fuelConsumptionPerUnitDistance: 0.003, repositionFuelConsumptionPerDistance: 0.025,
     fixedShipmentCost: 8.0, fuelCapacity: 60.0, currentFuel: 0.0,
   }),
   Handysize: new Ship({
-    name: "Handysize", cargoCapacity: 12.0, speedUnitsPerDay: 600.0,
+    name: "Handysize", cargoCapacity: 120.0, speedUnitsPerDay: 600.0,
     fuelConsumptionPerUnitDistance: 0.0035, repositionFuelConsumptionPerDistance: 0.03,
     fixedShipmentCost: 10.0, fuelCapacity: 90.0, currentFuel: 0.0,
   }),
   Panamax: new Ship({
-    name: "Panamax", cargoCapacity: 20.0, speedUnitsPerDay: 500.0,
+    name: "Panamax", cargoCapacity: 200.0, speedUnitsPerDay: 500.0,
     fuelConsumptionPerUnitDistance: 0.004, repositionFuelConsumptionPerDistance: 0.04,
     fixedShipmentCost: 15.0, fuelCapacity: 140.0, currentFuel: 0.0,
   }),
   Capesize: new Ship({
-    name: "Capesize", cargoCapacity: 35.0, speedUnitsPerDay: 400.0,
+    name: "Capesize", cargoCapacity: 350.0, speedUnitsPerDay: 400.0,
     fuelConsumptionPerUnitDistance: 0.0045, repositionFuelConsumptionPerDistance: 0.05,
     fixedShipmentCost: 25.0, fuelCapacity: 220.0, currentFuel: 0.0,
   }),
   // Wind-powered -- burns no fuel at all, and leaves currentFuel at null,
   // so needsRefuel() is always false: never needs a refueling stop.
   SailingVessel: new Ship({
-    name: "SailingVessel", cargoCapacity: 10.0, speedUnitsPerDay: 300.0,
+    name: "SailingVessel", cargoCapacity: 100.0, speedUnitsPerDay: 300.0,
     fuelConsumptionPerUnitDistance: 0.0, repositionFuelConsumptionPerDistance: 0.0,
     fixedShipmentCost: 5.0, fuelCapacity: 0.0, currentFuel: null,
   }),
