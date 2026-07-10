@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildWorld } from "../buildWorld";
 import { Location } from "../location";
+import { World } from "../world";
 import { Company, SoloTrader, PirateBrigade } from "../faction";
 import { Captain } from "../captain";
 import { Ship, Train, SHIP_CLASSES } from "../transport";
+import { buildCommodities } from "../commodity";
+import { generateLocations, COMMODITIES } from "../worldData";
 
 describe("buildWorld", () => {
   it("builds the default procedural world and runs 60 days without throwing", () => {
@@ -68,6 +71,72 @@ describe("Location", () => {
           terminalTypes: new Set(["Platform", "Port"]),
         }),
     ).toThrow();
+  });
+});
+
+describe("World location-count validation", () => {
+  function makeLocations(count: number): Location[] {
+    return Array.from(
+      { length: count },
+      (_, i) =>
+        new Location({
+          name: `Loc ${i}`,
+          producedCommodities: {},
+          consumedCommodities: {},
+          stockpiles: {},
+          minStockpiles: {},
+          basePrices: {},
+          fuelPrice: 1.0,
+          terminalTypes: new Set(["Port"]),
+        }),
+    );
+  }
+
+  it("throws when there are fewer than 20 locations", () => {
+    expect(() => new World({ locations: makeLocations(19) })).toThrow();
+  });
+
+  it("throws when there are more than 50 locations", () => {
+    expect(() => new World({ locations: makeLocations(51) })).toThrow();
+  });
+
+  it("does not throw at the 20 and 50 boundaries", () => {
+    expect(() => new World({ locations: makeLocations(20) })).not.toThrow();
+    expect(() => new World({ locations: makeLocations(50) })).not.toThrow();
+  });
+});
+
+describe("commodity roster / per-location spread validation", () => {
+  function names(count: number): string[] {
+    return Array.from({ length: count }, (_, i) => `Commodity ${i}`);
+  }
+  function prices(count: number): Record<string, number> {
+    const result: Record<string, number> = {};
+    for (const n of names(count)) result[n] = 10.0;
+    return result;
+  }
+
+  it("throws when there are fewer than 5 commodities", () => {
+    expect(() => buildCommodities(names(4), prices(4))).toThrow();
+  });
+
+  it("throws when there are more than 25 commodities", () => {
+    expect(() => buildCommodities(names(26), prices(26))).toThrow();
+  });
+
+  it("does not throw at the 5 and 25 commodity-count boundaries", () => {
+    expect(() => buildCommodities(names(5), prices(5))).not.toThrow();
+    expect(() => buildCommodities(names(25), prices(25))).not.toThrow();
+  });
+
+  it("throws when the per-location commodity range falls outside [2, 6]", () => {
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 1, 4)).toThrow();
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 2, 7)).toThrow();
+  });
+
+  it("does not throw at the [2, 6] per-location commodity-range boundaries", () => {
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 2, 4)).not.toThrow();
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 2, 6)).not.toThrow();
   });
 });
 

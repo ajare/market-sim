@@ -13,6 +13,7 @@ export function LocationsPanel() {
           <thead>
             <tr>
               <th>Location</th>
+              <th>Cash</th>
               <th>Produces (buyable)</th>
               <th>Consumes (sellable)</th>
             </tr>
@@ -24,6 +25,7 @@ export function LocationsPanel() {
               return (
                 <tr key={loc.name}>
                   <td>{loc.name}</td>
+                  <td>{loc.cash <= 0 ? <span className="muted">broke</span> : `$${loc.cash.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</td>
                   <td>
                     {produced.length === 0 ? (
                       <span className="muted">none</span>

@@ -6,6 +6,9 @@
 
 export type TerminalType = "Port" | "Station" | "Airport" | "Platform";
 
+/** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
+export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
+
 export interface LocationInit {
   name: string;
   producedCommodities: Record<string, number>;
@@ -16,6 +19,10 @@ export interface LocationInit {
   fuelPrice: number;
   terminalTypes: ReadonlySet<TerminalType>;
   fenceFraction?: number;
+  /** Starting cash pool. Defaults to 10 billion -- see Location.cash. */
+  cash?: number;
+  /** Contract-tendering threshold, as a multiple of minStockpiles. Defaults to DEFAULT_CONTRACT_THRESHOLD_FRACTION -- see needsContractRestock. */
+  contractThresholdFraction?: number;
 }
 
 export class Location {
@@ -29,6 +36,14 @@ export class Location {
   terminalTypes: ReadonlySet<TerminalType>;
   /** Fraction of a commodity's live sell price recovered when stolen goods are fenced here. */
   fenceFraction: number;
+  /**
+   * Cash pool that funds this Location's side of every trade (buy and sell)
+   * and its Contract deliveries -- previously an unlimited pool, now finite
+   * so a Location can go broke and stop tendering new Contracts.
+   */
+  cash: number;
+  /** Multiple of minStockpiles at which a Contract is proactively tendered -- see needsContractRestock. */
+  contractThresholdFraction: number;
   /**
    * The stockpile level a PRODUCED commodity's price is measured against
    * (see referenceStockpile) -- frozen at construction time, since the live
@@ -46,6 +61,8 @@ export class Location {
     this.fuelPrice = init.fuelPrice;
     this.terminalTypes = init.terminalTypes;
     this.fenceFraction = init.fenceFraction ?? 0.5;
+    this.cash = init.cash ?? 10_000_000_000;
+    this.contractThresholdFraction = init.contractThresholdFraction ?? DEFAULT_CONTRACT_THRESHOLD_FRACTION;
 
     if (this.terminalTypes.has("Platform") && this.terminalTypes.size > 1) {
       throw new Error(
@@ -77,6 +94,15 @@ export class Location {
     return (
       commodityName in this.consumedCommodities &&
       (this.stockpiles[commodityName] ?? 0) < (this.minStockpiles[commodityName] ?? 0)
+    );
+  }
+
+  /** Whether a fresh supply Contract should be tendered for this commodity -- stockpile at or below contractThresholdFraction times its minimum target (proactive, not just an actual deficit like canSell). */
+  needsContractRestock(commodityName: string): boolean {
+    return (
+      commodityName in this.consumedCommodities &&
+      (this.stockpiles[commodityName] ?? 0) <=
+        (this.minStockpiles[commodityName] ?? 0) * this.contractThresholdFraction
     );
   }
 

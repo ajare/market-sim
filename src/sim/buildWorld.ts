@@ -7,14 +7,17 @@
 import { Rng } from "./rng";
 import {
   ALL_LOCATION_NAMES, COMMODITIES, FUEL_DEPOT_NAMES, WORLD_GEN_SEED,
+  DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR,
   generateLocations, generateCoordinates, setGeography,
 } from "./worldData";
+import type { Commodity } from "./commodity";
 import { generateRoutes, setRoutes } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
 import { DUTCH_FIRST_NAMES, DUTCH_LAST_NAMES, randomName } from "./names";
 import { Faction, Company, SoloTrader } from "./faction";
 import { World } from "./world";
+import type { TenderContractsOptions } from "./contracts";
 
 export interface BuiltWorld {
   world: World;
@@ -30,17 +33,41 @@ export interface BuildWorldOptions {
    * exactly that to average out Monte-Carlo noise (see analysis.ts).
    */
   seed?: number;
-  /** Total ships is ~ locations.length * this. Default 480/33 (the calibrated ratio). */
+  /** Total ships is ~ locations.length * this. Default 5 (the calibrated ratio). */
   targetShipsPerLocation?: number;
   /** Ships grouped into each Company. Default 5. */
   shipsPerCompany?: number;
+  /**
+   * Extra ships added to every Company on top of shipsPerCompany, as a
+   * fraction (0 to 1) of shipsPerCompany, rounded up -- so a Company's
+   * fleet is never fully saturated by Contract duty (which is prioritized
+   * over arbitrage, see Company.directFleet) and some ships are always
+   * free to arbitrage. Default 0.2. Not empirically tuned like the ship-
+   * per-location ratio -- a reasonable buffer, easy to retune.
+   */
+  arbitrageShipFraction?: number;
+  /** Overrides for tenderContracts' tunable knobs -- forwarded to World, see WorldInit.contractOptions. */
+  contractOptions?: TenderContractsOptions;
+  /** Location roster to generate the world from. Default ALL_LOCATION_NAMES (the 30 hubs + 3 fuel depots). Used to test whether fleet-sizing ratios generalize to a different-sized world. */
+  locationNames?: string[];
+  /** Commodity roster to generate locations against. Default worldData.COMMODITIES (the 10 built-in commodities). Used to test whether fleet-sizing ratios generalize to a different total commodity count. */
+  commodities?: Record<string, Commodity>;
+  /** [min, max] (inclusive) commodities sampled per role (produced/consumed) at each non-depot Location. Default [2, 4]. Used to test whether fleet-sizing ratios generalize to a different per-Location commodity spread. */
+  commodityCountRange?: [number, number];
+  /** Days-of-consumption buffer a consumed commodity's minStockpile represents (minStockpile = dailyRate * this). Default worldData.DEFAULT_MIN_STOCKPILE_DAYS (7.5). */
+  minStockpileDays?: number;
+  /** Multiple N a consumed commodity's starting stockpile is set to, relative to its minStockpile (stockpile = minStockpile * N). Default worldData.DEFAULT_CONSUMED_STOCKPILE_FACTOR (2.0). */
+  consumedStockpileFactor?: number;
 }
 
 const DEFAULT_SEED = 42;
 // Fleet is sized off the number of Locations, not a hardcoded count, so it
 // scales if the location roster changes (e.g. a CSV-driven world). The ratio
-// is fixed to 480/33 to reproduce the specific 96-company/480-ship fleet that
-// was validated to land near the stockpile target.
+// is fixed at 5 ships/location -- with CONTRACT_QUANTITY_MULTIPLIER at 1.5
+// (see contracts.ts), this is the minimum fleet found (via seed-averaged
+// sweeps, see analysis.ts) that keeps the stockpile-vs-minimum metric at or
+// above 1.0 on average; the previous, much larger 480/33 ratio predates the
+// location-funded contract redesign and its proactive tendering.
 //
 // IMPORTANT (see the chaos diagnosis, `analysis.ts`): the stockpile-vs-minimum
 // metric is a high-variance, seed-sensitive estimator -- one run carries a
@@ -48,8 +75,9 @@ const DEFAULT_SEED = 42;
 // reading a single run tells you almost nothing at fine resolution. To retune
 // this ratio, average many seeds per candidate value (`npm run sweep`), never
 // a lone run.
-const DEFAULT_TARGET_SHIPS_PER_LOCATION = 480 / 33;
+const DEFAULT_TARGET_SHIPS_PER_LOCATION = 5;
 const DEFAULT_SHIPS_PER_COMPANY = 5;
+const DEFAULT_ARBITRAGE_SHIP_FRACTION = 0.2;
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -74,17 +102,31 @@ export function buildWorld(
   const seed = options.seed ?? DEFAULT_SEED;
   const targetShipsPerLocation = options.targetShipsPerLocation ?? DEFAULT_TARGET_SHIPS_PER_LOCATION;
   const shipsPerCompany = options.shipsPerCompany ?? DEFAULT_SHIPS_PER_COMPANY;
+  const arbitrageShipFraction = options.arbitrageShipFraction ?? DEFAULT_ARBITRAGE_SHIP_FRACTION;
+  const locationNames = options.locationNames ?? ALL_LOCATION_NAMES;
+  const commodities = options.commodities ?? COMMODITIES;
+  const [minPerRole, maxPerRole] = options.commodityCountRange ?? [2, 4];
+  const minStockpileDays = options.minStockpileDays ?? DEFAULT_MIN_STOCKPILE_DAYS;
+  const consumedStockpileFactor = options.consumedStockpileFactor ?? DEFAULT_CONSUMED_STOCKPILE_FACTOR;
 
-  const locations = generateLocations(ALL_LOCATION_NAMES, COMMODITIES);
-  const coordinates = generateCoordinates(ALL_LOCATION_NAMES);
+  const locations = generateLocations(
+    locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,
+  );
+  const coordinates = generateCoordinates(locationNames);
   setGeography(locations, coordinates);
   setRoutes(generateRoutes(locations, WORLD_GEN_SEED, maxRouteDistance));
 
   const availableHomePorts = locations.map((l) => l.name).filter((name) => !FUEL_DEPOT_NAMES.includes(name));
 
+  // numCompanies stays derived from the contract-calibrated baseline (5
+  // ships/location); the arbitrage buffer below grows each Company beyond
+  // shipsPerCompany, so the actual fleet ends up bigger than that baseline
+  // by design -- see arbitrageShipFraction.
   const targetFleetSize = Math.round(locations.length * targetShipsPerLocation);
   const numCompanies = Math.max(1, Math.round(targetFleetSize / shipsPerCompany));
-  const fleetSize = numCompanies * shipsPerCompany;
+  const extraShipsPerCompany = Math.ceil(shipsPerCompany * arbitrageShipFraction);
+  const actualShipsPerCompany = shipsPerCompany + extraShipsPerCompany;
+  const fleetSize = numCompanies * actualShipsPerCompany;
   const fleetRng = new Rng(99);
   const shuffledHomePorts = fleetRng.sample(availableHomePorts, availableHomePorts.length);
   const homePorts = Array.from({ length: fleetSize }, (_, i) => shuffledHomePorts[i % shuffledHomePorts.length]);
@@ -106,7 +148,7 @@ export function buildWorld(
   const cashPerShip = 10_000.0;
   const companies: Company[] = [];
   for (let i = 0; i < numCompanies; i++) {
-    const crew = fleetCrew.slice(i * shipsPerCompany, (i + 1) * shipsPerCompany);
+    const crew = fleetCrew.slice(i * actualShipsPerCompany, (i + 1) * actualShipsPerCompany);
     if (crew.length === 0) continue;
     const FactionCls = i % 2 === 0 ? Company : SoloTrader;
     companies.push(new FactionCls(`Company ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
@@ -125,6 +167,7 @@ export function buildWorld(
     seed,
     factions,
     numPoliceShips: 0,
+    contractOptions: options.contractOptions,
   });
 
   return { world, factions };

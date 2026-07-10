@@ -126,6 +126,29 @@ captains will reposition an empty ship toward a distant opportunity if
 nothing local clears the bar, but only past a stiffer threshold since
 it's a speculative bet.
 
+## Web UI
+
+`src/` is a React + TypeScript port of the simulation that runs entirely
+in the browser (built with [Vite](https://vitejs.dev)). It requires
+[Node.js](https://nodejs.org) with `npm`.
+
+Install the NPM dependencies from the repo root (where `package.json`
+lives):
+
+```
+npm install
+```
+
+Then:
+
+```
+npm run dev       # start the Vite dev server with hot reload
+npm run build     # type-check (tsc -b) and build for production
+npm run preview   # preview a production build locally
+npm run test      # run the vitest suite
+npm run lint      # run oxlint
+```
+
 ## Experimental UI
 
 `exp-ui/` is an [imgui-bundle](https://github.com/pthom/imgui_bundle)

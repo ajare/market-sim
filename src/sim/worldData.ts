@@ -50,6 +50,40 @@ export const ALL_LOCATION_NAMES: string[] = [...LOCATION_NAMES, ...FUEL_DEPOT_NA
 
 export const WORLD_GEN_SEED = 2024;
 
+// The [minPerRole, maxPerRole] commodities-sampled-per-role range passed to
+// generateLocations must fall within this range. Calibrated via seed-
+// averaged stockpile-ratio sweeps (see Simulation.md): a wider spread means
+// the same fixed fleet has to cover far more distinct (location, commodity)
+// pairs, and the ratio degrades roughly monotonically as spread widens --
+// the default [2, 4] sits well inside this bound with margin either way.
+export const MIN_COMMODITIES_PER_LOCATION = 2;
+export const MAX_COMMODITIES_PER_LOCATION = 6;
+
+/**
+ * Default days-of-consumption buffer a consumed commodity's minStockpile
+ * target represents (minStockpile = dailyConsumptionRate * this), passed to
+ * generateLocations. Set to 14 (up from an initial 7.5, the midpoint of the
+ * random U(5, 10) draw per location this replaced) because a seed-averaged
+ * scan of every consumed (location, commodity) pair's daily stockpile found
+ * that a bigger buffer overwhelmingly reduces how often a commodity
+ * actually runs out (a much bigger effect than its mild, non-monotonic
+ * effect on the aggregate stockpile-ratio metric): the zero-stockpile day
+ * rate fell from 43.6% at minStockpileDays=2 to just 2.1% at 14 -- roughly
+ * a 4x reduction from 7.5's 8.2% alone -- while the *length* of each
+ * stockout episode barely changed (~4 days regardless), since recovery
+ * time is governed by delivery-cycle logistics, not buffer size. See
+ * Simulation.md's Finding 6 for the full sweep.
+ */
+export const DEFAULT_MIN_STOCKPILE_DAYS = 14;
+
+/**
+ * Default multiple N of a consumed commodity's minStockpile that its
+ * starting stockpile is set to (stockpile = minStockpile * N), passed to
+ * generateLocations -- every location starts N times comfortably above the
+ * point where it would need a supply Contract.
+ */
+export const DEFAULT_CONSUMED_STOCKPILE_FACTOR = 2.0;
+
 const OTHER_TERMINAL_TYPES: TerminalType[] = ["Station", "Airport", "Platform"];
 
 interface LocationDraft {
@@ -66,8 +100,17 @@ export function generateLocations(
   names: string[],
   commodities: Record<string, Commodity>,
   seed: number = WORLD_GEN_SEED,
-  consumedStockpileFactor: number = 2.0,
+  consumedStockpileFactor: number = DEFAULT_CONSUMED_STOCKPILE_FACTOR,
+  minPerRole: number = 2,
+  maxPerRole: number = 4,
+  minStockpileDays: number = DEFAULT_MIN_STOCKPILE_DAYS,
 ): Location[] {
+  if (minPerRole < MIN_COMMODITIES_PER_LOCATION || maxPerRole > MAX_COMMODITIES_PER_LOCATION) {
+    throw new Error(
+      `generateLocations: [minPerRole, maxPerRole] must fall within ` +
+        `[${MIN_COMMODITIES_PER_LOCATION}, ${MAX_COMMODITIES_PER_LOCATION}] (got [${minPerRole}, ${maxPerRole}]).`,
+    );
+  }
   const rng = new Rng(seed);
   const commodityNames = Object.keys(commodities);
 
@@ -85,9 +128,9 @@ export function generateLocations(
       continue;
     }
 
-    const produced = rng.sample(commodityNames, rng.randint(2, 4));
+    const produced = rng.sample(commodityNames, Math.min(rng.randint(minPerRole, maxPerRole), commodityNames.length));
     const remaining = commodityNames.filter((c) => !produced.includes(c));
-    const consumed = rng.sample(remaining, Math.min(rng.randint(2, 4), remaining.length));
+    const consumed = rng.sample(remaining, Math.min(rng.randint(minPerRole, maxPerRole), remaining.length));
 
     const producedCommodities: Record<string, number> = {};
     for (const c of produced) producedCommodities[c] = round2(rng.uniform(3, 15));
@@ -158,7 +201,7 @@ export function generateLocations(
     }
     for (const c of d.consumed) {
       const rate = d.consumedCommodities[c];
-      minStockpiles[c] = round2(rate * rng.uniform(5, 10));
+      minStockpiles[c] = round2(rate * minStockpileDays);
       stockpiles[c] = round2(minStockpiles[c] * consumedStockpileFactor);
       basePrices[c] = round2(commodities[c].basePrice * rng.uniform(0.85, 1.15));
     }

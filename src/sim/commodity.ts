@@ -10,6 +10,14 @@ export const DEFAULT_DEFICIT_PRICE_BOOST = 1.4;
 /** Mirror of DEFAULT_DEFICIT_PRICE_BOOST for the producer/excess side (see Market.stockpilePrice). */
 export const DEFAULT_EXCESS_PRICE_BOOST = 1.4;
 
+// The total commodity roster must fall within this range. Calibrated via
+// seed-averaged stockpile-ratio sweeps (see Simulation.md): too few
+// commodities (~4) causes severe production/consumption collision effects
+// across locations; too many (~20+) dilutes the fixed fleet's coverage per
+// commodity. The default 10-commodity roster sits comfortably inside.
+export const MIN_COMMODITIES = 5;
+export const MAX_COMMODITIES = 25;
+
 export interface EventTemplate {
   name: string;
   demandMultiplier: number;
@@ -152,6 +160,11 @@ export function buildCommodities(
   names: string[],
   basePrices: Record<string, number>,
 ): Record<string, Commodity> {
+  if (names.length < MIN_COMMODITIES || names.length > MAX_COMMODITIES) {
+    throw new Error(
+      `buildCommodities: names.length must be between ${MIN_COMMODITIES} and ${MAX_COMMODITIES} (got ${names.length}).`,
+    );
+  }
   const result: Record<string, Commodity> = {};
   for (const name of names) {
     const deficitBoost = DEFICIT_PRICE_BOOST[name] ?? DEFAULT_DEFICIT_PRICE_BOOST;

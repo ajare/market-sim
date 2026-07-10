@@ -9,7 +9,7 @@ import { Crew } from "./crew";
 import type { Faction } from "./faction";
 import { TransportEvent, AGENT_EVENT_TEMPLATES, type TransportEventKind } from "./events";
 import type { TransportStatus } from "./transport";
-import { distanceBetween, travelDaysBetween } from "./worldData";
+import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
 import { getRoute, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
@@ -508,6 +508,7 @@ export class Captain extends Crew {
     this.realizedProfit += profit;
     this.applyPriceImpact(market, this.cargo.quantity, "sell");
     market.applyTrade(this.cargo.quantity);
+    market.location.cash -= proceeds;
 
     this.tradeLog.push({
       day,
@@ -529,29 +530,31 @@ export class Captain extends Crew {
   }
 
   /**
-   * Contract payout: the Location reimburses the stock cost and fuel cost
-   * already paid up front, plus a fixed delivery fee -- unlike a market SELL,
-   * the price paid has nothing to do with the destination market's price (the
-   * Location's cash pool is unlimited), and delivering the stock doesn't move
-   * the market price the way a normal trade would.
+   * Contract payout: the goods were already paid for by the issuing Location
+   * directly at purchase time (see Captain.executeContractDelivery), so
+   * arrival is not a payment event for the goods -- only the fuel cost
+   * already fronted gets reimbursed, plus a fixed delivery fee, both paid by
+   * the issuing Location. Unlike a market SELL, the price paid has nothing
+   * to do with the destination market's price, and delivering the stock
+   * doesn't move the market price the way a normal trade would.
    */
   private fulfillContract(day: number, sellMarkets: Map<string, Market>): void {
     const cargo = this.cargo!;
     const contract = cargo.contract!;
     if (this.location !== contract.location) return;
 
-    const stockCost = cargo.unitCost * cargo.quantity;
-    const reimbursement = stockCost + cargo.fuelCostTotal;
-    const proceeds = reimbursement + contract.deliveryFee;
+    const proceeds = cargo.fuelCostTotal + contract.deliveryFee;
     const profit = proceeds - cargo.totalCost;
 
     this.cash += proceeds;
     this.realizedProfit += profit;
-    contract.lastDeliveryDay = day;
+    contract.fulfilled = true;
     contract.inFlightCaptain = null;
 
     const market = sellMarkets.get(marketKey(this.location, cargo.commodity));
     if (market !== undefined) market.applyTrade(cargo.quantity);
+    const issuingLocation = getLocation(contract.location)!;
+    issuingLocation.cash -= proceeds;
 
     this.tradeLog.push({
       day,
@@ -670,6 +673,7 @@ export class Captain extends Crew {
     this.totalFixedFeesSpent += this.transport!.fixedShipmentCost;
     this.applyPriceImpact(originMarket, quantity, "buy");
     originMarket.applyTrade(quantity);
+    originMarket.location.cash += quantity * buyPrice;
     if (fuelMarket !== undefined) this.applyPriceImpact(fuelMarket, leg1FuelUnits, "buy");
 
     this.cargo = {
@@ -723,39 +727,54 @@ export class Captain extends Crew {
    * Unlike executeLocalRoute, there's no profitability gate: a due Contract
    * is an obligation the Company committed to, not an opportunistic trade --
    * matching Company.directFleet prioritizing contracts over arbitrage.
+   *
+   * The issuing Location pays the producer directly for the goods -- the
+   * Company never fronts that cost, only the fuel to carry them (reimbursed,
+   * plus a delivery fee, on arrival -- see fulfillContract). So quantity is
+   * bounded by the issuing Location's own cash (the goods payer) and the
+   * Company's cash covering fuel alone, not by the Company affording the
+   * goods themselves.
    */
   private executeContractDelivery(contract: Contract, day: number, buyMarkets: Map<string, Market>): void {
     const originMarket = buyMarkets.get(marketKey(this.location, contract.commodity));
     if (originMarket === undefined || !originMarket.isAvailable) return;
 
-    const quantity = Math.min(
-      this.transport!.cargoCapacity,
-      contract.quantityPerDelivery,
-      originMarket.availableQuantity,
-      this.cash / originMarket.price,
-    );
-    if (quantity < 1) return;
-
     const path = findShortestPath(this.location, contract.location, (r) => this.transport!.canUseRoute(r));
     if (path === null || path.length === 0) return;
 
+    const issuingLocation = getLocation(contract.location)!;
     const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
     const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
-
     const firstLeg = path[0];
     const originLocation = this.location;
-    const leg1FuelUnits = firstLeg.distance * this.currentFuelConsumptionRate() * quantity;
+
+    const perUnitFuelUnits = firstLeg.distance * this.currentFuelConsumptionRate();
+    const perUnitFuelCost = perUnitFuelUnits * fuelPrice;
+    const goodsAffordableQuantity = originMarket.price > 0 ? issuingLocation.cash / originMarket.price : 0;
+    const fuelAffordableQuantity = perUnitFuelCost > 0 ? this.cash / perUnitFuelCost : Infinity;
+
+    const quantity = Math.min(
+      this.transport!.cargoCapacity,
+      contract.quantity,
+      originMarket.availableQuantity,
+      goodsAffordableQuantity,
+      fuelAffordableQuantity,
+    );
+    if (quantity < 1) return;
+
+    const leg1FuelUnits = perUnitFuelUnits * quantity;
     const leg1FuelCost = leg1FuelUnits * fuelPrice;
-    const upfrontCost = quantity * originMarket.price + leg1FuelCost + this.currentFixedShipmentCost();
-    if (upfrontCost > this.cash) return;
+    if (leg1FuelCost > this.cash) return;
 
     const buyPrice = originMarket.price;
-    this.cash -= upfrontCost;
+    const goodsCost = quantity * buyPrice;
+    this.cash -= leg1FuelCost;
     this.totalFuelSpent += leg1FuelCost;
     this.totalFuelUnitsConsumed += leg1FuelUnits;
-    this.totalFixedFeesSpent += this.transport!.fixedShipmentCost;
     this.applyPriceImpact(originMarket, quantity, "buy");
     originMarket.applyTrade(quantity);
+    originMarket.location.cash += goodsCost;
+    issuingLocation.cash -= goodsCost;
     if (fuelMarket !== undefined) this.applyPriceImpact(fuelMarket, leg1FuelUnits, "buy");
 
     const nodes = pathNodeSequence(originLocation, path);
@@ -781,7 +800,7 @@ export class Captain extends Crew {
       fuelPricePaid: fuelPrice,
       fuelUnitsConsumed: leg1FuelUnits,
       fuelCostTotal: leg1FuelCost,
-      totalCost: upfrontCost,
+      totalCost: leg1FuelCost,
       departureDay: day,
       contract,
     };
@@ -916,14 +935,20 @@ export class Captain extends Crew {
     reasonCommodity: string | null = null,
   ): boolean {
     if (destination === this.location) return false;
-    const route = getRoute(this.location, destination);
-    if (!this.transport!.canUseRoute(route)) return false;
+    // Reachability allows a multi-hop path, not just a direct edge -- the
+    // distance/time below are coordinate-based (not edge-based), so a
+    // multi-hop reposition is simulated the same way a direct one already
+    // was: one continuous transit, no intermediate-stop bookkeeping needed.
+    const path = findShortestPath(this.location, destination, (r) => this.transport!.canUseRoute(r));
+    if (path === null || path.length === 0) return false;
 
     const fuelMarketHere = buyMarkets.get(marketKey(this.location, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
     const repositionDistance = distanceBetween(this.location, destination);
     const repositionDays = travelDaysBetween(this.location, destination, this.transport!.speedUnitsPerDay);
-    const repositionRouteType: string = route !== undefined ? route.routeType : "unknown";
+    const repositionRouteTypes: RouteType[] = [];
+    for (const leg of path) if (!repositionRouteTypes.includes(leg.routeType)) repositionRouteTypes.push(leg.routeType);
+    const repositionRouteType: string = repositionRouteTypes.join("+");
     const repositionFuelUnits = repositionDistance * this.currentRepositionFuelRate();
     const repositionFuelCost = repositionFuelUnits * fuelPriceHere;
     if (repositionFuelCost > this.cash) return false;

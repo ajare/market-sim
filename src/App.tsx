@@ -3,6 +3,7 @@ import { useSimLoop } from "./state/useSimLoop";
 import { ControlsPanel } from "./components/ControlsPanel";
 import { LocationsPanel } from "./components/LocationsPanel";
 import { FleetPanel } from "./components/FleetPanel";
+import { ContractsPanel } from "./components/ContractsPanel";
 import { NetworkView } from "./components/NetworkView";
 import "./App.css";
 
@@ -20,6 +21,7 @@ function App() {
       <div className="panels">
         <LocationsPanel />
         <FleetPanel />
+        <ContractsPanel />
       </div>
     </div>
   );

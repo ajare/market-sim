@@ -18,6 +18,7 @@ import { Sailor } from "./crew";
 import { Ship, type Transport } from "./transport";
 import { getRoute } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
+import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randChoice } from "./simRandom";
 import type { Contract } from "./contracts";
@@ -123,7 +124,7 @@ export class Company extends Faction {
   }
 
   directFleet(
-    day: number,
+    _day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     commodities: string[],
@@ -138,7 +139,7 @@ export class Company extends Faction {
 
     if (this.acceptsContracts) {
       this.claimOpenContracts(openContracts);
-      this.serviceContracts(day, idle, assigned, directives, buyMarkets, closedLocations);
+      this.serviceContracts(idle, assigned, directives, buyMarkets, closedLocations);
     }
 
     const arbitrageIdle = idle.filter((t) => !assigned.has(t));
@@ -189,8 +190,14 @@ export class Company extends Faction {
    * so a single Company (especially whichever happens to act first each day)
    * can't monopolize every contract in the world -- leaving the rest for
    * other Companies to pick up.
+   *
+   * No affordability check: the issuing Location pays for the goods
+   * directly (see Captain.executeContractDelivery), so a Company only ever
+   * needs to afford fuel for a delivery it's already claimed -- checked at
+   * departure time, not at claim time.
    */
   private claimOpenContracts(openContracts: readonly Contract[]): void {
+    this.contracts = this.contracts.filter((c) => !c.fulfilled);
     for (const contract of openContracts) {
       if (this.contracts.length >= this.captains.length) break;
       if (contract.company === null) {
@@ -209,7 +216,6 @@ export class Company extends Faction {
    * it idle-at-producer and take the first branch).
    */
   private serviceContracts(
-    day: number,
     idle: Captain[],
     assigned: Set<Captain>,
     directives: Map<Captain, Directive>,
@@ -218,10 +224,18 @@ export class Company extends Faction {
   ): void {
     for (const contract of this.contracts) {
       if (assigned.size >= idle.length) break;
-      if (contract.inFlightCaptain !== null) continue;
-      const due = contract.lastDeliveryDay === null || day - contract.lastDeliveryDay >= contract.intervalDays;
-      if (!due) continue;
-
+      if (contract.inFlightCaptain !== null) {
+        // An Inactive transport never recovers (Captain.act's InTransit
+        // branch flips it once and there's no path back) -- so a captain
+        // frozen mid-delivery would otherwise deadlock this contract
+        // forever, since inFlightCaptain !== null blocks any replacement.
+        // Release it so another idle captain can pick up the delivery.
+        if (contract.inFlightCaptain.transport?.status === "Inactive") {
+          contract.inFlightCaptain = null;
+        } else {
+          continue;
+        }
+      }
       const readyCaptain = idle.find((c) => {
         if (assigned.has(c)) return false;
         const market = buyMarkets.get(marketKey(c.location, contract.commodity));
@@ -233,16 +247,39 @@ export class Company extends Faction {
         continue;
       }
 
-      let best: { captain: Captain; destination: string; distance: number } | null = null;
+      // Reachability must allow a multi-hop path, not just a direct edge --
+      // otherwise a captain idle somewhere with no DIRECT route to any
+      // producer never gets repositioned at all, and (never moving) never
+      // discovers a route from anywhere else either, permanently starving
+      // the contract. departEmptyTo already executes multi-hop repositions
+      // (its distance/time math is coordinate-based, not edge-based), so
+      // this search just needs to match what it can actually carry out.
+      //
+      // Candidates are ranked by how much of the contract a trip there could
+      // actually deliver (capped at contract.quantity -- once a producer can
+      // fully supply it, more stock on top doesn't matter), THEN by
+      // distance. Pure nearest-first previously let a commodity with few,
+      // geographically scattered producers get stuck repeatedly routing to
+      // the same nearby-but-thin producer instead of a farther one with
+      // ample stock -- every delivery would land far short of
+      // contract.quantity, never letting the destination's stockpile
+      // recover (see Simulation.md's Gold/Silver stockout finding).
+      let best: { captain: Captain; destination: string; deliverable: number; distance: number } | null = null;
       for (const captain of idle) {
         if (assigned.has(captain)) continue;
         for (const market of buyMarkets.values()) {
           if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
           if (closedLocations.has(market.locationName)) continue;
-          if (!captain.transport!.canUseRoute(getRoute(captain.location, market.locationName))) continue;
+          const path = findShortestPath(captain.location, market.locationName, (r) => captain.transport!.canUseRoute(r));
+          if (path === null) continue;
+          const deliverable = Math.min(captain.transport!.cargoCapacity, contract.quantity, market.availableQuantity);
           const dist = distanceBetween(captain.location, market.locationName);
-          if (best === null || dist < best.distance) {
-            best = { captain, destination: market.locationName, distance: dist };
+          const better =
+            best === null ||
+            deliverable > best.deliverable ||
+            (deliverable === best.deliverable && dist < best.distance);
+          if (better) {
+            best = { captain, destination: market.locationName, deliverable, distance: dist };
           }
         }
       }

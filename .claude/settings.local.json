@@ -32,7 +32,12 @@
       "PowerShell(cd C:\\\\Code\\\\Projects\\\\sim; $env:PYTHONPATH=\"C:\\\\Code\\\\Projects\\\\sim\"; .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\wtmrs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Code-Projects-sim\\\\3c3255d7-2d96-4da2-b2bc-ef7c26e333a3\\\\scratchpad\\\\test_inactive_status2.py\")",
       "Bash(.venv/Scripts/python.exe -c \"import sim.world, cli\")",
       "Bash(.venv/Scripts/python.exe -m pytest -q)",
-      "Bash(.venv/Scripts/python.exe -c ' *)"
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(npm install *)",
+      "Bash(npm --version)",
+      "Bash(node -e \"console.log\\(process.platform, process.arch\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(npm run *)"
     ]
   }
 }

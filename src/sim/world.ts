@@ -21,7 +21,17 @@ import { ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES } from "./names";
 import { Faction, Company, PirateBrigade, PoliceFleet } from "./faction";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randRandom, randChoice, randInt, randShuffle, seedSimRandom } from "./simRandom";
-import { generateContracts, type Contract } from "./contracts";
+import { tenderContracts, pruneContracts, type Contract, type TenderContractsOptions } from "./contracts";
+
+// Locations must fall within this range. Calibrated via seed-averaged
+// stockpile-ratio sweeps (see analysis.ts / npm run sweep): below ~20 total
+// locations, the stockpile-vs-minimum target becomes structurally
+// unreachable (it plateaus well under 1.0 even with a much larger fleet --
+// a 10-hub/13-location world tops out around 0.88 mean ratio at 3x the
+// calibrated ships/location ratio); the default 33-location world and
+// larger comfortably clear the target at the calibrated fleet size.
+export const MIN_LOCATIONS = 20;
+export const MAX_LOCATIONS = 50;
 
 export type AgentOrderFn = (traders: Captain[], day: number) => Captain[];
 
@@ -74,8 +84,10 @@ export interface WorldInit {
   factions?: Faction[];
   agentOrderFn?: AgentOrderFn;
   numPoliceShips?: number;
-  /** Supply contracts on offer; defaults to one per (Location, consumed commodity) pair via generateContracts. */
+  /** Supply contracts on offer; defaults to empty -- the first day's tendering populates whatever's already below threshold. */
   contracts?: Contract[];
+  /** Overrides for tenderContracts' tunable knobs (expiry, fee curve, quantity multiplier) -- defaults to contracts.ts's module constants if omitted. */
+  contractOptions?: TenderContractsOptions;
 }
 
 export class World {
@@ -98,9 +110,15 @@ export class World {
   captains: Captain[];
   agentOrderFn: AgentOrderFn;
   contracts: Contract[];
+  contractOptions: TenderContractsOptions;
   private nextDay = 1;
 
   constructor(init: WorldInit) {
+    if (init.locations.length < MIN_LOCATIONS || init.locations.length > MAX_LOCATIONS) {
+      throw new Error(
+        `World: locations.length must be between ${MIN_LOCATIONS} and ${MAX_LOCATIONS} (got ${init.locations.length}).`,
+      );
+    }
     if (init.seed !== undefined) {
       // World's own seed reseeds the shared sim RNG separately from the
       // (already-generated, independently-seeded) network geography --
@@ -110,7 +128,8 @@ export class World {
     primeRouteGraphCache();
 
     this.locations = init.locations;
-    this.contracts = init.contracts ?? generateContracts(init.locations);
+    this.contracts = init.contracts ?? [];
+    this.contractOptions = init.contractOptions ?? {};
     this.globalEventProbability = init.globalEventProbability ?? 0.06;
     this.locationEventProbability = init.locationEventProbability ?? 0.04;
     this.worldwideEventProbability = init.worldwideEventProbability ?? 0.02;
@@ -333,6 +352,12 @@ export class World {
   }
 
   private runDay(day: number, commoditiesPresent: string[]): void {
+    // Contracts are pruned/tendered at the very start of the day, before any
+    // Faction acts, against yesterday's closing stockpile levels -- so
+    // Factions see today's fresh offers (and never a stale/expired one).
+    this.contracts = pruneContracts(this.contracts, this.locations, day);
+    this.contracts.push(...tenderContracts(this.locations, this.contracts, day, this.contractOptions));
+
     // Location closures resolve before anyone acts today.
     this.tickLocationClosures();
     this.tickBroadEvents();
