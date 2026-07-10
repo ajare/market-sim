@@ -150,20 +150,22 @@ export function buildWorld(
   for (let i = 0; i < numCompanies; i++) {
     const crew = fleetCrew.slice(i * actualShipsPerCompany, (i + 1) * actualShipsPerCompany);
     if (crew.length === 0) continue;
-    const FactionCls = i % 2 === 0 ? Company : SoloTrader;
-    companies.push(new FactionCls(`Company ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
+    const isSolo = i % 2 !== 0;
+    const FactionCls = isSolo ? SoloTrader : Company;
+    const name = `${isSolo ? "Solo" : "Company"} ${pad3(i + 1)}`;
+    companies.push(new FactionCls(name, crew, cashPerShip * crew.length));
   }
 
   const factions: Faction[] = [...companies];
 
   const world = new World({
     locations,
-    globalEventProbability: 0.06,
-    localEventProbability: 0.08,
-    locationEventProbability: 0.04,
-    worldwideEventProbability: 0.02,
-    locationClosureProbability: 0.015,
-    companyEventProbability: 0.05,
+    globalEventProbability: 0.006,
+    localEventProbability: 0.008,
+    locationEventProbability: 0.004,
+    worldwideEventProbability: 0.002,
+    locationClosureProbability: 0.0015,
+    companyEventProbability: 0.005,
     seed,
     factions,
     numPoliceShips: 0,

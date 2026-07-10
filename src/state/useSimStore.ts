@@ -13,7 +13,7 @@
 import { create } from "zustand";
 import { buildWorld } from "../sim/buildWorld";
 import type { World } from "../sim/world";
-import type { Faction } from "../sim/faction";
+import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 
 interface SimStore {
   world: World | null;
@@ -21,15 +21,24 @@ interface SimStore {
   day: number;
   playing: boolean;
   secondsPerDay: number;
+  contractStrategy: ContractStrategy;
   version: number;
   reset: () => void;
   step: () => void;
   tick: (deltaTimeSeconds: number) => void;
   setPlaying: (playing: boolean) => void;
   setSecondsPerDay: (secondsPerDay: number) => void;
+  setContractStrategy: (contractStrategy: ContractStrategy) => void;
 }
 
 let accumulator = 0;
+
+/** Push a strategy onto every Company in a fleet -- read live by Company.directFleet, so this takes effect on the next simulated day. */
+function applyContractStrategy(factions: Faction[], strategy: ContractStrategy): void {
+  for (const faction of factions) {
+    if (faction instanceof Company) faction.contractStrategy = strategy;
+  }
+}
 
 export const useSimStore = create<SimStore>((set, get) => ({
   world: null,
@@ -37,10 +46,12 @@ export const useSimStore = create<SimStore>((set, get) => ({
   day: 0,
   playing: false,
   secondsPerDay: 1.0,
+  contractStrategy: "compare",
   version: 0,
 
   reset: () => {
     const { world, factions } = buildWorld(1000);
+    applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
     set((s) => ({ world, factions, day: 0, playing: false, version: s.version + 1 }));
   },
@@ -64,6 +75,10 @@ export const useSimStore = create<SimStore>((set, get) => ({
 
   setPlaying: (playing: boolean) => set({ playing }),
   setSecondsPerDay: (secondsPerDay: number) => set({ secondsPerDay }),
+  setContractStrategy: (contractStrategy: ContractStrategy) => {
+    applyContractStrategy(get().factions, contractStrategy);
+    set((s) => ({ contractStrategy, version: s.version + 1 }));
+  },
 }));
 
 // Build the initial world immediately, mirroring SimState.__init__ calling reset().

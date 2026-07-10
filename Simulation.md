@@ -339,6 +339,53 @@ world outside `[20, 50]` needs its own re-calibration sweep (fleet ratio,
 `quantityMultiplier`, and this range itself) rather than assuming the
 current defaults hold -- see Finding 3.
 
+## Finding 8: `contractStrategy` -- comparing contracts against arbitrage by profit doesn't hurt the ratio
+
+Every finding above assumed the original dispatch rule: a `Company`
+(`src/sim/faction.ts`) claims and services its due Contracts first, then
+arbitrages with whatever ships are left over (`Company.directFleet`,
+`contractStrategy = "prioritise"`). That's a reasonable default when
+Contracts are assumed to matter more than any single arbitrage trade, but it
+means a ship can be pulled off a strongly profitable arbitrage route to
+service a barely-profitable contract just because the contract is due.
+
+`contractStrategy = "compare"` (now the default) instead has each idle ship
+weigh its best available Contract against its own best arbitrage route --
+both expressed as expected profit per ship-day (`Captain.
+estimateContractProfitPerDay` vs. `Captain.findBestLocalRoute`'s
+`expectedProfit / travelDays`) -- and takes whichever pays more. A
+still-open Contract is only actually claimed at the moment some ship commits
+to it, rather than being claimed eagerly and held; a Contract no Company
+ever finds worth taking just stays open for another Company, or expires and
+re-tenders per the normal Contract lifecycle (`contracts.ts`).
+
+Since this changes *which* ships end up servicing Contracts (and how many),
+it was checked against the same stockpile-ratio metric the rest of this
+document tunes against -- averaged over 8 seeds, 90 days, the calibrated
+defaults otherwise unchanged (5 ships/location, `quantityMultiplier: 1.5`,
+`minStockpileDays: 14`):
+
+| contractStrategy | mean ratio | sd | min | max |
+| --- | --- | --- | --- | --- |
+| prioritise (old default) | 1.312 | 0.023 | 1.288 | 1.369 |
+| **compare (new default)** | **1.416** | 0.032 | 1.359 | 1.467 |
+
+`compare` is not a regression against the calibrated target -- if anything
+it runs a bit higher and every seed clears `1.0` with room to spare. The
+intuition: `compare` never diverts a ship onto a *marginal* contract when a
+clearly better arbitrage trade is sitting right there, but it still services
+every contract that's actually worth a ship's time (and, since dispatch is
+now driven by whichever ship the trade is *most* profitable for rather than
+whichever ship happened to be idle-in-port first, individual deliveries
+tend to be better-targeted) -- so aggregate stock coverage comes out at
+least as healthy, not worse.
+
+This does not reopen the fleet-sizing calibration in Findings 1-2: the
+165-ship baseline was never *tight* against `1.0` (see the tables above),
+and `compare`'s effect is well inside that existing slack. If
+`contractStrategy` or the fleet ratio are retuned further in the future,
+re-sweep both together rather than assuming they're independent.
+
 ## How to re-run or extend these experiments
 
 All the tunables used above are `buildWorld` options

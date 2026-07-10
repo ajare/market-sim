@@ -4,7 +4,11 @@ import { ControlsPanel } from "./components/ControlsPanel";
 import { LocationsPanel } from "./components/LocationsPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { ContractsPanel } from "./components/ContractsPanel";
+import { StockHistoryPanel } from "./components/StockHistoryPanel";
+import { PriceHistoryPanel } from "./components/PriceHistoryPanel";
+import { NetWorthHistoryPanel } from "./components/NetWorthHistoryPanel";
 import { NetworkView } from "./components/NetworkView";
+import { EventsPanel } from "./components/EventsPanel";
 import "./App.css";
 
 function App() {
@@ -18,6 +22,10 @@ function App() {
       <h1>Commodity Sim</h1>
       <ControlsPanel />
       <NetworkView />
+      <EventsPanel />
+      <StockHistoryPanel />
+      <PriceHistoryPanel />
+      <NetWorthHistoryPanel />
       <div className="panels">
         <LocationsPanel />
         <FleetPanel />

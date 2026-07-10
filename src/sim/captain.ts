@@ -169,7 +169,7 @@ export class Captain extends Crew {
     repositionReturnMultiplier: number = 1.25,
     minDailyReturnPct: number = 0.02,
     priceImpact: number = 0.01,
-    agentEventProbability: number = 0.05,
+    agentEventProbability: number = 0.005,
     carousing: number = 0.0,
   ) {
     super(name);
@@ -630,6 +630,56 @@ export class Captain extends Crew {
     return best;
   }
 
+  /**
+   * Estimate the COMPANY's expected profit per ship-day of delivering
+   * `contract` if this captain buys at `producer` and carries it to the
+   * contract's location. Public for the same reason as findBestLocalRoute:
+   * Company.directFleet (in "compare" mode) calls it to weigh a contract
+   * against this captain's best arbitrage route on a common basis.
+   *
+   * Only the costs the Company actually bears are counted -- crew wages over
+   * the whole trip, plus reposition fuel if the ship must first sail empty to
+   * the producer. The goods themselves and the delivery-leg fuel are paid /
+   * reimbursed by the issuing Location (see executeContractDelivery /
+   * fulfillContract), so they never enter the Company's profit. Ship-days are
+   * the scarce resource (contracts tie up almost no Company capital), so we
+   * normalize by days -- directly comparable to an arbitrage route's
+   * expectedProfit / travelDays. Returns null if producer or destination is
+   * unreachable.
+   */
+  estimateContractProfitPerDay(
+    contract: Contract,
+    producer: string,
+    buyMarkets: Map<string, Market>,
+  ): number | null {
+    const canUse = (r: Route) => this.transport!.canUseRoute(r);
+
+    const deliveryPath = findShortestPath(producer, contract.location, canUse);
+    if (deliveryPath === null) return null;
+    const deliveryNodes = pathNodeSequence(producer, deliveryPath);
+    let deliveryDays = 0;
+    for (let i = 0; i < deliveryPath.length; i++) {
+      deliveryDays += travelDaysBetween(deliveryNodes[i], deliveryNodes[i + 1], this.transport!.speedUnitsPerDay);
+    }
+
+    let repositionDays = 0;
+    let repositionFuelCost = 0;
+    if (producer !== this.location) {
+      const repositionPath = findShortestPath(this.location, producer, canUse);
+      if (repositionPath === null) return null;
+      repositionDays = travelDaysBetween(this.location, producer, this.transport!.speedUnitsPerDay);
+      const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+      const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
+      repositionFuelCost = distanceBetween(this.location, producer) * this.currentRepositionFuelRate() * fuelPrice;
+    }
+
+    const totalDays = repositionDays + deliveryDays;
+    if (totalDays <= 0) return null;
+    const crewCost = this.dailyCrewCost() * totalDays;
+    const profit = contract.deliveryFee - crewCost - repositionFuelCost;
+    return profit / totalDays;
+  }
+
   private executeLocalRoute(
     route: { commodity: string; destination: string },
     day: number,
@@ -991,7 +1041,10 @@ export class Captain extends Crew {
 
   recordPortfolioSnapshot(day: number, sellMarkets: Map<string, Market>): void {
     let cargoValue = 0.0;
-    if (this.cargo !== null) {
+    // Contract cargo is paid for by the issuing Location, not this Captain's
+    // Company (see executeContractDelivery), so it's excluded from portfolio
+    // value the same way Faction.netWorth excludes it.
+    if (this.cargo !== null && this.cargo.contract === null) {
       const markLocation = this.status === "AtLocation" ? this.location : this.cargo.destination;
       const market = sellMarkets.get(marketKey(markLocation, this.cargo.commodity));
       cargoValue =

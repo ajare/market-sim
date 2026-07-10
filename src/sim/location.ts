@@ -3,11 +3,23 @@
  * have. Ported from sim/location.py -- see that file's docstring for the
  * full produce/consume/stockpile model this implements.
  */
+import {
+  CONTRACT_BASE_FEE_RATE, CONTRACT_FEE_ESCALATION_BASE, CONTRACT_QUANTITY_MULTIPLIER,
+  DEFAULT_CONTRACT_EXPIRY_DAYS, contractKey, round2,
+  type BulletinBoard, type Contract, type TenderContractsOptions,
+} from "./contracts";
 
 export type TerminalType = "Port" | "Station" | "Airport" | "Platform";
 
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
+
+/** Posts Contracts to a BulletinBoard -- see Location.tenderContracts for the only current implementation. */
+export class ContractIssuer {
+  protected postContract(board: BulletinBoard, contract: Contract): void {
+    board.post(contract);
+  }
+}
 
 export interface LocationInit {
   name: string;
@@ -25,7 +37,7 @@ export interface LocationInit {
   contractThresholdFraction?: number;
 }
 
-export class Location {
+export class Location extends ContractIssuer {
   name: string;
   producedCommodities: Record<string, number>;
   consumedCommodities: Record<string, number>;
@@ -52,6 +64,7 @@ export class Location {
   private readonly frozenReferenceStockpiles: Record<string, number>;
 
   constructor(init: LocationInit) {
+    super();
     this.name = init.name;
     this.producedCommodities = init.producedCommodities;
     this.consumedCommodities = init.consumedCommodities;
@@ -127,6 +140,67 @@ export class Location {
     for (const commodity of Object.keys(this.consumedCommodities)) {
       const rate = this.consumedCommodities[commodity];
       this.stockpiles[commodity] = Math.max(0, (this.stockpiles[commodity] ?? 0) - rate);
+    }
+  }
+
+  /**
+   * Post a fresh one-shot Contract for every consumed commodity that
+   * currently needs restocking (`needsContractRestock`), isn't already
+   * covered by an active contract (`activeContractKeys`, built by World from
+   * both the BulletinBoard and every ContractFulfiller's accepted-but-
+   * unfulfilled contracts -- see World.runDay), and while this Location
+   * isn't broke (`cash <= 0`). `quantity` is this Location's own
+   * minimum-stockpile target times `quantityMultiplier`. `deliveryFee` is
+   * `baseFeeRate` of goods value, scaled up by an exponential urgency curve
+   * based on how far *below* (not above) the minimum the current stockpile
+   * actually is -- flat `baseFeeRate` anywhere in the proactive 100%-150%
+   * zone, ramping toward `baseFeeRate * feeEscalationBase` as stock
+   * approaches zero. Called at the very start of each simulated day (see
+   * World.runDay), before Factions act, against whatever
+   * `BulletinBoard.prune` left open.
+   */
+  tenderContracts(
+    day: number,
+    board: BulletinBoard,
+    activeContractKeys: ReadonlySet<string>,
+    options: TenderContractsOptions = {},
+  ): void {
+    if (this.cash <= 0) return;
+    const {
+      expiryDays = DEFAULT_CONTRACT_EXPIRY_DAYS,
+      baseFeeRate = CONTRACT_BASE_FEE_RATE,
+      feeEscalationBase = CONTRACT_FEE_ESCALATION_BASE,
+      quantityMultiplier = CONTRACT_QUANTITY_MULTIPLIER,
+    } = options;
+
+    for (const commodity of Object.keys(this.consumedCommodities)) {
+      if (activeContractKeys.has(contractKey(this.name, commodity))) continue;
+      if (!this.needsContractRestock(commodity)) continue;
+
+      const minQuantity = this.minStockpiles[commodity] ?? 0;
+      if (minQuantity <= 0) continue;
+      const quantity = minQuantity * quantityMultiplier;
+
+      const stock = this.stockpiles[commodity] ?? 0;
+      const deficitRatio = Math.max(0, Math.min(1, (minQuantity - stock) / minQuantity));
+      const feeMultiplier = feeEscalationBase ** deficitRatio;
+
+      const basePrice = this.basePrices[commodity] ?? 0;
+      const deliveryFee = round2(quantity * basePrice * baseFeeRate * feeMultiplier);
+
+      const contract: Contract = {
+        location: this.name,
+        commodity,
+        type: "Commodity",
+        quantity,
+        deliveryFee,
+        fulfiller: null,
+        inFlightCaptain: null,
+        fulfilled: false,
+        beginDay: day,
+        expiryDay: day + expiryDays,
+      };
+      this.postContract(board, contract);
     }
   }
 }

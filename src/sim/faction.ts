@@ -21,9 +21,27 @@ import { getLocation, distanceBetween } from "./worldData";
 import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randChoice } from "./simRandom";
-import type { Contract } from "./contracts";
+import type { BulletinBoard, Contract, ContractType } from "./contracts";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
+
+/**
+ * How a Company decides between servicing contracts and arbitraging
+ * (default: "compare" -- see Company.contractStrategy):
+ * - "compare": weigh each contract against the ship's own best arbitrage
+ *   route (by expected profit per ship-day) and take whichever pays more --
+ *   claiming a contract only at the moment a ship commits to it.
+ * - "prioritise": claim and service due contracts first, then arbitrage with
+ *   whatever ships are left (the original behaviour, before this toggle
+ *   existed).
+ */
+export type ContractStrategy = "prioritise" | "compare";
+
+export interface FactionNetWorthSnapshot {
+  day: number;
+  cash: number;
+  netWorth: number;
+}
 
 export class Faction {
   get poolsCash(): boolean {
@@ -35,6 +53,7 @@ export class Faction {
   startingCash: number;
   /** The single shared pool every captain's `cash` reads/writes through -- only meaningful when poolsCash. */
   cash: number = 0;
+  netWorthHistory: FactionNetWorthSnapshot[] = [];
 
   constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
     this.name = name;
@@ -78,7 +97,10 @@ export class Faction {
   netWorth(sellMarkets: Map<string, Market>): number {
     let total = this.totalCash();
     for (const t of this.captains) {
-      if (t.cargo !== null) {
+      // Contract cargo is bought and paid for by the issuing Location, not
+      // the Company (see Captain.executeContractDelivery) -- the Company only
+      // fronts fuel -- so it's not a Company asset and is excluded here.
+      if (t.cargo !== null && t.cargo.contract === null) {
         const markLocation = t.status === "AtLocation" ? t.location : t.cargo.destination;
         const market = sellMarkets.get(marketKey(markLocation, t.cargo.commodity));
         const unitValue = market !== undefined ? market.price : t.cargo.unitCost;
@@ -86,6 +108,10 @@ export class Faction {
       }
     }
     return total;
+  }
+
+  recordNetWorthSnapshot(day: number, sellMarkets: Map<string, Market>): void {
+    this.netWorthHistory.push({ day, cash: this.totalCash(), netWorth: this.netWorth(sellMarkets) });
   }
 
   /**
@@ -99,10 +125,41 @@ export class Faction {
     _buyMarkets: Map<string, Market>,
     _sellMarkets: Map<string, Market>,
     _commodities: string[],
-    _closedLocations: ReadonlySet<string> = new Set(),
-    _contracts: readonly Contract[] = [],
+    _closedLocations: ReadonlySet<string>,
+    _board: BulletinBoard,
   ): Map<Captain, Directive> {
     return new Map();
+  }
+}
+
+/**
+ * A Faction that accepts Contracts from a BulletinBoard, filtered to the
+ * ContractTypes it declares it can handle (`contractTypes` -- empty means it
+ * never accepts anything, e.g. SoloTrader). `contracts` holds every Contract
+ * this fulfiller has accepted but not yet had fulfilled.
+ */
+export class ContractFulfiller extends Faction {
+  /** Contract types this fulfiller can accept. Empty by default -- a plain ContractFulfiller (like SoloTrader) accepts nothing. */
+  contractTypes: readonly ContractType[] = [];
+
+  /** Contracts accepted by this fulfiller -- see availableContracts/acceptContract. */
+  contracts: Contract[] = [];
+
+  /** Postings on `board` this fulfiller is able to accept, per `contractTypes`. Never includes an already-accepted posting -- a board only ever holds unaccepted ones. */
+  protected availableContracts(board: BulletinBoard): Contract[] {
+    return board.open.filter((c) => this.contractTypes.includes(c.type));
+  }
+
+  /** Accept `contract`: remove it from `board`, stamp this fulfiller as its owner, and add it to `contracts`. */
+  protected acceptContract(board: BulletinBoard, contract: Contract): void {
+    board.remove(contract);
+    contract.fulfiller = this;
+    this.contracts.push(contract);
+  }
+
+  /** Drop contracts this fulfiller has already had fulfilled -- called at the top of a servicing pass. */
+  protected pruneFulfilled(): void {
+    this.contracts = this.contracts.filter((c) => !c.fulfilled);
   }
 }
 
@@ -111,25 +168,31 @@ export class Faction {
  * idle transport's best local route is scored and assigned in descending
  * daily-return order, spreading coverage rather than piling onto one
  * route) plus shared capital (inherited from Faction). Also the only kind
- * of Faction that claims and services supply Contracts (see
- * `acceptsContracts`, overridden to false on SoloTrader) -- claimed
- * contracts are serviced before any arbitrage routing is even considered.
+ * of ContractFulfiller that can accept anything by default (`contractTypes`,
+ * emptied on SoloTrader) -- how an accepted contract is weighed against
+ * arbitrage is per-Company, via `contractStrategy` (see ContractStrategy and
+ * directFleet).
  */
-export class Company extends Faction {
-  /** Contracts claimed by this Company -- see claimOpenContracts/serviceContracts. */
-  contracts: Contract[] = [];
+export class Company extends ContractFulfiller {
+  override contractTypes: readonly ContractType[] = ["Commodity"];
 
-  get acceptsContracts(): boolean {
-    return true;
-  }
+  /**
+   * Whether THIS Company prioritises contracts over arbitrage, or weighs the
+   * two by expected profit -- see ContractStrategy and directFleet. A plain
+   * instance field (not shared state), so each Company could in principle run
+   * a different strategy; buildWorld currently starts every Company at the
+   * same default ("compare"), and the UI's toggle pushes a single choice onto
+   * all of them at once, but nothing stops per-Company variation.
+   */
+  contractStrategy: ContractStrategy = "compare";
 
   directFleet(
     _day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     commodities: string[],
-    closedLocations: ReadonlySet<string> = new Set(),
-    openContracts: readonly Contract[] = [],
+    closedLocations: ReadonlySet<string>,
+    board: BulletinBoard,
   ): Map<Captain, Directive> {
     const idle = this.captains.filter((t) => t.isIdleInPort(closedLocations));
     if (idle.length === 0) return new Map();
@@ -137,8 +200,12 @@ export class Company extends Faction {
     const directives = new Map<Captain, Directive>();
     const assigned = new Set<Captain>();
 
-    if (this.acceptsContracts) {
-      this.claimOpenContracts(openContracts);
+    if (this.contractStrategy === "compare") {
+      this.serviceContractsByProfit(
+        idle, assigned, directives, buyMarkets, sellMarkets, commodities, closedLocations, board,
+      );
+    } else {
+      this.claimOpenContracts(board);
       this.serviceContracts(idle, assigned, directives, buyMarkets, closedLocations);
     }
 
@@ -185,25 +252,22 @@ export class Company extends Faction {
   }
 
   /**
-   * Claim any still-unclaimed Contract, capped at roughly one contract's
-   * worth of dedicated capacity per ship (`contracts.length < captains.length`)
-   * so a single Company (especially whichever happens to act first each day)
-   * can't monopolize every contract in the world -- leaving the rest for
-   * other Companies to pick up.
+   * Accept any still-available Contract off `board`, capped at roughly one
+   * contract's worth of dedicated capacity per ship (`contracts.length <
+   * captains.length`) so a single Company (especially whichever happens to
+   * act first each day) can't monopolize every contract in the world --
+   * leaving the rest for other Companies to pick up.
    *
    * No affordability check: the issuing Location pays for the goods
    * directly (see Captain.executeContractDelivery), so a Company only ever
-   * needs to afford fuel for a delivery it's already claimed -- checked at
-   * departure time, not at claim time.
+   * needs to afford fuel for a delivery it's already accepted -- checked at
+   * departure time, not at accept time.
    */
-  private claimOpenContracts(openContracts: readonly Contract[]): void {
-    this.contracts = this.contracts.filter((c) => !c.fulfilled);
-    for (const contract of openContracts) {
+  private claimOpenContracts(board: BulletinBoard): void {
+    this.pruneFulfilled();
+    for (const contract of this.availableContracts(board)) {
       if (this.contracts.length >= this.captains.length) break;
-      if (contract.company === null) {
-        contract.company = this;
-        this.contracts.push(contract);
-      }
+      this.acceptContract(board, contract);
     }
   }
 
@@ -290,6 +354,118 @@ export class Company extends Faction {
     }
   }
 
+  /**
+   * "compare"-mode servicing: instead of claiming and prioritising contracts,
+   * weigh each contract against the ship's own best arbitrage route and take
+   * whichever earns more per ship-day. Candidate contracts are this Company's
+   * already-claimed unfulfilled ones plus still-open (unclaimed) ones -- but a
+   * still-open contract is only actually claimed at the moment a ship commits
+   * to it, so contracts we never find profitable stay open for other Companies
+   * (and expire / re-tender normally) rather than being hoarded unserviced.
+   */
+  private serviceContractsByProfit(
+    idle: Captain[],
+    assigned: Set<Captain>,
+    directives: Map<Captain, Directive>,
+    buyMarkets: Map<string, Market>,
+    sellMarkets: Map<string, Market>,
+    commodities: string[],
+    closedLocations: ReadonlySet<string>,
+    board: BulletinBoard,
+  ): void {
+    this.pruneFulfilled();
+    const candidateContracts = [...this.contracts, ...this.availableContracts(board)];
+    if (candidateContracts.length === 0) return;
+
+    // The bar each contract must clear: the captain's best arbitrage $/day
+    // (expected net profit over the trip, per day of ship-time). -Infinity
+    // means the captain has no viable arbitrage right now, so any profitable
+    // contract wins.
+    const arbPerDay = new Map<Captain, number>();
+    for (const captain of idle) {
+      const best = captain.findBestLocalRoute(buyMarkets, sellMarkets, commodities, closedLocations);
+      arbPerDay.set(captain, best !== null && best.travelDays > 0 ? best.expectedProfit / best.travelDays : -Infinity);
+    }
+
+    interface Option { captain: Captain; contract: Contract; producer: string; ready: boolean; perDay: number; }
+    const options: Option[] = [];
+    for (const contract of candidateContracts) {
+      if (contract.inFlightCaptain !== null) {
+        // Same Inactive-transport release valve as serviceContracts.
+        if (contract.inFlightCaptain.transport?.status === "Inactive") contract.inFlightCaptain = null;
+        else continue;
+      }
+      for (const captain of idle) {
+        if (assigned.has(captain)) continue;
+        const readyMarket = buyMarkets.get(marketKey(captain.location, contract.commodity));
+        let producer: string | null;
+        let ready = false;
+        if (readyMarket !== undefined && readyMarket.isAvailable && !closedLocations.has(captain.location)) {
+          producer = captain.location;
+          ready = true;
+        } else {
+          producer = this.bestProducer(captain, contract, buyMarkets, closedLocations);
+        }
+        if (producer === null) continue;
+        const perDay = captain.estimateContractProfitPerDay(contract, producer, buyMarkets);
+        if (perDay === null) continue;
+        if (perDay < (arbPerDay.get(captain) ?? -Infinity)) continue; // arbitrage is the better use of this ship
+        options.push({ captain, contract, producer, ready, perDay });
+      }
+    }
+
+    // Assign the most profitable options first, one ship per contract and one
+    // contract per ship.
+    options.sort((a, b) => b.perDay - a.perDay);
+    const usedContracts = new Set<Contract>();
+    for (const opt of options) {
+      if (assigned.has(opt.captain) || usedContracts.has(opt.contract)) continue;
+      if (opt.contract.fulfiller === null) {
+        // Accept now, at commit time -- capped like claimOpenContracts so one
+        // Company can't monopolise every contract.
+        if (this.contracts.length >= this.captains.length) continue;
+        this.acceptContract(board, opt.contract);
+      }
+      directives.set(
+        opt.captain,
+        opt.ready
+          ? { action: "CONTRACT_DELIVER", contract: opt.contract }
+          : { action: "REPOSITION", destination: opt.producer },
+      );
+      assigned.add(opt.captain);
+      usedContracts.add(opt.contract);
+    }
+  }
+
+  /**
+   * Best producer for `captain` to source `contract.commodity` from: reachable,
+   * ranked by how much of the contract a trip there could deliver (capped at
+   * the contract quantity) then by distance -- the same ranking serviceContracts
+   * uses, but resolved per-captain for serviceContractsByProfit.
+   */
+  private bestProducer(
+    captain: Captain,
+    contract: Contract,
+    buyMarkets: Map<string, Market>,
+    closedLocations: ReadonlySet<string>,
+  ): string | null {
+    let best: { destination: string; deliverable: number; distance: number } | null = null;
+    for (const market of buyMarkets.values()) {
+      if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
+      if (closedLocations.has(market.locationName)) continue;
+      const path = findShortestPath(captain.location, market.locationName, (r) => captain.transport!.canUseRoute(r));
+      if (path === null) continue;
+      const deliverable = Math.min(captain.transport!.cargoCapacity, contract.quantity, market.availableQuantity);
+      const dist = distanceBetween(captain.location, market.locationName);
+      const better =
+        best === null ||
+        deliverable > best.deliverable ||
+        (deliverable === best.deliverable && dist < best.distance);
+      if (better) best = { destination: market.locationName, deliverable, distance: dist };
+    }
+    return best === null ? null : best.destination;
+  }
+
   /** Deficit still open at a destination for a commodity -- floors at 0 so a destination already at/above its minimum doesn't block the first ship either. */
   private remainingDemand(commodity: string, destination: string): number {
     const location = getLocation(destination);
@@ -302,18 +478,16 @@ export class Company extends Faction {
 /**
  * A Company that still gets coordinated routing but does NOT pool its
  * fleet's cash into one shared balance -- each captain keeps their own
- * private balance. Also opts out of the Contract system entirely: Locations
- * only offer contracts to (and SoloTrader never claims from) pooled
- * Companies.
+ * private balance. Also opts out of the Contract system entirely, via an
+ * empty `contractTypes` -- `availableContracts` then always returns nothing,
+ * so a SoloTrader never accepts a posting regardless of what's on the board.
  */
 export class SoloTrader extends Company {
   override get poolsCash(): boolean {
     return false;
   }
 
-  override get acceptsContracts(): boolean {
-    return false;
-  }
+  override contractTypes: readonly ContractType[] = [];
 }
 
 export class PirateBrigade extends Faction {
@@ -467,8 +641,8 @@ export class PirateBrigade extends Faction {
     _buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     _commodities: string[],
-    closedLocations: ReadonlySet<string> = new Set(),
-    _contracts: readonly Contract[] = [],
+    closedLocations: ReadonlySet<string>,
+    _board: BulletinBoard,
   ): Map<Captain, Directive> {
     for (const captain of this.captains) {
       if (captain.status === "AtLocation") this.applyDailyCarousing(captain);
@@ -554,8 +728,8 @@ export class PoliceFleet extends Faction {
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     _commodities: string[],
-    closedLocations: ReadonlySet<string> = new Set(),
-    _contracts: readonly Contract[] = [],
+    closedLocations: ReadonlySet<string>,
+    _board: BulletinBoard,
   ): Map<Captain, Directive> {
     const allLocations = new Set<string>();
     for (const m of buyMarkets.values()) allLocations.add(m.locationName);

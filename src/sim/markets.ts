@@ -52,7 +52,7 @@ export class Market {
     startingPrice: number,
     basePrice: number,
     side: MarketSide,
-    eventProbability: number = 0.1,
+    eventProbability: number = 0.01,
     fixedPrice: boolean = false,
   ) {
     this.commodityName = commodityName;

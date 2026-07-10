@@ -18,10 +18,10 @@ import { Market, marketKey, type MarketRecord } from "./markets";
 import { Ship } from "./transport";
 import { Captain, type Directive } from "./captain";
 import { ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES } from "./names";
-import { Faction, Company, PirateBrigade, PoliceFleet } from "./faction";
+import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randRandom, randChoice, randInt, randShuffle, seedSimRandom } from "./simRandom";
-import { tenderContracts, pruneContracts, type Contract, type TenderContractsOptions } from "./contracts";
+import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
 
 // Locations must fall within this range. Calibrated via seed-averaged
 // stockpile-ratio sweeps (see analysis.ts / npm run sweep): below ~20 total
@@ -84,9 +84,7 @@ export interface WorldInit {
   factions?: Faction[];
   agentOrderFn?: AgentOrderFn;
   numPoliceShips?: number;
-  /** Supply contracts on offer; defaults to empty -- the first day's tendering populates whatever's already below threshold. */
-  contracts?: Contract[];
-  /** Overrides for tenderContracts' tunable knobs (expiry, fee curve, quantity multiplier) -- defaults to contracts.ts's module constants if omitted. */
+  /** Overrides for Location.tenderContracts' tunable knobs (expiry, fee curve, quantity multiplier) -- defaults to contracts.ts's module constants if omitted. */
   contractOptions?: TenderContractsOptions;
 }
 
@@ -109,9 +107,17 @@ export class World {
   policeFleet: PoliceFleet | null;
   captains: Captain[];
   agentOrderFn: AgentOrderFn;
-  contracts: Contract[];
+  bulletinBoard = new BulletinBoard();
   contractOptions: TenderContractsOptions;
   private nextDay = 1;
+
+  /** Every Contract currently in play: open board postings plus every ContractFulfiller's accepted-but-not-yet-fulfilled ones (a just-fulfilled contract stays visible here for the rest of the day it was delivered -- it's only pruned from its fulfiller's own list at the start of that fulfiller's next servicing pass). */
+  get contracts(): Contract[] {
+    return [
+      ...this.bulletinBoard.open,
+      ...this.factions.flatMap((f) => (f instanceof ContractFulfiller ? f.contracts : [])),
+    ];
+  }
 
   constructor(init: WorldInit) {
     if (init.locations.length < MIN_LOCATIONS || init.locations.length > MAX_LOCATIONS) {
@@ -128,14 +134,13 @@ export class World {
     primeRouteGraphCache();
 
     this.locations = init.locations;
-    this.contracts = init.contracts ?? [];
     this.contractOptions = init.contractOptions ?? {};
-    this.globalEventProbability = init.globalEventProbability ?? 0.06;
-    this.locationEventProbability = init.locationEventProbability ?? 0.04;
-    this.worldwideEventProbability = init.worldwideEventProbability ?? 0.02;
-    this.locationClosureProbability = init.locationClosureProbability ?? 0.01;
-    this.companyEventProbability = init.companyEventProbability ?? 0.05;
-    const localEventProbability = init.localEventProbability ?? 0.08;
+    this.globalEventProbability = init.globalEventProbability ?? 0.006;
+    this.locationEventProbability = init.locationEventProbability ?? 0.004;
+    this.worldwideEventProbability = init.worldwideEventProbability ?? 0.002;
+    this.locationClosureProbability = init.locationClosureProbability ?? 0.001;
+    this.companyEventProbability = init.companyEventProbability ?? 0.005;
+    const localEventProbability = init.localEventProbability ?? 0.008;
 
     this.factions = init.factions ? [...init.factions] : [];
 
@@ -355,8 +360,21 @@ export class World {
     // Contracts are pruned/tendered at the very start of the day, before any
     // Faction acts, against yesterday's closing stockpile levels -- so
     // Factions see today's fresh offers (and never a stale/expired one).
-    this.contracts = pruneContracts(this.contracts, this.locations, day);
-    this.contracts.push(...tenderContracts(this.locations, this.contracts, day, this.contractOptions));
+    this.bulletinBoard.prune(this.locations, day);
+    // A Location must not re-tender for a pair some ContractFulfiller has
+    // already accepted (even though it's no longer on the board) -- so the
+    // dedup key set spans both the board and every fulfiller's own list,
+    // excluding contracts fulfilled since a fulfiller only prunes those
+    // lazily inside its own next directFleet call (after this loop).
+    const activeContractKeys = new Set<string>([
+      ...this.bulletinBoard.open.map((c) => contractKey(c.location, c.commodity)),
+      ...this.factions
+        .flatMap((f) => (f instanceof ContractFulfiller ? f.contracts.filter((c) => !c.fulfilled) : []))
+        .map((c) => contractKey(c.location, c.commodity)),
+    ]);
+    for (const location of this.locations) {
+      location.tenderContracts(day, this.bulletinBoard, activeContractKeys, this.contractOptions);
+    }
 
     // Location closures resolve before anyone acts today.
     this.tickLocationClosures();
@@ -369,7 +387,7 @@ export class World {
     const directedRoutes = new Map<Captain, Directive>();
     for (const faction of this.factions) {
       const directives = faction.directFleet(
-        day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations, this.contracts,
+        day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations, this.bulletinBoard,
       );
       for (const [captain, directive] of directives) directedRoutes.set(captain, directive);
     }
@@ -398,5 +416,6 @@ export class World {
     }
 
     for (const trader of this.captains) trader.recordPortfolioSnapshot(day, this.sellMarkets);
+    for (const faction of this.factions) faction.recordNetWorthSnapshot(day, this.sellMarkets);
   }
 }
