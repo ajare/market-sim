@@ -46,6 +46,17 @@ export interface BuildWorldOptions {
    * per-location ratio -- a reasonable buffer, easy to retune.
    */
   arbitrageShipFraction?: number;
+  /**
+   * Fraction of locations.length used to size the number of `Company`
+   * factions specifically -- `SoloTrader` count is unaffected (see
+   * buildWorld's fleet-sizing comment). Each Company's own fleet grows to
+   * absorb the reduction, so the total ship count owned by Companies (and
+   * therefore the grand total across Companies + SoloTraders) stays the
+   * same regardless of this value. Must fall within
+   * [MIN_COMPANY_FRACTION, MAX_COMPANY_FRACTION] = [0.2, 0.5]. Default 0.35
+   * -- the midpoint of that band, not empirically tuned.
+   */
+  companyFraction?: number;
   /** Overrides for tenderContracts' tunable knobs -- forwarded to World, see WorldInit.contractOptions. */
   contractOptions?: TenderContractsOptions;
   /** Location roster to generate the world from. Default ALL_LOCATION_NAMES (the 30 hubs + 3 fuel depots). Used to test whether fleet-sizing ratios generalize to a different-sized world. */
@@ -79,6 +90,11 @@ const DEFAULT_TARGET_SHIPS_PER_LOCATION = 5;
 const DEFAULT_SHIPS_PER_COMPANY = 5;
 const DEFAULT_ARBITRAGE_SHIP_FRACTION = 0.2;
 
+/** Company count, as a fraction of locations.length, must fall within this band -- see BuildWorldOptions.companyFraction. */
+export const MIN_COMPANY_FRACTION = 0.2;
+export const MAX_COMPANY_FRACTION = 0.5;
+const DEFAULT_COMPANY_FRACTION = 0.35;
+
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -103,6 +119,12 @@ export function buildWorld(
   const targetShipsPerLocation = options.targetShipsPerLocation ?? DEFAULT_TARGET_SHIPS_PER_LOCATION;
   const shipsPerCompany = options.shipsPerCompany ?? DEFAULT_SHIPS_PER_COMPANY;
   const arbitrageShipFraction = options.arbitrageShipFraction ?? DEFAULT_ARBITRAGE_SHIP_FRACTION;
+  const companyFraction = options.companyFraction ?? DEFAULT_COMPANY_FRACTION;
+  if (companyFraction < MIN_COMPANY_FRACTION || companyFraction > MAX_COMPANY_FRACTION) {
+    throw new Error(
+      `buildWorld: companyFraction must be between ${MIN_COMPANY_FRACTION} and ${MAX_COMPANY_FRACTION} (got ${companyFraction}).`,
+    );
+  }
   const locationNames = options.locationNames ?? ALL_LOCATION_NAMES;
   const commodities = options.commodities ?? COMMODITIES;
   const [minPerRole, maxPerRole] = options.commodityCountRange ?? [2, 4];
@@ -118,15 +140,30 @@ export function buildWorld(
 
   const availableHomePorts = locations.map((l) => l.name).filter((name) => !FUEL_DEPOT_NAMES.includes(name));
 
-  // numCompanies stays derived from the contract-calibrated baseline (5
-  // ships/location); the arbitrage buffer below grows each Company beyond
+  // Total org count stays derived from the contract-calibrated baseline (5
+  // ships/location); the arbitrage buffer below grows each org beyond
   // shipsPerCompany, so the actual fleet ends up bigger than that baseline
-  // by design -- see arbitrageShipFraction.
+  // by design -- see arbitrageShipFraction. Orgs used to split 50/50 into
+  // Company/SoloTrader by index parity; SoloTrader keeps exactly that half
+  // (same count, same per-org fleet size as before). Company's half is
+  // instead reduced to companyFraction * locations.length, with each
+  // Company's own fleet grown (ships distributed as evenly as the integer
+  // math allows) so the total ship count Companies collectively own -- and
+  // therefore the grand total across Companies + SoloTraders -- matches
+  // exactly what the old 50/50 split would have produced.
   const targetFleetSize = Math.round(locations.length * targetShipsPerLocation);
-  const numCompanies = Math.max(1, Math.round(targetFleetSize / shipsPerCompany));
+  const totalOrgs = Math.max(1, Math.round(targetFleetSize / shipsPerCompany));
   const extraShipsPerCompany = Math.ceil(shipsPerCompany * arbitrageShipFraction);
   const actualShipsPerCompany = shipsPerCompany + extraShipsPerCompany;
-  const fleetSize = numCompanies * actualShipsPerCompany;
+
+  const numSoloTraders = Math.floor(totalOrgs / 2);
+  const oldNumCompanies = totalOrgs - numSoloTraders;
+  const companyShipSubtotal = oldNumCompanies * actualShipsPerCompany;
+  const numCompanies = Math.max(1, Math.round(locations.length * companyFraction));
+  const baseShipsPerCompany = Math.floor(companyShipSubtotal / numCompanies);
+  const extraShipCompanyCount = companyShipSubtotal - baseShipsPerCompany * numCompanies;
+
+  const fleetSize = companyShipSubtotal + numSoloTraders * actualShipsPerCompany;
   const fleetRng = new Rng(99);
   const shuffledHomePorts = fleetRng.sample(availableHomePorts, availableHomePorts.length);
   const homePorts = Array.from({ length: fleetSize }, (_, i) => shuffledHomePorts[i % shuffledHomePorts.length]);
@@ -147,13 +184,22 @@ export function buildWorld(
 
   const cashPerShip = 10_000.0;
   const companies: Company[] = [];
+  let cursor = 0;
+  // The first extraShipCompanyCount Companies get one extra ship each, so
+  // shipsThisCompany sums to exactly companyShipSubtotal across all of them
+  // (integer division alone would leave a remainder unallocated).
   for (let i = 0; i < numCompanies; i++) {
-    const crew = fleetCrew.slice(i * actualShipsPerCompany, (i + 1) * actualShipsPerCompany);
+    const shipsThisCompany = baseShipsPerCompany + (i < extraShipCompanyCount ? 1 : 0);
+    const crew = fleetCrew.slice(cursor, cursor + shipsThisCompany);
+    cursor += shipsThisCompany;
     if (crew.length === 0) continue;
-    const isSolo = i % 2 !== 0;
-    const FactionCls = isSolo ? SoloTrader : Company;
-    const name = `${isSolo ? "Solo" : "Company"} ${pad3(i + 1)}`;
-    companies.push(new FactionCls(name, crew, cashPerShip * crew.length));
+    companies.push(new Company(`Company ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
+  }
+  for (let i = 0; i < numSoloTraders; i++) {
+    const crew = fleetCrew.slice(cursor, cursor + actualShipsPerCompany);
+    cursor += actualShipsPerCompany;
+    if (crew.length === 0) continue;
+    companies.push(new SoloTrader(`Solo ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
   }
 
   const factions: Faction[] = [...companies];
