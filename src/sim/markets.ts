@@ -10,6 +10,16 @@ import { randRandom, randChoice, randGauss } from "./simRandom";
 
 export type MarketSide = "buy" | "sell";
 
+/**
+ * Per-pirate-ship price effect at a Location: each pirate ship currently
+ * AtLocation nudges buy prices down and sell prices up by this fraction,
+ * capped at MAX_PIRATE_PRICE_EFFECT -- a busier pirate anchorage scares off
+ * competing buyers (cheaper to buy) and competing sellers (more profitable
+ * to sell), same direction a real risk premium would push local trade.
+ */
+export const PIRATE_PRICE_EFFECT_PER_SHIP = 0.03;
+export const MAX_PIRATE_PRICE_EFFECT = 0.5;
+
 /** Composite key standing in for Python's `(location, commodity)` tuple dict key. */
 export function marketKey(location: string, commodity: string): string {
   return `${location}::${commodity}`;
@@ -26,6 +36,8 @@ export interface MarketRecord {
   volumeTraded: number;
   demandMultiplier: number;
   supplyMultiplier: number;
+  pirateCount: number;
+  pirateMultiplier: number;
   activeEvents: string;
   newEvent: string;
   closed: boolean;
@@ -91,6 +103,13 @@ export class Market {
         (this.location.stockpiles[this.commodityName] ?? 0.0) + quantity;
     }
     this.volumeTradedToday += quantity;
+  }
+
+  /** 1 - effect on the buy side (cheaper), 1 + effect on the sell side (more profitable) -- see PIRATE_PRICE_EFFECT_PER_SHIP. */
+  private pirateMultiplier(pirateCount: number): number {
+    if (pirateCount <= 0) return 1;
+    const effect = Math.min(MAX_PIRATE_PRICE_EFFECT, pirateCount * PIRATE_PRICE_EFFECT_PER_SHIP);
+    return this.side === "buy" ? 1 - effect : 1 + effect;
   }
 
   private currentMultipliers(): [number, number] {
@@ -160,7 +179,7 @@ export class Market {
     return Math.max(0.5, this.basePrice * (1 + sensitivity * deviation));
   }
 
-  simulateDay(day: number, isOpen: boolean = true): MarketRecord {
+  simulateDay(day: number, isOpen: boolean = true, pirateCount: number = 0): MarketRecord {
     this.lastTriggeredEvent = null;
 
     if (this.fixedPrice) {
@@ -175,6 +194,8 @@ export class Market {
         volumeTraded: round2(this.volumeTradedToday),
         demandMultiplier: 0.0,
         supplyMultiplier: 0.0,
+        pirateCount: 0,
+        pirateMultiplier: 1.0,
         activeEvents: "",
         newEvent: "",
         closed: !isOpen,
@@ -196,6 +217,8 @@ export class Market {
         volumeTraded: round2(this.volumeTradedToday),
         demandMultiplier: 0.0,
         supplyMultiplier: 0.0,
+        pirateCount: 0,
+        pirateMultiplier: 1.0,
         activeEvents: this.activeEvents.map((e) => e.name).join(", "),
         newEvent: "",
         closed: true,
@@ -212,8 +235,9 @@ export class Market {
       this.lastTriggeredEvent = triggeredEvent;
     }
     const [demandMult, supplyMult] = this.currentMultipliers();
+    const pirateMult = this.pirateMultiplier(pirateCount);
 
-    let newPrice = this.stockpilePrice() * (demandMult / supplyMult);
+    let newPrice = this.stockpilePrice() * (demandMult / supplyMult) * pirateMult;
     const noise = randGauss(0, 0.01);
     newPrice *= 1 + noise;
     newPrice = Math.max(0.5, newPrice);
@@ -229,6 +253,8 @@ export class Market {
       volumeTraded: round2(this.volumeTradedToday),
       demandMultiplier: round2(demandMult),
       supplyMultiplier: round2(supplyMult),
+      pirateCount,
+      pirateMultiplier: round2(pirateMult),
       activeEvents: this.activeEvents.map((e) => e.name).join(", "),
       newEvent: triggeredEvent !== null ? triggeredEvent.name : "",
       closed: false,

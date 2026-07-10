@@ -8,14 +8,24 @@ export function ControlsPanel() {
   const contractStrategy = useSimStore((s) => s.contractStrategy);
   const factions = useSimStore((s) => s.factions);
   const world = useSimStore((s) => s.world);
+  const version = useSimStore((s) => s.version);
   const step = useSimStore((s) => s.step);
   const reset = useSimStore((s) => s.reset);
   const setPlaying = useSimStore((s) => s.setPlaying);
   const setSecondsPerDay = useSimStore((s) => s.setSecondsPerDay);
   const setContractStrategy = useSimStore((s) => s.setContractStrategy);
+  const addPirateShip = useSimStore((s) => s.addPirateShip);
+  const removePirateShip = useSimStore((s) => s.removePirateShip);
+  const addPoliceShip = useSimStore((s) => s.addPoliceShip);
+  const removePoliceShip = useSimStore((s) => s.removePoliceShip);
 
   const traderCount = world?.captains.length ?? 0;
   const locationCount = world?.locations.length ?? 0;
+  // world mutates in place (see useSimStore's docstring) -- `version` is what
+  // actually signals these counts changed, `world` itself never does.
+  void version;
+  const pirateCount = world?.pirateBrigade?.captains.length ?? 0;
+  const policeCount = world?.policeFleet?.captains.length ?? 0;
 
   return (
     <div className="panel controls-panel">
@@ -48,6 +58,16 @@ export function ControlsPanel() {
           <option value="compare">Compare by profit</option>
           <option value="prioritise">Prioritise over arbitrage</option>
         </select>
+      </label>
+      <label className="speed-control">
+        Pirates: {pirateCount}
+        <button type="button" onClick={addPirateShip}>+</button>
+        <button type="button" onClick={removePirateShip} disabled={pirateCount === 0}>-</button>
+      </label>
+      <label className="speed-control">
+        Police: {policeCount}
+        <button type="button" onClick={addPoliceShip}>+</button>
+        <button type="button" onClick={removePoliceShip} disabled={policeCount === 0}>-</button>
       </label>
       <span className="stat">Day {day}</span>
       <span className="stat">{factions.length} factions</span>

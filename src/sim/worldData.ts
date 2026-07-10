@@ -12,6 +12,7 @@
 import { Rng } from "./rng";
 import { Commodity, buildCommodities } from "./commodity";
 import { Location, type TerminalType } from "./location";
+import { Country } from "./country";
 
 export const FUEL_BASE_PRICE = 1.25;
 
@@ -84,7 +85,7 @@ export const DEFAULT_MIN_STOCKPILE_DAYS = 14;
  */
 export const DEFAULT_CONSUMED_STOCKPILE_FACTOR = 2.0;
 
-const OTHER_TERMINAL_TYPES: TerminalType[] = ["Station", "Airport", "Platform"];
+const OTHER_TERMINAL_TYPES: TerminalType[] = ["Wagon yard", "Airport", "Platform"];
 
 interface LocationDraft {
   name: string;
@@ -266,6 +267,44 @@ export function setGeography(
 
 export function getLocation(name: string): Location | undefined {
   return LOCATIONS.find((loc) => loc.name === name);
+}
+
+/** Default target Locations per Country -- see assignCountries. */
+export const DEFAULT_LOCATIONS_PER_COUNTRY = 5;
+
+/**
+ * Group `locations` into Countries of roughly `targetLocationsPerCountry`
+ * each, by proximity. Repeatedly picks an arbitrary still-unassigned
+ * location (order shuffled from `seed`, for reproducibility) and pulls in
+ * its nearest still-unassigned neighbors (via `distanceBetween`, so this
+ * must run after `setGeography` has set the coordinates these locations
+ * live at) until the target size is reached or locations run out -- the
+ * last group may end up smaller. `Country`'s own constructor pools each
+ * member Location's cash and sets its `country` reference -- see
+ * `country.ts`.
+ */
+export function assignCountries(
+  locations: readonly Location[],
+  seed: number = WORLD_GEN_SEED + 3,
+  targetLocationsPerCountry: number = DEFAULT_LOCATIONS_PER_COUNTRY,
+): Country[] {
+  const rng = new Rng(seed);
+  const remaining = rng.sample(locations, locations.length);
+  const countries: Country[] = [];
+
+  while (remaining.length > 0) {
+    const seedLocation = remaining.shift()!;
+    remaining.sort(
+      (a, b) => distanceBetween(seedLocation.name, a.name) - distanceBetween(seedLocation.name, b.name),
+    );
+    const group = [seedLocation, ...remaining.splice(0, targetLocationsPerCountry - 1)];
+    countries.push(new Country(`Country ${pad3(countries.length + 1)}`, group));
+  }
+  return countries;
+}
+
+function pad3(n: number): string {
+  return String(n).padStart(3, "0");
 }
 
 export const SHIP_SPEED_UNITS_PER_DAY = 500;

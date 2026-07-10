@@ -7,10 +7,11 @@
 import { Rng } from "./rng";
 import {
   ALL_LOCATION_NAMES, COMMODITIES, FUEL_DEPOT_NAMES, WORLD_GEN_SEED,
-  DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR,
-  generateLocations, generateCoordinates, setGeography,
+  DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR, DEFAULT_LOCATIONS_PER_COUNTRY,
+  generateLocations, generateCoordinates, setGeography, assignCountries,
 } from "./worldData";
 import type { Commodity } from "./commodity";
+import type { Country } from "./country";
 import { generateRoutes, setRoutes } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
@@ -22,6 +23,7 @@ import type { TenderContractsOptions } from "./contracts";
 export interface BuiltWorld {
   world: World;
   factions: Faction[];
+  countries: Country[];
 }
 
 /** Overrides for buildWorld -- all optional; omitting them reproduces the default world byte-for-byte. */
@@ -69,6 +71,27 @@ export interface BuildWorldOptions {
   minStockpileDays?: number;
   /** Multiple N a consumed commodity's starting stockpile is set to, relative to its minStockpile (stockpile = minStockpile * N). Default worldData.DEFAULT_CONSUMED_STOCKPILE_FACTOR (2.0). */
   consumedStockpileFactor?: number;
+  /** Target Locations grouped into each Country (by proximity -- see worldData.assignCountries). Default worldData.DEFAULT_LOCATIONS_PER_COUNTRY (5). The last Country may end up smaller if locations.length doesn't divide evenly. */
+  locationsPerCountry?: number;
+  /** Ship count for the single PirateBrigade, forwarded to World -- see WorldInit.numPirateShips. Default DEFAULT_NUM_PIRATE_SHIPS. Set to 0 to build a pirate-free world, e.g. for sweeps isolating their effect on the stockpile metric. */
+  numPirateShips?: number;
+  /** Starting cash per PirateBrigade ship (that ship's own captain's private balance). Default DEFAULT_PIRATE_CASH_PER_SHIP (5,000). */
+  pirateCashPerShip?: number;
+  /** Coast Guard ship count, forwarded to World -- see WorldInit.numPoliceShips. Default DEFAULT_NUM_POLICE_SHIPS. */
+  numPoliceShips?: number;
+  /**
+   * Uniform multiplier applied to every generated Location's coordinates
+   * before routes are generated. Default 1.0 (no change). Since every
+   * distance in the sim (Route.distance, travel time, fuel burn) derives
+   * from `distanceBetween`'s coordinate math, scaling coordinates scales
+   * every leg's real-world distance proportionally -- letting a sweep
+   * isolate "what if the world were bigger/smaller" without touching route
+   * topology (which pairs of Locations are connected at all stays the same,
+   * since `maxRouteDistance` is scaled by the same factor -- see below).
+   */
+  distanceScale?: number;
+  /** Override applied to every generated Location's `contractThresholdFraction` (see location.ts's DEFAULT_CONTRACT_THRESHOLD_FRACTION). Default: each Location keeps its own class default (1.5). */
+  contractThresholdFraction?: number;
 }
 
 const DEFAULT_SEED = 42;
@@ -94,6 +117,35 @@ const DEFAULT_ARBITRAGE_SHIP_FRACTION = 0.2;
 export const MIN_COMPANY_FRACTION = 0.2;
 export const MAX_COMPANY_FRACTION = 0.5;
 const DEFAULT_COMPANY_FRACTION = 0.35;
+
+/** Ship count for the single World-wide PirateBrigade -- see WorldInit.numPirateShips. Matches the fleet size the old fraction-of-merchant-fleet sizing produced at the default ratios. */
+export const DEFAULT_NUM_PIRATE_SHIPS = 20;
+
+/**
+ * Starting cash given to each PirateBrigade ship (its own captain's private
+ * balance -- PirateBrigade.poolsCash is false). Unlike a Company/SoloTrader,
+ * a broke pirate captain can't even afford the fuel to reposition toward a
+ * target (departEmptyTo bails if repositionFuelCost > cash) or the daily
+ * carousing cost, so a $0 start (the old default before this constant was
+ * added) left most of the fleet stranded at its home port for good stretches
+ * of a run, only earning anything when a victim happened to wander in --
+ * see the 365-day activity-report investigation this constant came out of.
+ */
+export const DEFAULT_PIRATE_CASH_PER_SHIP = 5_000.0;
+
+/**
+ * Coast Guard ship count buildWorld hands to World (see WorldInit.numPoliceShips)
+ * -- calibrated (8-seed average, 365-day runs) so a year-long run lands
+ * around ~100 successful pirate attacks. Re-calibrated after PirateBrigade
+ * became a single World-built faction (previously 4-6 separate,
+ * uncoordinated brigades): one coordinated 20-ship brigade hunts far more
+ * effectively, so the old value (20, tuned for the fragmented-brigade world)
+ * was way too low -- 0 ships now averages 503.1 attacks/year, 40 -> 153.6,
+ * 80 -> 78.5, 100 -> 69.0 -- 80 is the closest match. World's own default (3)
+ * is sized for a token pirate presence, not this larger PirateBrigade fleet,
+ * hence overriding it here.
+ */
+export const DEFAULT_NUM_POLICE_SHIPS = 80;
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -130,13 +182,32 @@ export function buildWorld(
   const [minPerRole, maxPerRole] = options.commodityCountRange ?? [2, 4];
   const minStockpileDays = options.minStockpileDays ?? DEFAULT_MIN_STOCKPILE_DAYS;
   const consumedStockpileFactor = options.consumedStockpileFactor ?? DEFAULT_CONSUMED_STOCKPILE_FACTOR;
+  const locationsPerCountry = options.locationsPerCountry ?? DEFAULT_LOCATIONS_PER_COUNTRY;
+  const numPirateShips = options.numPirateShips ?? DEFAULT_NUM_PIRATE_SHIPS;
+  const pirateCashPerShip = options.pirateCashPerShip ?? DEFAULT_PIRATE_CASH_PER_SHIP;
+  const numPoliceShips = options.numPoliceShips ?? DEFAULT_NUM_POLICE_SHIPS;
+  const distanceScale = options.distanceScale ?? 1.0;
 
   const locations = generateLocations(
     locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,
   );
+  if (options.contractThresholdFraction !== undefined) {
+    for (const location of locations) location.contractThresholdFraction = options.contractThresholdFraction;
+  }
   const coordinates = generateCoordinates(locationNames);
+  if (distanceScale !== 1.0) {
+    for (const name of Object.keys(coordinates)) {
+      const [x, y] = coordinates[name];
+      coordinates[name] = [x * distanceScale, y * distanceScale];
+    }
+  }
   setGeography(locations, coordinates);
-  setRoutes(generateRoutes(locations, WORLD_GEN_SEED, maxRouteDistance));
+  const scaledMaxRouteDistance = maxRouteDistance === undefined ? undefined : maxRouteDistance * distanceScale;
+  setRoutes(generateRoutes(locations, WORLD_GEN_SEED, scaledMaxRouteDistance));
+  // Grouped by proximity only once coordinates are set (assignCountries
+  // reads them via distanceBetween) -- own seed stream (WORLD_GEN_SEED + 3),
+  // independent of location/coordinate/route generation and the fleet.
+  const countries = assignCountries(locations, WORLD_GEN_SEED + 3, locationsPerCountry);
 
   const availableHomePorts = locations.map((l) => l.name).filter((name) => !FUEL_DEPOT_NAMES.includes(name));
 
@@ -144,13 +215,17 @@ export function buildWorld(
   // ships/location); the arbitrage buffer below grows each org beyond
   // shipsPerCompany, so the actual fleet ends up bigger than that baseline
   // by design -- see arbitrageShipFraction. Orgs used to split 50/50 into
-  // Company/SoloTrader by index parity; SoloTrader keeps exactly that half
-  // (same count, same per-org fleet size as before). Company's half is
-  // instead reduced to companyFraction * locations.length, with each
-  // Company's own fleet grown (ships distributed as evenly as the integer
-  // math allows) so the total ship count Companies collectively own -- and
-  // therefore the grand total across Companies + SoloTraders -- matches
-  // exactly what the old 50/50 split would have produced.
+  // Company/SoloTrader by index parity; numSoloTraders * actualShipsPerCompany
+  // (the ship count that half would have owned under the old 50/50 split) is
+  // still used as the total ship count SoloTraders collectively own -- but
+  // each SoloTrader now crews exactly one ship (see SoloTrader's constructor
+  // validation), so that many individual single-ship SoloTraders are created
+  // instead of numSoloTraders multi-ship ones. Company's half is instead
+  // reduced to companyFraction * locations.length, with each Company's own
+  // fleet grown (ships distributed as evenly as the integer math allows) so
+  // the total ship count Companies collectively own -- and therefore the
+  // grand total across Companies + SoloTraders -- matches exactly what the
+  // old 50/50 split would have produced.
   const targetFleetSize = Math.round(locations.length * targetShipsPerLocation);
   const totalOrgs = Math.max(1, Math.round(targetFleetSize / shipsPerCompany));
   const extraShipsPerCompany = Math.ceil(shipsPerCompany * arbitrageShipFraction);
@@ -195,9 +270,13 @@ export function buildWorld(
     if (crew.length === 0) continue;
     companies.push(new Company(`Company ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
   }
-  for (let i = 0; i < numSoloTraders; i++) {
-    const crew = fleetCrew.slice(cursor, cursor + actualShipsPerCompany);
-    cursor += actualShipsPerCompany;
+  // Each SoloTrader crews exactly one ship (see SoloTrader's constructor
+  // validation) -- the org count below is scaled up accordingly so the
+  // total ship count owned by SoloTraders collectively is unchanged.
+  const soloTraderShipCount = numSoloTraders * actualShipsPerCompany;
+  for (let i = 0; i < soloTraderShipCount; i++) {
+    const crew = fleetCrew.slice(cursor, cursor + 1);
+    cursor += 1;
     if (crew.length === 0) continue;
     companies.push(new SoloTrader(`Solo ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
   }
@@ -214,9 +293,11 @@ export function buildWorld(
     companyEventProbability: 0.005,
     seed,
     factions,
-    numPoliceShips: 0,
+    numPoliceShips,
+    numPirateShips,
+    pirateStartingCash: pirateCashPerShip * numPirateShips,
     contractOptions: options.contractOptions,
   });
 
-  return { world, factions };
+  return { world, factions, countries };
 }

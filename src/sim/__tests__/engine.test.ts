@@ -4,7 +4,7 @@ import { Location } from "../location";
 import { World } from "../world";
 import { Company, SoloTrader, PirateBrigade } from "../faction";
 import { Captain } from "../captain";
-import { Ship, Train, SHIP_CLASSES } from "../transport";
+import { Ship, WagonTrain, SHIP_CLASSES } from "../transport";
 import { buildCommodities } from "../commodity";
 import { generateLocations, COMMODITIES } from "../worldData";
 
@@ -167,17 +167,25 @@ describe("Faction cash pooling", () => {
     expect(captain2.cash).toBe(900);
   });
 
-  it("SoloTrader keeps independent balances", () => {
+  it("SoloTrader keeps independent balances across separate instances", () => {
     const { crew, captain1, captain2 } = makeCrew();
-    const solo = new SoloTrader("Loose Assoc", [...crew], 1000);
-    expect(solo.poolsCash).toBe(false);
+    const solo1 = new SoloTrader("Loose Assoc 1", [crew[0]], 1000);
+    new SoloTrader("Loose Assoc 2", [crew[1]], 1000);
+    expect(solo1.poolsCash).toBe(false);
     const before2 = captain2.cash;
     captain1.cash -= 100;
     expect(captain2.cash).toBe(before2);
   });
 
+  it("SoloTrader requires exactly one Transport/Captain", () => {
+    const { crew } = makeCrew();
+    expect(() => new SoloTrader("Too Many", [...crew], 1000)).toThrow();
+    expect(() => new SoloTrader("None", [], 1000)).toThrow();
+    expect(() => new SoloTrader("Just Right", [crew[0]], 1000)).not.toThrow();
+  });
+
   it("PirateBrigade rejects a non-Ship transport", () => {
-    const train = new Train({ name: "Landlocked" });
+    const train = new WagonTrain({ name: "Landlocked" });
     const captain = new Captain("Rejected", homeLocation);
     expect(
       () => new PirateBrigade("Doomed Brigade", [[train, captain, homeLocation]], []),

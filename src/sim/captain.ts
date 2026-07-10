@@ -6,7 +6,7 @@
  * transcribed 1:1.
  */
 import { Crew } from "./crew";
-import type { Faction } from "./faction";
+import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, AGENT_EVENT_TEMPLATES, type TransportEventKind } from "./events";
 import type { TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
@@ -34,7 +34,20 @@ export interface CargoState {
   contract: Contract | null;
 }
 
-export type TradeAction = "BUY" | "SELL" | "REFUEL" | "REPOSITION" | "ATTACK";
+export type TradeAction = "BUY" | "SELL" | "REFUEL" | "REPOSITION" | "ATTACK" | "SMUGGLE";
+
+// Tunable knobs for smuggling -- a SoloTrader-only ability (Faction.canSmuggle,
+// see faction.ts) to sell cargo through a closed port's black market instead
+// of waiting for it to reopen. See Captain.maybeSmuggle.
+
+/** Chance a smuggling attempt is caught each day it's tried. Caught cargo is seized outright (no proceeds) and a fine is deducted -- see SMUGGLING_FINE_FRACTION. */
+export const SMUGGLING_DETECTION_PROBABILITY = 0.25;
+
+/** Black-market sale price, as a fraction of the market's last live price (frozen while the port is closed) -- the discount a black-market buyer demands for the risk. */
+export const SMUGGLING_PRICE_DISCOUNT = 0.7;
+
+/** Fine on getting caught, as a fraction of what the seized cargo would have sold for at the (undiscounted) market price. */
+export const SMUGGLING_FINE_FRACTION = 0.3;
 
 export interface TradeLogEntry {
   day: number;
@@ -321,6 +334,7 @@ export class Captain extends Crew {
     commodities: string[],
     closedLocations: ReadonlySet<string> = new Set(),
     directedRoute: Directive | null = null,
+    pirateBrigade: PirateBrigade | null = null,
   ): void {
     this.maybeTriggerAgentEvent(day);
     this.activeAgentEvents = this.activeAgentEvents.filter((e) => e.tick());
@@ -338,9 +352,20 @@ export class Captain extends Crew {
       if (this.daysRemaining > 0) return;
       if (!this.arrive(day, buyMarkets, closedLocations)) return;
       justArrived = true;
+      // Give a co-located pirate a shot at this delivery BEFORE it sells --
+      // otherwise a ship that arrives and sells within the same act() call
+      // is never observably "at this Location with cargo" at any day
+      // boundary, and the once-a-day PirateBrigade scan (which runs before
+      // any captain's act()) can never catch it. See PirateBrigade.maybeAttackOnArrival.
+      pirateBrigade?.maybeAttackOnArrival(day, this, sellMarkets);
     }
 
-    if (closedLocations.has(this.location)) return;
+    if (closedLocations.has(this.location)) {
+      if (this.cargo !== null && this.company?.canSmuggle === true) {
+        this.maybeSmuggle(day, sellMarkets);
+      }
+      return;
+    }
 
     if (this.cargo !== null) {
       this.sellCargoIfPossible(day, sellMarkets);
@@ -524,6 +549,78 @@ export class Captain extends Crew {
       fuelPrice: round2(this.cargo.fuelPricePaid),
       fuelUnitsConsumed: round2(this.cargo.fuelUnitsConsumed),
       fuelCostPaid: round2(this.cargo.fuelCostTotal),
+      profit: round2(profit),
+    });
+    this.cargo = null;
+  }
+
+  /**
+   * SoloTrader-only (see Faction.canSmuggle): sell cargo through a closed
+   * port's black market instead of just waiting for it to reopen. Tried
+   * automatically, once per day, for as long as this Captain sits at a
+   * closed port holding cargo. Priced at `SMUGGLING_PRICE_DISCOUNT` off the
+   * market's last live price (frozen while closed, since a black-market
+   * buyer demands a cut for the risk); the port's own books never see the
+   * deal (unlike `sellCargoIfPossible`, this never touches
+   * `market.location.cash`), though the physical stockpile still moves --
+   * the goods really do change hands. Each attempt risks getting caught
+   * (`SMUGGLING_DETECTION_PROBABILITY`): caught cargo is seized outright --
+   * no proceeds, no stockpile change -- plus a fine (`SMUGGLING_FINE_FRACTION`
+   * of what it would have sold for at the real price).
+   */
+  private maybeSmuggle(day: number, sellMarkets: Map<string, Market>): void {
+    if (this.cargo === null) return;
+    if (this.cargo.contract !== null) return; // SoloTrader never accepts Contracts to begin with
+    const market = sellMarkets.get(marketKey(this.location, this.cargo.commodity));
+    if (market === undefined || !market.isAvailable) return;
+
+    const cargo = this.cargo;
+    if (randRandom() < SMUGGLING_DETECTION_PROBABILITY) {
+      const fine = round2(Math.min(market.price * cargo.quantity * SMUGGLING_FINE_FRACTION, this.cash));
+      this.cash -= fine;
+      this.realizedProfit -= fine + cargo.totalCost;
+      this.tradeLog.push({
+        day,
+        action: "SMUGGLE",
+        commodity: cargo.commodity,
+        location: this.location,
+        destination: null,
+        quantity: round2(cargo.quantity),
+        price: null,
+        distance: cargo.distance,
+        routeType: cargo.routeType,
+        travelDays: cargo.travelDays,
+        fuelPrice: round2(cargo.fuelPricePaid),
+        fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
+        fuelCostPaid: round2(cargo.fuelCostTotal),
+        profit: round2(-fine - cargo.totalCost),
+      });
+      this.cargo = null;
+      return;
+    }
+
+    const blackMarketPrice = market.price * SMUGGLING_PRICE_DISCOUNT;
+    const proceeds = blackMarketPrice * cargo.quantity;
+    const profit = proceeds - cargo.totalCost;
+
+    this.cash += proceeds;
+    this.realizedProfit += profit;
+    market.applyTrade(cargo.quantity);
+
+    this.tradeLog.push({
+      day,
+      action: "SMUGGLE",
+      commodity: cargo.commodity,
+      location: this.location,
+      destination: null,
+      quantity: round2(cargo.quantity),
+      price: round2(blackMarketPrice),
+      distance: cargo.distance,
+      routeType: cargo.routeType,
+      travelDays: cargo.travelDays,
+      fuelPrice: round2(cargo.fuelPricePaid),
+      fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
+      fuelCostPaid: round2(cargo.fuelCostTotal),
       profit: round2(profit),
     });
     this.cargo = null;

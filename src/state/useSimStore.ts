@@ -13,11 +13,13 @@
 import { create } from "zustand";
 import { buildWorld } from "../sim/buildWorld";
 import type { World } from "../sim/world";
+import type { Country } from "../sim/country";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 
 interface SimStore {
   world: World | null;
   factions: Faction[];
+  countries: Country[];
   day: number;
   playing: boolean;
   secondsPerDay: number;
@@ -29,6 +31,10 @@ interface SimStore {
   setPlaying: (playing: boolean) => void;
   setSecondsPerDay: (secondsPerDay: number) => void;
   setContractStrategy: (contractStrategy: ContractStrategy) => void;
+  addPirateShip: () => void;
+  removePirateShip: () => void;
+  addPoliceShip: () => void;
+  removePoliceShip: () => void;
 }
 
 let accumulator = 0;
@@ -43,6 +49,7 @@ function applyContractStrategy(factions: Faction[], strategy: ContractStrategy):
 export const useSimStore = create<SimStore>((set, get) => ({
   world: null,
   factions: [],
+  countries: [],
   day: 0,
   playing: false,
   secondsPerDay: 1.0,
@@ -50,10 +57,10 @@ export const useSimStore = create<SimStore>((set, get) => ({
   version: 0,
 
   reset: () => {
-    const { world, factions } = buildWorld(1000);
+    const { world, factions, countries } = buildWorld(1000);
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
-    set((s) => ({ world, factions, day: 0, playing: false, version: s.version + 1 }));
+    set((s) => ({ world, factions, countries, day: 0, playing: false, version: s.version + 1 }));
   },
 
   step: () => {
@@ -78,6 +85,31 @@ export const useSimStore = create<SimStore>((set, get) => ({
   setContractStrategy: (contractStrategy: ContractStrategy) => {
     applyContractStrategy(get().factions, contractStrategy);
     set((s) => ({ contractStrategy, version: s.version + 1 }));
+  },
+
+  addPirateShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.addPirateShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+  removePirateShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.removePirateShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+  addPoliceShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.addPoliceShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+  removePoliceShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.removePoliceShip();
+    set((s) => ({ version: s.version + 1 }));
   },
 }));
 

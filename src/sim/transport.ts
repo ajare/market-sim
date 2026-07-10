@@ -1,7 +1,7 @@
 /**
  * Transport: the physical vehicle (capacity, speed, fuel efficiency, fees)
  * decoupled from the trading agent (Captain) that operates it -- plus its
- * Ship/Train/Plane subclasses and the off-the-shelf SHIP_CLASSES presets.
+ * Ship/WagonTrain/Plane subclasses and the off-the-shelf SHIP_CLASSES presets.
  * Ported from sim/transport.py.
  */
 import type { Route, RouteType } from "./routes";
@@ -108,7 +108,7 @@ export class Ship extends Transport {
   }
 }
 
-export class Train extends Transport {
+export class WagonTrain extends Transport {
   constructor(init: TransportInit = {}) {
     super({
       name: "Freight Train",
@@ -123,7 +123,7 @@ export class Train extends Transport {
   }
 
   override allowedRouteTypes(): RouteType[] | null {
-    return ["Railroad"];
+    return ["Land"];
   }
 }
 

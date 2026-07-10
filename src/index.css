@@ -25,6 +25,20 @@
   --faction-company: #2a78d6;
   --faction-solo: #eb6834;
 
+  /* Country categorical palette (Network view location icons) -- the full
+     8-hue theme (same values as the event and faction palettes above,
+     which each use a subset), validated via dataviz's validate_palette.js
+     against these panel surfaces. Cycled by Country index if there are
+     ever more than 8. */
+  --country-1: #2a78d6;
+  --country-2: #1baf7a;
+  --country-3: #eda100;
+  --country-4: #008300;
+  --country-5: #4a3aa7;
+  --country-6: #e34948;
+  --country-7: #e87ba4;
+  --country-8: #eb6834;
+
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
@@ -58,6 +72,15 @@
 
     --faction-company: #3987e5;
     --faction-solo: #d95926;
+
+    --country-1: #3987e5;
+    --country-2: #199e70;
+    --country-3: #c98500;
+    --country-4: #008300;
+    --country-5: #9085e9;
+    --country-6: #e66767;
+    --country-7: #d55181;
+    --country-8: #d95926;
   }
 }
 
@@ -110,6 +133,11 @@ tbody tr:nth-child(even) {
 
 .mini-list li {
   white-space: nowrap;
+}
+
+.pirate-note {
+  color: var(--event-closure);
+  font-size: 12px;
 }
 
 button, select {

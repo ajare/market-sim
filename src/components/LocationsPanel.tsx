@@ -1,5 +1,6 @@
 import { useSimStore } from "../state/useSimStore";
 import { marketKey } from "../sim/markets";
+import { pirateNote } from "./pirateNote";
 
 export function LocationsPanel() {
   const world = useSimStore((s) => s.world);
@@ -13,7 +14,7 @@ export function LocationsPanel() {
           <thead>
             <tr>
               <th>Location</th>
-              <th>Cash</th>
+              <th>Country</th>
               <th>Produces (buyable)</th>
               <th>Consumes (sellable)</th>
             </tr>
@@ -25,7 +26,7 @@ export function LocationsPanel() {
               return (
                 <tr key={loc.name}>
                   <td>{loc.name}</td>
-                  <td>{loc.cash <= 0 ? <span className="muted">broke</span> : `$${loc.cash.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</td>
+                  <td>{loc.country !== null ? loc.country.name : <span className="muted">-</span>}</td>
                   <td>
                     {produced.length === 0 ? (
                       <span className="muted">none</span>
@@ -34,10 +35,12 @@ export function LocationsPanel() {
                         {produced.map(([commodity, rate]) => {
                           const market = world.buyMarkets.get(marketKey(loc.name, commodity));
                           const stock = loc.stockpiles[commodity] ?? 0;
+                          const note = pirateNote(market?.history[market.history.length - 1]);
                           return (
                             <li key={commodity}>
                               {commodity}: {stock.toFixed(1)} stock (+{rate.toFixed(1)}/d) @ $
                               {market !== undefined ? market.price.toFixed(2) : "-"}
+                              {note !== null && <span className="pirate-note"> ({note})</span>}
                             </li>
                           );
                         })}
@@ -53,10 +56,12 @@ export function LocationsPanel() {
                           const market = world.sellMarkets.get(marketKey(loc.name, commodity));
                           const stock = loc.stockpiles[commodity] ?? 0;
                           const min = loc.minStockpiles[commodity] ?? 0;
+                          const note = pirateNote(market?.history[market.history.length - 1]);
                           return (
                             <li key={commodity}>
                               {commodity}: {stock.toFixed(1)}/{min.toFixed(1)} min (-{rate.toFixed(1)}/d) @ $
                               {market !== undefined ? market.price.toFixed(2) : "-"}
+                              {note !== null && <span className="pirate-note"> ({note})</span>}
                             </li>
                           );
                         })}

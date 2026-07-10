@@ -3,6 +3,7 @@ import { useSimStore } from "../state/useSimStore";
 import { marketKey, type MarketRecord } from "../sim/markets";
 import { relevantEvents, type EventMarker } from "../sim/eventOverlay";
 import { EVENT_CATEGORY_LABEL, drawEventMarkerLane, eventCategoryColor, hitTestEventMarkers } from "./eventMarkers";
+import { pirateNote } from "./pirateNote";
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -429,12 +430,18 @@ export function PriceHistoryPanel() {
                   <div>
                     <i className="legend-line" style={{ borderBottomColor: "var(--accent)" }} /> {buyLabel}:{" "}
                     <strong>{hover.buyRecord.price.toFixed(2)}</strong>
+                    {pirateNote(hover.buyRecord) !== null && (
+                      <span className="pirate-note"> ({pirateNote(hover.buyRecord)})</span>
+                    )}
                   </div>
                 )}
                 {hover.sellRecord !== undefined && (
                   <div>
                     <i className="legend-line" style={{ borderBottomColor: "var(--consumed)" }} /> {sellLabel}:{" "}
                     <strong>{hover.sellRecord.price.toFixed(2)}</strong>
+                    {pirateNote(hover.sellRecord) !== null && (
+                      <span className="pirate-note"> ({pirateNote(hover.sellRecord)})</span>
+                    )}
                   </div>
                 )}
               </div>

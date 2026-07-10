@@ -5,11 +5,13 @@
  */
 import {
   CONTRACT_BASE_FEE_RATE, CONTRACT_FEE_ESCALATION_BASE, CONTRACT_QUANTITY_MULTIPLIER,
+  CONTRACT_PIRATE_FEE_BOOST_PER_SHIP, MAX_CONTRACT_PIRATE_FEE_BOOST,
   DEFAULT_CONTRACT_EXPIRY_DAYS, contractKey, round2,
   type BulletinBoard, type Contract, type TenderContractsOptions,
 } from "./contracts";
+import type { Country } from "./country";
 
-export type TerminalType = "Port" | "Station" | "Airport" | "Platform";
+export type TerminalType = "Port" | "Wagon yard" | "Airport" | "Platform";
 
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
@@ -31,7 +33,7 @@ export interface LocationInit {
   fuelPrice: number;
   terminalTypes: ReadonlySet<TerminalType>;
   fenceFraction?: number;
-  /** Starting cash pool. Defaults to 10 billion -- see Location.cash. */
+  /** Starting cash, used only if this Location never joins a Country. Defaults to 10 billion -- see Location.cash. */
   cash?: number;
   /** Contract-tendering threshold, as a multiple of minStockpiles. Defaults to DEFAULT_CONTRACT_THRESHOLD_FRACTION -- see needsContractRestock. */
   contractThresholdFraction?: number;
@@ -48,14 +50,11 @@ export class Location extends ContractIssuer {
   terminalTypes: ReadonlySet<TerminalType>;
   /** Fraction of a commodity's live sell price recovered when stolen goods are fenced here. */
   fenceFraction: number;
-  /**
-   * Cash pool that funds this Location's side of every trade (buy and sell)
-   * and its Contract deliveries -- previously an unlimited pool, now finite
-   * so a Location can go broke and stop tendering new Contracts.
-   */
-  cash: number;
   /** Multiple of minStockpiles at which a Contract is proactively tendered -- see needsContractRestock. */
   contractThresholdFraction: number;
+  /** The Country this Location belongs to, if any. Set by Country's constructor, not this one. */
+  country: Country | null = null;
+  private _ownCash: number;
   /**
    * The stockpile level a PRODUCED commodity's price is measured against
    * (see referenceStockpile) -- frozen at construction time, since the live
@@ -74,7 +73,7 @@ export class Location extends ContractIssuer {
     this.fuelPrice = init.fuelPrice;
     this.terminalTypes = init.terminalTypes;
     this.fenceFraction = init.fenceFraction ?? 0.5;
-    this.cash = init.cash ?? 10_000_000_000;
+    this._ownCash = init.cash ?? 10_000_000_000;
     this.contractThresholdFraction = init.contractThresholdFraction ?? DEFAULT_CONTRACT_THRESHOLD_FRACTION;
 
     if (this.terminalTypes.has("Platform") && this.terminalTypes.size > 1) {
@@ -93,6 +92,28 @@ export class Location extends ContractIssuer {
       );
     }
     this.frozenReferenceStockpiles = { ...this.stockpiles };
+  }
+
+  /**
+   * Cash that funds this Location's side of every trade (buy and sell) and
+   * its Contract deliveries -- previously an unlimited pool, now finite so a
+   * Location can go broke and stop tendering new Contracts. A Location
+   * doesn't keep its own balance once it belongs to a Country: reads/writes
+   * redirect to that Country's `cash` (mirrors `Captain.cash`'s
+   * pooling-vs-own-balance split against a `Faction`); a standalone Location
+   * with no Country (e.g. in a hand-built test world) just uses its own.
+   */
+  get cash(): number {
+    if (this.country !== null) return this.country.cash;
+    return this._ownCash;
+  }
+
+  set cash(value: number) {
+    if (this.country !== null) {
+      this.country.cash = value;
+    } else {
+      this._ownCash = value;
+    }
   }
 
   /** A Captain can buy here: commodity is produced here and there's stock to sell. */
@@ -155,7 +176,10 @@ export class Location extends ContractIssuer {
    * based on how far *below* (not above) the minimum the current stockpile
    * actually is -- flat `baseFeeRate` anywhere in the proactive 100%-150%
    * zone, ramping toward `baseFeeRate * feeEscalationBase` as stock
-   * approaches zero. Called at the very start of each simulated day (see
+   * approaches zero -- then further boosted by `pirateCount` pirate ships
+   * currently sitting at this Location (see CONTRACT_PIRATE_FEE_BOOST_PER_SHIP),
+   * a risk premium baked in once at tender time since deliveryFee is
+   * otherwise fixed. Called at the very start of each simulated day (see
    * World.runDay), before Factions act, against whatever
    * `BulletinBoard.prune` left open.
    */
@@ -164,6 +188,7 @@ export class Location extends ContractIssuer {
     board: BulletinBoard,
     activeContractKeys: ReadonlySet<string>,
     options: TenderContractsOptions = {},
+    pirateCount: number = 0,
   ): void {
     if (this.cash <= 0) return;
     const {
@@ -171,7 +196,10 @@ export class Location extends ContractIssuer {
       baseFeeRate = CONTRACT_BASE_FEE_RATE,
       feeEscalationBase = CONTRACT_FEE_ESCALATION_BASE,
       quantityMultiplier = CONTRACT_QUANTITY_MULTIPLIER,
+      pirateFeeBoostPerShip = CONTRACT_PIRATE_FEE_BOOST_PER_SHIP,
+      maxContractPirateFeeBoost = MAX_CONTRACT_PIRATE_FEE_BOOST,
     } = options;
+    const pirateBoost = 1 + Math.min(maxContractPirateFeeBoost, Math.max(0, pirateCount) * pirateFeeBoostPerShip);
 
     for (const commodity of Object.keys(this.consumedCommodities)) {
       if (activeContractKeys.has(contractKey(this.name, commodity))) continue;
@@ -186,7 +214,7 @@ export class Location extends ContractIssuer {
       const feeMultiplier = feeEscalationBase ** deficitRatio;
 
       const basePrice = this.basePrices[commodity] ?? 0;
-      const deliveryFee = round2(quantity * basePrice * baseFeeRate * feeMultiplier);
+      const deliveryFee = round2(quantity * basePrice * baseFeeRate * feeMultiplier * pirateBoost);
 
       const contract: Contract = {
         location: this.name,
@@ -197,6 +225,7 @@ export class Location extends ContractIssuer {
         fulfiller: null,
         inFlightCaptain: null,
         fulfilled: false,
+        cancelled: false,
         beginDay: day,
         expiryDay: day + expiryDays,
       };

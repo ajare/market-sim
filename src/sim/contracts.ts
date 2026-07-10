@@ -37,6 +37,19 @@ export const CONTRACT_FEE_ESCALATION_BASE = 10;
 /** Multiplier applied to minStockpile when sizing a tendered Contract's order quantity. 1.5, alongside a 5-ships-per-location fleet, is the minimum-fleet-size combination found via seed-averaged sweeps (see analysis.ts) that keeps the stockpile-vs-minimum metric at or above 1.0 on average. */
 export const CONTRACT_QUANTITY_MULTIPLIER = 1.5;
 
+/**
+ * Extra deliveryFee, as a fraction of the pre-boost fee, per pirate ship
+ * sitting at a Contract's Location when it's tendered -- capped at
+ * MAX_CONTRACT_PIRATE_FEE_BOOST. Same idea as Market's pirate price effect
+ * (markets.ts's PIRATE_PRICE_EFFECT_PER_SHIP): a risk premium a fulfiller
+ * gets paid for accepting a delivery into pirate-infested waters, baked in
+ * once at tender time alongside the urgency-driven feeMultiplier (see
+ * Location.tenderContracts) -- deliveryFee is otherwise fixed and immune to
+ * later swings, so this is the only point the risk can be priced in.
+ */
+export const CONTRACT_PIRATE_FEE_BOOST_PER_SHIP = 0.05;
+export const MAX_CONTRACT_PIRATE_FEE_BOOST = 1.0;
+
 /** Default days an unclaimed Contract stays open before BulletinBoard.prune expires it. */
 export const DEFAULT_CONTRACT_EXPIRY_DAYS = 7;
 
@@ -56,6 +69,8 @@ export interface Contract {
   inFlightCaptain: Captain | null;
   /** Set true once delivered. */
   fulfilled: boolean;
+  /** Set true if a pirate seized the in-flight cargo carrying this delivery (see PirateBrigade.attack) -- the fulfiller is never paid, and this pair becomes eligible for a fresh tender again (see World's activeContractKeys / ContractFulfiller.pruneFulfilled), same as a fulfilled one. */
+  cancelled: boolean;
   /** Day this contract was tendered. */
   beginDay: number;
   /** Day an unclaimed contract expires and is removed by BulletinBoard.prune. */
@@ -80,6 +95,10 @@ export interface TenderContractsOptions {
   feeEscalationBase?: number;
   /** Multiplier applied to minStockpile to size the order quantity. Defaults to CONTRACT_QUANTITY_MULTIPLIER. */
   quantityMultiplier?: number;
+  /** Extra fee fraction per pirate ship present at tender time. Defaults to CONTRACT_PIRATE_FEE_BOOST_PER_SHIP. */
+  pirateFeeBoostPerShip?: number;
+  /** Cap on the total pirate fee boost fraction. Defaults to MAX_CONTRACT_PIRATE_FEE_BOOST. */
+  maxContractPirateFeeBoost?: number;
 }
 
 /**

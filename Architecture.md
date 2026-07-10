@@ -52,7 +52,7 @@ public API as one barrel. The dependency chain runs roughly:
 
 ```
 worldData (Location, geography) -> routes (Route/RouteType) -> markets (Market)
-  -> transport (Transport/Ship/Train/Plane) -> crew (Crew/Sailor) -> captain (Captain)
+  -> transport (Transport/Ship/WagonTrain/Plane) -> crew (Crew/Sailor) -> captain (Captain)
   -> faction (Faction/Company/SoloTrader/PirateBrigade/PoliceFleet) -> world (World)
 ```
 
@@ -63,13 +63,14 @@ and the `src/state/` + `src/components/` UI layer sit on top of everything.
 | Module | Responsibility |
 | --- | --- |
 | `location.ts` | `Location`, `TerminalType` -- a trading hub's produce/consume/stockpile model, plus its `cash` pool and Contract-tendering threshold; `ContractIssuer`, the base class `Location` posts Contracts through |
+| `country.ts` | `Country` -- groups Locations and shares one cash balance among them (§3.6) |
 | `commodity.ts` | `Commodity` -- per-commodity base price/sensitivity/deficit-and-excess-boost/event-templates, and `buildCommodities()` |
-| `worldData.ts` | The commodity roster (`COMMODITIES`) and procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `getLocation`, `distanceBetween`, `travelDaysBetween`, `generateLocations`, `generateCoordinates`) |
+| `worldData.ts` | The commodity roster (`COMMODITIES`) and procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `getLocation`, `distanceBetween`, `travelDaysBetween`, `generateLocations`, `generateCoordinates`, `assignCountries`) |
 | `routes.ts` | `Route`/`RouteType`, the procedurally generated route network (`ROUTES`, `generateRoutes`, `getRoute`) |
 | `pathfinding.ts` | Dijkstra shortest-path routing over the Route network, restricted per-Transport |
 | `events.ts` | `Event` base class and its four kinds: `MarketEvent`, `TransportEvent`, `CompanyEvent`, `LocationClosure`, plus every template list |
 | `markets.ts` | `Market` -- stockpile-deviation pricing and the day-to-day price update |
-| `transport.ts` | `Transport`/`Ship`/`Train`/`Plane`, `SHIP_CLASSES` presets |
+| `transport.ts` | `Transport`/`Ship`/`WagonTrain`/`Plane`, `SHIP_CLASSES` presets |
 | `crew.ts` | `Crew` (bare identity, base class for anyone operating a Transport) and `Sailor` (generic waged crew) |
 | `captain.ts` | `Captain` -- the trading agent, a `Crew` subclass |
 | `names.ts` | `randomName()` + per-language first/last name pools for naming Captains |
@@ -145,7 +146,7 @@ stockpiles: Record<string, number>;           // commodity -> current stockpile 
 minStockpiles: Record<string, number>;        // commodity -> minimum target (consumed commodities only)
 basePrices: Record<string, number>;           // commodity -> reference price (both roles)
 fuelPrice: number;                            // flat, never-fluctuating Fuel price here
-terminalTypes: ReadonlySet<TerminalType>;     // Port/Station/Airport/Platform
+terminalTypes: ReadonlySet<TerminalType>;     // Port/Wagon yard/Airport/Platform
 fenceFraction?: number;                       // default 0.5 -- black-market discount when pirates fence cargo here
 cash?: number;                                // default 10 billion -- funds this Location's trades AND Contract deliveries
 contractThresholdFraction?: number;           // default 1.5 -- see needsContractRestock
@@ -181,7 +182,13 @@ tuned around.
 `cash` is a genuinely finite pool (default 10 billion, not literally
 unlimited): it funds both sides of every trade this Location makes and
 every Contract it issues, and a Location that runs out (`cash <= 0`) stops
-tendering new Contracts (`tenderContracts`, §9) until it recovers.
+tendering new Contracts (`tenderContracts`, §9) until it recovers. `cash`
+is a getter/setter, not a plain field: if this Location belongs to a
+`Country` (§3.6), reads/writes redirect to that Country's shared balance --
+this Location's own starting cash no longer matters once that happens --
+exactly mirroring `Captain.cash`'s pooling-vs-own-balance split against a
+`Faction` (§8). A standalone Location with no Country (e.g. in a
+hand-built test world) just uses its own balance.
 
 ### 3.2 Stockpile-deviation pricing (`Market.stockpilePrice`)
 
@@ -386,22 +393,49 @@ point (up to 1000 attempts) so no two locations collapse to the same spot.
 `travelDaysBetween` converts that to whole days at a given speed
 (`ceil(distance / speed)`, minimum 1 day even for the same location).
 
+### 3.6 `Country`: proximity-grouped Locations sharing one cash balance
+
+`country.ts`'s `Country` groups a set of Locations and gives them a single
+shared cash balance -- the Location-level analog of `Faction` pooling a
+fleet's Captains' cash (§8). `Country.cash` defaults to
+`DEFAULT_COUNTRY_CASH = 10,000,000,000` regardless of how many Locations
+join (not derived from summing them); the constructor just sets
+`location.country = this` on each member, no cash movement involved. From
+then on, every member Location's `cash` getter/setter (§3.1) transparently
+redirects to `Country.cash` -- its own starting balance stops mattering the
+moment it joins. Existing code that reads/writes `location.cash` (trade
+execution in `captain.ts`, `needsContractRestock`'s broke check, ...)
+needed no changes at all.
+
+`worldData.ts`'s `assignCountries(locations, seed, targetLocationsPerCountry)`
+builds the default world's Countries by proximity: it shuffles the location
+list (its own seed stream, `WORLD_GEN_SEED + 3`, independent of location/
+coordinate/route generation and the fleet), then repeatedly takes the next
+unassigned location and greedily pulls in its `targetLocationsPerCountry - 1`
+nearest still-unassigned neighbors (via `distanceBetween`, so this must run
+*after* `setGeography` has set coordinates) to form one `Country`, until
+every location is assigned -- the last group may end up smaller if the
+total doesn't divide evenly. `buildWorld.ts` calls this right after
+`setRoutes`, targeting `DEFAULT_LOCATIONS_PER_COUNTRY = 5` Locations per
+Country by default (`BuildWorldOptions.locationsPerCountry`), and returns
+the resulting `Country[]` as `BuiltWorld.countries`.
+
 ## 4. Geography and routing
 
 ### 4.1 Routes (`routes.ts`)
 
 A `Route` is an undirected, typed connection between two locations
-(`RouteType`: `Sea` / `Railroad` / `Air`), with `distance` derived once at
+(`RouteType`: `Sea` / `Land` / `Air`), with `distance` derived once at
 construction from `distanceBetween` -- it never invents a second source of
 geographic truth. `ROUTE_TERMINAL_COMPATIBILITY` maps each `RouteType` to
 the `TerminalType`(s) both endpoints must share at least one of (`Sea`
-needs `Port` or `Platform`; `Railroad` needs `Station`; `Air` needs
+needs `Port` or `Platform`; `Land` needs `Wagon yard`; `Air` needs
 `Airport`). `generateRoutes` builds one `Route` for every location pair
 sharing a compatible terminal type, picking randomly among the compatible
 types when more than one applies (a third independent `Rng` stream,
 `seed + 2`), optionally trimming pairs farther apart than `maxDistance *
 ROUTE_TYPE_DISTANCE_SCALE[routeType]` (Air gets the full cap, Sea 80%,
-Railroad 50%). Routes are stored in a `Map<string, Route>` keyed by
+Land 50%). Routes are stored in a `Map<string, Route>` keyed by
 `routeKey(a, b)` -- a canonical, order-independent string (`[a, b].sort().join("||")`).
 `getRoute(a, b)` looks up the direct Route regardless of argument order.
 
@@ -410,7 +444,7 @@ Railroad 50%). Routes are stored in a `Map<string, Route>` keyed by
 A hand-rolled Dijkstra (with its own binary min-heap, not a library),
 weighted by `Route.distance`, restricted to whichever edges a `canUseRoute`
 predicate (almost always `Transport.canUseRoute`) accepts -- so a
-landlocked `Train` never gets offered a leg it would have to sail or fly.
+landlocked `WagonTrain` never gets offered a leg it would have to sail or fly.
 The full (unfiltered) adjacency graph is expensive to build and identical
 for every Transport, so it's built once and cached (`primeRouteGraphCache`,
 called by `World`'s constructor) rather than rebuilt per lookup;
@@ -447,8 +481,8 @@ capacity. `TransportStatus` is `"AtLocation"` / `"InTransit"` / `"Inactive"`
 day -- see §6.3 -- so it stops burning fuel or making progress until it can
 pay again). The base `Transport` class is **unrestricted**
 (`allowedRouteTypes()` returns `null`, meaning any `RouteType` is usable).
-`Ship` overrides `allowedRouteTypes()` to `["Sea"]` only, `Train` to
-`["Railroad"]`, `Plane` to `["Air"]` -- so `Captain.canUseRoute` (really
+`Ship` overrides `allowedRouteTypes()` to `["Sea"]` only, `WagonTrain` to
+`["Land"]`, `Plane` to `["Air"]` -- so `Captain.canUseRoute` (really
 `Transport.canUseRoute`) naturally excludes any leg a Transport can't
 physically travel, from every route-planning method, the same way a closed
 port is excluded.
@@ -1027,12 +1061,14 @@ buildWorld(1000, {
   targetShipsPerLocation: 5,                     // total fleet ~ locations.length * this
   shipsPerCompany: 5,                            // ships grouped into each Company
   arbitrageShipFraction: 0.2,                    // extra ships per Company on top of shipsPerCompany
+  companyFraction: 0.35,                         // Company count as a fraction of locations.length (§8.1)
   contractOptions: { quantityMultiplier: 1.5 },  // forwarded to World -> each Location's tenderContracts
   locationNames: [...],                          // location roster (default: 30 hubs + 3 fuel depots)
   commodities: buildCommodities([...], {...}),   // commodity roster (default: the 10 built-in commodities)
   commodityCountRange: [2, 4],                   // per-location produced/consumed spread
   minStockpileDays: 14,                          // days-of-consumption buffer minStockpile represents
   consumedStockpileFactor: 2.0,                  // starting stockpile, as a multiple of minStockpile
+  locationsPerCountry: 5,                        // target Locations grouped into each Country (§3.6)
 });
 ```
 
@@ -1151,7 +1187,7 @@ bare `version` counter bumped on every `step()`; components subscribe to
   (`secondsPerDay`), the Contracts strategy dropdown (`"compare"` /
   `"prioritise"`, §8.1), and faction/trader/location counts.
 - **`NetworkView`** -- a canvas-drawn map of the location/route network:
-  routes colored by `RouteType` (Sea/Railroad/Air), locations as circles
+  routes colored by `RouteType` (Sea/Land/Air), locations as circles
   (diamonds for fuel depots), and Transport markers ringed around whichever
   location they currently occupy -- colored by transport kind (Ship/Train/
   Plane, matching the route-type palette) and underlined when actually
@@ -1429,8 +1465,8 @@ The *magnitude* of each shock lives in its template list:
 - **`generateCoordinates`'s `minDistance`** (default `200.0`) -- the
   minimum synthetic-map distance enforced between any two locations.
 - **`ROUTE_TYPE_DISTANCE_SCALE`** (`routes.ts`: Air `1.0`, Sea `0.8`,
-  Railroad `0.5`) and `maxRouteDistance` (passed to `generateRoutes` /
+  Land `0.5`) and `maxRouteDistance` (passed to `generateRoutes` /
   `buildWorld`, default `1000`) -- how far apart two locations can be and
   still get a direct Route of a given type. A smaller cap (or a smaller
-  Railroad scale) prunes the network to a denser web of shorter hops,
+  Land scale) prunes the network to a denser web of shorter hops,
   forcing more multi-hop Dijkstra routing.

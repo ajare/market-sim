@@ -35,6 +35,7 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
     fulfiller: null,
     inFlightCaptain: null,
     fulfilled: false,
+    cancelled: false,
     beginDay: 1,
     expiryDay: 8,
     ...overrides,

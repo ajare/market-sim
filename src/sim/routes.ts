@@ -1,15 +1,15 @@
 /**
- * Routes: direct, typed connections between locations (Sea/Railroad/Air),
+ * Routes: direct, typed connections between locations (Sea/Land/Air),
  * and the procedurally generated route network. Ported from sim/routes.py.
  */
 import { Rng } from "./rng";
 import type { Location, TerminalType } from "./location";
 import { distanceBetween, WORLD_GEN_SEED } from "./worldData";
 
-export type RouteType = "Railroad" | "Air" | "Sea";
+export type RouteType = "Land" | "Air" | "Sea";
 
 export const ROUTE_TERMINAL_COMPATIBILITY: Record<RouteType, TerminalType[]> = {
-  Railroad: ["Station"],
+  Land: ["Wagon yard"],
   Air: ["Airport"],
   Sea: ["Port", "Platform"],
 };
@@ -17,7 +17,7 @@ export const ROUTE_TERMINAL_COMPATIBILITY: Record<RouteType, TerminalType[]> = {
 export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   Air: 1.0,
   Sea: 0.8,
-  Railroad: 0.5,
+  Land: 0.5,
 };
 
 export class Route {

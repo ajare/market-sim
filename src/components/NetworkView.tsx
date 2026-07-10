@@ -2,26 +2,31 @@ import { useEffect, useRef, useState } from "react";
 import { useSimStore } from "../state/useSimStore";
 import { LOCATION_COORDINATES, FUEL_DEPOT_NAMES } from "../sim/worldData";
 import { ROUTES, type RouteType } from "../sim/routes";
-import { Ship, Train, Plane, type Transport } from "../sim/transport";
+import { Ship, WagonTrain, Plane, type Transport } from "../sim/transport";
 import type { Captain } from "../sim/captain";
+import type { TerminalType } from "../sim/location";
+import type { Country } from "../sim/country";
+
+/** Number of distinct hues in the --country-N categorical palette (index.css) -- Country colors cycle through these by index if there are more countries than slots. */
+const COUNTRY_PALETTE_SIZE = 8;
 
 const ROUTE_COLORS: Record<RouteType, string> = {
   Sea: "#3b82f6",
-  Railroad: "#b45309",
+  Land: "#b45309",
   Air: "#10b981",
 };
 
 /** Transport kinds map 1:1 onto the RouteType they're restricted to, so reuse the same palette. */
 function transportColor(transport: Transport, fallback: string): string {
   if (transport instanceof Ship) return ROUTE_COLORS.Sea;
-  if (transport instanceof Train) return ROUTE_COLORS.Railroad;
+  if (transport instanceof WagonTrain) return ROUTE_COLORS.Land;
   if (transport instanceof Plane) return ROUTE_COLORS.Air;
   return fallback;
 }
 
 function transportKind(transport: Transport): string {
   if (transport instanceof Ship) return "Ship";
-  if (transport instanceof Train) return "Train";
+  if (transport instanceof WagonTrain) return "Train";
   if (transport instanceof Plane) return "Plane";
   return "Transport";
 }
@@ -29,6 +34,127 @@ function transportKind(transport: Transport): string {
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value === "" ? fallback : value;
+}
+
+/** Anchor -- Port (and Platform, the other Sea-compatible terminal). Ring, shaft, crossbar, and two hook curls. */
+function drawAnchor(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.arc(x, y - r * 0.75, r * 0.28, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 0.47);
+  ctx.lineTo(x, y + r * 0.8);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.5, y - r * 0.05);
+  ctx.lineTo(x + r * 0.5, y - r * 0.05);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(x - r * 0.45, y + r * 0.5, r * 0.4, -Math.PI * 0.15, Math.PI * 0.65);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.45, y + r * 0.5, r * 0.4, Math.PI * 0.35, Math.PI * 1.15, true);
+  ctx.stroke();
+}
+
+/** Barrel -- Fuel depot. A filled rounded rectangle with two horizontal bands. */
+function drawBarrel(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+  const w = r * 1.1;
+  const h = r * 1.7;
+  const left = x - w / 2;
+  const top = y - h / 2;
+
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(left, top, w, h, w * 0.3);
+  } else {
+    ctx.rect(left, top, w, h);
+  }
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(left, top + h * 0.34);
+  ctx.lineTo(left + w, top + h * 0.34);
+  ctx.moveTo(left, top + h * 0.67);
+  ctx.lineTo(left + w, top + h * 0.67);
+  ctx.stroke();
+}
+
+/** Wheel -- Wagon yard. A rim circle with six spokes and a small hub. */
+function drawWheel(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+  const rim = r * 0.85;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+
+  ctx.beginPath();
+  ctx.arc(x, y, rim, 0, Math.PI * 2);
+  ctx.stroke();
+
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(angle) * rim, y + Math.sin(angle) * rim);
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.15, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+/** Plane -- Airport. A filled dart/paper-airplane silhouette pointing north. */
+function drawPlane(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x + r * 0.15, y - r * 0.2);
+  ctx.lineTo(x + r * 0.9, y + r * 0.15);
+  ctx.lineTo(x + r * 0.15, y + r * 0.05);
+  ctx.lineTo(x + r * 0.25, y + r * 0.75);
+  ctx.lineTo(x, y + r * 0.5);
+  ctx.lineTo(x - r * 0.25, y + r * 0.75);
+  ctx.lineTo(x - r * 0.15, y + r * 0.05);
+  ctx.lineTo(x - r * 0.9, y + r * 0.15);
+  ctx.lineTo(x - r * 0.15, y - r * 0.2);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/**
+ * Draws the icon for whichever terminal facility best represents this
+ * Location, in priority order: fuel depots (their own category, tracked by
+ * name rather than TerminalType) get a barrel; otherwise Airport (plane)
+ * beats Wagon yard (wheel) beats Port/Platform (anchor, the two
+ * Sea-compatible terminal types) -- picked so the rarer, more specific
+ * terminal wins over the near-universal Port when a Location has more than
+ * one (every non-depot Location has Port plus 0-2 others; only Platform is
+ * mutually exclusive with every other type).
+ */
+function drawLocationIcon(
+  ctx: CanvasRenderingContext2D,
+  loc: { terminalTypes: ReadonlySet<TerminalType> },
+  isDepot: boolean,
+  x: number,
+  y: number,
+  r: number,
+  color: string,
+): void {
+  if (isDepot) drawBarrel(ctx, x, y, r, color);
+  else if (loc.terminalTypes.has("Airport")) drawPlane(ctx, x, y, r, color);
+  else if (loc.terminalTypes.has("Wagon yard")) drawWheel(ctx, x, y, r, color);
+  else drawAnchor(ctx, x, y, r, color);
 }
 
 interface Marker {
@@ -47,6 +173,7 @@ interface HoverState {
 export function NetworkView() {
   const world = useSimStore((s) => s.world);
   const version = useSimStore((s) => s.version);
+  const countries = useSimStore((s) => s.countries);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -56,6 +183,9 @@ export function NetworkView() {
     const container = containerRef.current;
     if (canvas === null || container === null || world === null) return;
     const locations = world.locations;
+
+    const countryIndex = new Map<Country, number>();
+    countries.forEach((country, i) => countryIndex.set(country, i));
 
     const captainsByLocation = new Map<string, Captain[]>();
     for (const captain of world.captains) {
@@ -101,6 +231,13 @@ export function NetworkView() {
       const accent = cssVar("--accent", "#7c3aed");
       const muted = cssVar("--muted", "#9a97a3");
 
+      /** A Location's icon is colored by whichever Country owns it (cycling through the palette by Country index), falling back to `accent` for a Location with no Country. */
+      function colorForLocation(country: Country | null): string {
+        if (country === null) return accent;
+        const idx = countryIndex.get(country) ?? 0;
+        return cssVar(`--country-${(idx % COUNTRY_PALETTE_SIZE) + 1}`, accent);
+      }
+
       ctx.lineWidth = 1;
       ctx.globalAlpha = 0.55;
       for (const route of ROUTES.values()) {
@@ -117,28 +254,14 @@ export function NetworkView() {
       for (const loc of locations) {
         const [x, y] = project(loc.name);
         const isDepot = FUEL_DEPOT_NAMES.includes(loc.name);
-
-        ctx.beginPath();
-        if (isDepot) {
-          const r = 5;
-          ctx.moveTo(x, y - r);
-          ctx.lineTo(x + r, y);
-          ctx.lineTo(x, y + r);
-          ctx.lineTo(x - r, y);
-          ctx.closePath();
-          ctx.fillStyle = muted;
-        } else {
-          ctx.arc(x, y, 4.5, 0, Math.PI * 2);
-          ctx.fillStyle = accent;
-        }
-        ctx.fill();
-        ctx.strokeStyle = border;
-        ctx.stroke();
+        drawLocationIcon(ctx, loc, isDepot, x, y, 14, colorForLocation(loc.country));
       }
 
       // Transports, ringed around the location they're currently at --
       // colored by kind, underlined when actually docked (not in transit).
-      const ringRadius = 11;
+      // Ring radius is bigger than the (2x-sized) location icon's own
+      // footprint so ship markers don't overlap it.
+      const ringRadius = 20;
       const markerRadius = 2.75;
       markers = [];
       for (const loc of locations) {
@@ -177,7 +300,7 @@ export function NetworkView() {
       for (const loc of locations) {
         const [x, y] = project(loc.name);
         ctx.fillStyle = textColor;
-        ctx.fillText(loc.name, x + 8, y);
+        ctx.fillText(loc.name, x + 24, y);
       }
     }
 
@@ -207,7 +330,7 @@ export function NetworkView() {
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
     };
-  }, [world, version]);
+  }, [world, version, countries]);
 
   if (world === null) return null;
 
@@ -216,9 +339,9 @@ export function NetworkView() {
       <h2>Network</h2>
       <div className="network-legend">
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Sea }} />Sea route / Ship</span>
-        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Railroad }} />Railroad route / Train</span>
+        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Land }} />Land route / Train</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Air }} />Air route / Plane</span>
-        <span><i className="legend-swatch legend-diamond" />Fuel depot</span>
+        <span>Anchor = Port · Barrel = Fuel depot · Wheel = Wagon yard · Plane = Airport (icon color = Country)</span>
         <span><i className="legend-underline" />Docked (not in transit)</span>
       </div>
       <div className="network-canvas-wrap" ref={containerRef}>
