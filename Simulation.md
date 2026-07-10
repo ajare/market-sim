@@ -392,7 +392,7 @@ All the tunables used above are `buildWorld` options
 (`src/sim/buildWorld.ts` / `src/sim/contracts.ts`):
 
 ```ts
-buildWorld(1000, {
+buildWorld(3000, {
   targetShipsPerLocation: 5,                     // fleet size, ships per location
   contractOptions: { quantityMultiplier: 1.5 },  // and other TenderContractsOptions
   locationNames: [...],                          // world size / roster override

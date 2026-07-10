@@ -57,7 +57,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   version: 0,
 
   reset: () => {
-    const { world, factions, countries } = buildWorld(1000);
+    const { world, factions, countries } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
     set((s) => ({ world, factions, countries, day: 0, playing: false, version: s.version + 1 }));

@@ -1051,12 +1051,12 @@ structured data straight off `World`/`Captain`/`Location`/`Market`/
 
 ## 11. Building a world (`buildWorld.ts`)
 
-`buildWorld(maxRouteDistance = 1000, options: BuildWorldOptions = {})`
+`buildWorld(maxRouteDistance = 3000, options: BuildWorldOptions = {})`
 assembles a full `World` plus its Factions, procedurally, without running
 any days:
 
 ```ts
-buildWorld(1000, {
+buildWorld(3000, {
   seed: 42,                                      // World's own stochastic stream (events, closures, noise, act-order)
   targetShipsPerLocation: 5,                     // total fleet ~ locations.length * this
   shipsPerCompany: 5,                            // ships grouped into each Company

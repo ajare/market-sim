@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useSimStore } from "../state/useSimStore";
-import { LOCATION_COORDINATES, FUEL_DEPOT_NAMES } from "../sim/worldData";
+import { LOCATION_COORDINATES, FUEL_DEPOT_NAMES, travelDaysBetween } from "../sim/worldData";
 import { ROUTES, type RouteType } from "../sim/routes";
 import { Ship, WagonTrain, Plane, type Transport } from "../sim/transport";
 import type { Captain } from "../sim/captain";
-import type { TerminalType } from "../sim/location";
+import { PirateBrigade, PoliceFleet, SoloTrader, Company } from "../sim/faction";
+import type { Location, TerminalType } from "../sim/location";
 import type { Country } from "../sim/country";
+import type { MarketEvent } from "../sim/events";
+import type { World } from "../sim/world";
 
 /** Number of distinct hues in the --country-N categorical palette (index.css) -- Country colors cycle through these by index if there are more countries than slots. */
 const COUNTRY_PALETTE_SIZE = 8;
@@ -16,11 +19,25 @@ const ROUTE_COLORS: Record<RouteType, string> = {
   Air: "#10b981",
 };
 
-/** Transport kinds map 1:1 onto the RouteType they're restricted to, so reuse the same palette. */
-function transportColor(transport: Transport, fallback: string): string {
-  if (transport instanceof Ship) return ROUTE_COLORS.Sea;
-  if (transport instanceof WagonTrain) return ROUTE_COLORS.Land;
-  if (transport instanceof Plane) return ROUTE_COLORS.Air;
+/** Ship markers are colored by the operating Faction, not transport kind. */
+const FACTION_COLORS = {
+  pirate: "#ef4444",
+  police: "#22c55e",
+  company: "#3b82f6",
+  soloTrader: "#eab308",
+};
+
+/**
+ * A ship's marker color signals who's operating it: pirates red, police
+ * green, company (pooled-cash fleets) blue, solo traders yellow. SoloTrader is
+ * checked before Company since it's a Company subclass.
+ */
+function factionColor(captain: Captain, fallback: string): string {
+  const company = captain.company;
+  if (company instanceof PirateBrigade) return FACTION_COLORS.pirate;
+  if (company instanceof PoliceFleet) return FACTION_COLORS.police;
+  if (company instanceof SoloTrader) return FACTION_COLORS.soloTrader;
+  if (company instanceof Company) return FACTION_COLORS.company;
   return fallback;
 }
 
@@ -164,10 +181,46 @@ interface Marker {
   r: number;
 }
 
-interface HoverState {
+interface LocationMarker {
+  location: Location;
+  x: number;
+  y: number;
+  r: number;
+}
+
+interface CaptainHoverState {
+  kind: "captain";
   captain: Captain;
   x: number;
   y: number;
+}
+
+interface LocationHoverState {
+  kind: "location";
+  location: Location;
+  atLocation: number;
+  inTransit: number;
+  events: MarketEvent[];
+  x: number;
+  y: number;
+}
+
+type HoverState = CaptainHoverState | LocationHoverState;
+
+/** Every currently active MarketEvent touching any commodity market at `location`, deduped by name+daysRemaining -- a broad (Global/Location/Worldwide) event is applied as a separate MarketEvent instance to each affected market, so the same logical event otherwise shows up once per commodity/side. */
+function locationActiveEvents(world: World, location: string): MarketEvent[] {
+  const seen = new Set<string>();
+  const events: MarketEvent[] = [];
+  for (const market of [...world.buyMarkets.values(), ...world.sellMarkets.values()]) {
+    if (market.locationName !== location) continue;
+    for (const event of market.activeEvents) {
+      const key = `${event.name}|${event.daysRemaining}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      events.push(event);
+    }
+  }
+  return events;
 }
 
 export function NetworkView() {
@@ -196,6 +249,7 @@ export function NetworkView() {
     }
 
     let markers: Marker[] = [];
+    let locationMarkers: LocationMarker[] = [];
 
     function draw(): void {
       const dpr = window.devicePixelRatio || 1;
@@ -251,75 +305,157 @@ export function NetworkView() {
       }
       ctx.globalAlpha = 1;
 
+      locationMarkers = [];
       for (const loc of locations) {
         const [x, y] = project(loc.name);
         const isDepot = FUEL_DEPOT_NAMES.includes(loc.name);
         drawLocationIcon(ctx, loc, isDepot, x, y, 14, colorForLocation(loc.country));
+        locationMarkers.push({ location: loc, x, y, r: 14 });
       }
 
-      // Transports, ringed around the location they're currently at --
-      // colored by kind, underlined when actually docked (not in transit).
-      // Ring radius is bigger than the (2x-sized) location icon's own
-      // footprint so ship markers don't overlap it.
-      const ringRadius = 20;
-      const markerRadius = 2.75;
+      // Transports -- colored by operating Faction (see factionColor).
+      // Docked ships (status AtLocation) stack in a grid above the location
+      // they're at; ships in transit are placed on their route line below.
+      const markerRadius = 4;
+      const cellSize = 11;
+      const gridCols = 4;
+      const gridGap = 20;
+
+      /** Draws one ship marker at (mx, my) -- shared by the docked grid and the in-transit route placement below. Docked ships get a halo ring; in-transit ones don't (their position on the route line already conveys that). */
+      function drawShipMarker(captain: Captain, mx: number, my: number, docked: boolean): void {
+        ctx!.beginPath();
+        ctx!.arc(mx, my, markerRadius, 0, Math.PI * 2);
+        ctx!.fillStyle = factionColor(captain, muted);
+        ctx!.fill();
+        ctx!.strokeStyle = border;
+        ctx!.lineWidth = 0.75;
+        ctx!.stroke();
+
+        if (docked) {
+          ctx!.beginPath();
+          ctx!.arc(mx, my, markerRadius + 1.6, 0, Math.PI * 2);
+          ctx!.strokeStyle = textColor;
+          ctx!.lineWidth = 1;
+          ctx!.stroke();
+        }
+
+        markers.push({ captain, x: mx, y: my, r: markerRadius });
+      }
+
       markers = [];
+
+      // Docked ships: stacked in a grid directly above the location they're
+      // currently at.
       for (const loc of locations) {
-        const captainsHere = captainsByLocation.get(loc.name);
-        if (captainsHere === undefined || captainsHere.length === 0) continue;
+        const captainsHere = (captainsByLocation.get(loc.name) ?? []).filter((c) => c.status === "AtLocation");
+        if (captainsHere.length === 0) continue;
         const [cx, cy] = project(loc.name);
         const n = captainsHere.length;
+        const cols = Math.min(gridCols, n);
+        const bottomRowY = cy - gridGap;
         captainsHere.forEach((captain, i) => {
-          const angle = (2 * Math.PI * i) / n - Math.PI / 2;
-          const mx = cx + ringRadius * Math.cos(angle);
-          const my = cy + ringRadius * Math.sin(angle);
+          const row = Math.floor(i / cols);
+          const itemsInRow = Math.min(cols, n - row * cols);
+          const col = i % cols;
+          const rowWidth = (itemsInRow - 1) * cellSize;
+          const mx = cx - rowWidth / 2 + col * cellSize;
+          const my = bottomRowY - row * cellSize;
+          drawShipMarker(captain, mx, my, true);
+        });
+      }
 
-          ctx.beginPath();
-          ctx.arc(mx, my, markerRadius, 0, Math.PI * 2);
-          ctx.fillStyle = transportColor(captain.transport!, muted);
-          ctx.fill();
-          ctx.strokeStyle = border;
-          ctx.lineWidth = 0.75;
-          ctx.stroke();
-
-          if (captain.status === "AtLocation") {
-            ctx.beginPath();
-            ctx.moveTo(mx - markerRadius, my + markerRadius + 1.5);
-            ctx.lineTo(mx + markerRadius, my + markerRadius + 1.5);
-            ctx.strokeStyle = textColor;
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
-          }
-
-          markers.push({ captain, x: mx, y: my, r: markerRadius });
+      // In-transit ships: placed along the straight line between their
+      // current node and next node, at the fraction of the leg they've
+      // completed so far -- computed by comparing the leg's total travel
+      // time (recomputed fresh from the same origin/destination/speed
+      // Captain.departXxx used, since those don't change mid-leg) against
+      // daysRemaining, which ticks down toward 0 as Captain.act() advances
+      // the voyage day by day. Ships sharing the same route line are spread
+      // out with a small perpendicular offset so they don't stack exactly on
+      // top of each other.
+      const inTransitGroups = new Map<string, Captain[]>();
+      for (const captain of world!.captains) {
+        if (captain.transport === null || captain.status !== "InTransit" || captain.destination === null) continue;
+        const key = [captain.location, captain.destination].sort().join("||");
+        const list = inTransitGroups.get(key);
+        if (list === undefined) inTransitGroups.set(key, [captain]);
+        else list.push(captain);
+      }
+      const shipSpacing = 6;
+      for (const group of inTransitGroups.values()) {
+        const [ox, oy] = project(group[0].location);
+        const [dx, dy] = project(group[0].destination!);
+        const lineDx = dx - ox;
+        const lineDy = dy - oy;
+        const lineLen = Math.hypot(lineDx, lineDy) || 1;
+        const perpX = -lineDy / lineLen;
+        const perpY = lineDx / lineLen;
+        const n = group.length;
+        group.forEach((captain, i) => {
+          const totalDays = travelDaysBetween(captain.location, captain.destination!, captain.transport!.speedUnitsPerDay);
+          const fraction = totalDays > 0 ? Math.min(1, Math.max(0, (totalDays - captain.daysRemaining) / totalDays)) : 0;
+          const [cox, coy] = project(captain.location);
+          const [cdx, cdy] = project(captain.destination!);
+          const baseX = cox + (cdx - cox) * fraction;
+          const baseY = coy + (cdy - coy) * fraction;
+          const offset = (i - (n - 1) / 2) * shipSpacing;
+          drawShipMarker(captain, baseX + perpX * offset, baseY + perpY * offset, false);
         });
       }
 
       ctx.font = "10px system-ui, sans-serif";
-      ctx.textBaseline = "middle";
+      ctx.textBaseline = "top";
+      ctx.textAlign = "center";
       for (const loc of locations) {
         const [x, y] = project(loc.name);
         ctx.fillStyle = textColor;
-        ctx.fillText(loc.name, x + 24, y);
+        ctx.fillText(loc.name, x, y + 20);
       }
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
     }
 
     draw();
     const resizeObserver = new ResizeObserver(draw);
     resizeObserver.observe(container);
 
-    let hoveredCaptain: Captain | null = null;
+    let hoveredKey: Captain | Location | null = null;
     function handleMouseMove(e: MouseEvent): void {
       const rect = canvas!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const hit = markers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
-      if ((hit?.captain ?? null) === hoveredCaptain) return;
-      hoveredCaptain = hit?.captain ?? null;
-      setHover(hit === undefined ? null : { captain: hit.captain, x: hit.x, y: hit.y });
+
+      const shipHit = markers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      if (shipHit !== undefined) {
+        if (hoveredKey === shipHit.captain) return;
+        hoveredKey = shipHit.captain;
+        setHover({ kind: "captain", captain: shipHit.captain, x: shipHit.x, y: shipHit.y });
+        return;
+      }
+
+      const locationHit = locationMarkers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      if (locationHit !== undefined) {
+        if (hoveredKey === locationHit.location) return;
+        hoveredKey = locationHit.location;
+        const captainsHere = captainsByLocation.get(locationHit.location.name) ?? [];
+        setHover({
+          kind: "location",
+          location: locationHit.location,
+          atLocation: captainsHere.filter((c) => c.status === "AtLocation").length,
+          inTransit: captainsHere.filter((c) => c.status === "InTransit").length,
+          events: locationActiveEvents(world, locationHit.location.name),
+          x: locationHit.x,
+          y: locationHit.y,
+        });
+        return;
+      }
+
+      if (hoveredKey === null) return;
+      hoveredKey = null;
+      setHover(null);
     }
     function handleMouseLeave(): void {
-      hoveredCaptain = null;
+      hoveredKey = null;
       setHover(null);
     }
     canvas.addEventListener("mousemove", handleMouseMove);
@@ -338,15 +474,19 @@ export function NetworkView() {
     <div className="panel network-panel">
       <h2>Network</h2>
       <div className="network-legend">
-        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Sea }} />Sea route / Ship</span>
-        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Land }} />Land route / Train</span>
-        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Air }} />Air route / Plane</span>
+        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Sea }} />Sea route</span>
+        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Land }} />Land route</span>
+        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Air }} />Air route</span>
         <span>Anchor = Port · Barrel = Fuel depot · Wheel = Wagon yard · Plane = Airport (icon color = Country)</span>
-        <span><i className="legend-underline" />Docked (not in transit)</span>
+        <span><i className="legend-swatch" style={{ background: FACTION_COLORS.pirate }} />Pirates</span>
+        <span><i className="legend-swatch" style={{ background: FACTION_COLORS.police }} />Police</span>
+        <span><i className="legend-swatch" style={{ background: FACTION_COLORS.company }} />Company</span>
+        <span><i className="legend-swatch" style={{ background: FACTION_COLORS.soloTrader }} />Solo trader</span>
+        <span><i className="legend-ring" />Docked (not in transit)</span>
       </div>
       <div className="network-canvas-wrap" ref={containerRef}>
         <canvas ref={canvasRef} />
-        {hover !== null && (
+        {hover !== null && hover.kind === "captain" && (
           <div className="network-tooltip" style={{ left: hover.x, top: hover.y }}>
             <div className="network-tooltip-title">{hover.captain.name}</div>
             <div>
@@ -365,6 +505,43 @@ export function NetworkView() {
               </div>
             )}
             <div>Cash: ${hover.captain.cash.toFixed(2)}</div>
+            {hover.captain.cargo?.contract != null && (
+              <div className="network-tooltip-events">
+                📦 Contract: {hover.captain.cargo.contract.quantity.toFixed(1)} {hover.captain.cargo.contract.commodity} →{" "}
+                {hover.captain.cargo.contract.location} (fee ${hover.captain.cargo.contract.deliveryFee.toFixed(2)})
+              </div>
+            )}
+            {hover.captain.activeAgentEvents.length > 0 && (
+              <div className="network-tooltip-events">
+                {hover.captain.activeAgentEvents.map((event, i) => (
+                  <div key={i}>
+                    ⚡ {event.message} ({event.daysRemaining}d left)
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {hover !== null && hover.kind === "location" && (
+          <div className="network-tooltip" style={{ left: hover.x, top: hover.y }}>
+            <div className="network-tooltip-title">{hover.location.name}</div>
+            <div>
+              Status: {world.closedLocations.has(hover.location.name)
+                ? `Closed (${world.closedLocations.get(hover.location.name)!.name}, ${world.closedLocations.get(hover.location.name)!.daysRemaining}d left)`
+                : "Open"}
+            </div>
+            <div>Country: {hover.location.country?.name ?? "(none)"}</div>
+            <div>Transports at location: {hover.atLocation}</div>
+            <div>Transports in transit: {hover.inTransit}</div>
+            {hover.events.length > 0 && (
+              <div className="network-tooltip-events">
+                {hover.events.map((event, i) => (
+                  <div key={i}>
+                    ⚡ {event.message} ({event.daysRemaining}d left)
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

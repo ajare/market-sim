@@ -227,22 +227,30 @@ export function generateLocations(
   return locations;
 }
 
+// Coordinate spread and minimum inter-location spacing, both 3x their
+// original values (1000/200) -- scales every generated Route's distance
+// (and therefore travel time and fuel burn, see distanceBetween) up
+// proportionally, without changing route topology (which pairs connect at
+// all is a function of relative distance, not absolute scale).
+const COORDINATE_SPREAD = 9000.0;
+const DEFAULT_MIN_LOCATION_DISTANCE = 600.0;
+
 export function generateCoordinates(
   names: string[],
   seed: number = WORLD_GEN_SEED,
-  minDistance: number = 200.0,
+  minDistance: number = DEFAULT_MIN_LOCATION_DISTANCE,
 ): Record<string, [number, number]> {
   const rng = new Rng(seed + 1);
   const coordinates: Record<string, [number, number]> = {};
 
   for (const name of names) {
-    let candidate: [number, number] = [rng.uniform(0, 3000), rng.uniform(0, 3000)];
+    let candidate: [number, number] = [rng.uniform(0, COORDINATE_SPREAD), rng.uniform(0, COORDINATE_SPREAD)];
     for (let attempt = 0; attempt < 1000; attempt++) {
       const farEnough = Object.values(coordinates).every(
         ([x, y]) => Math.hypot(candidate[0] - x, candidate[1] - y) >= minDistance,
       );
       if (farEnough) break;
-      candidate = [rng.uniform(0, 3000), rng.uniform(0, 3000)];
+      candidate = [rng.uniform(0, COORDINATE_SPREAD), rng.uniform(0, COORDINATE_SPREAD)];
     }
     coordinates[name] = candidate;
   }

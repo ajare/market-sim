@@ -71,7 +71,7 @@ export interface AverageStockpileRatioOptions {
   days?: number;
   /** Trailing-day window the metric averages over. Default 30. */
   windowDays?: number;
-  /** Route-distance cap passed to buildWorld. Default 1000. */
+  /** Route-distance cap passed to buildWorld. Default 3000. */
   maxRouteDistance?: number;
   /** buildWorld overrides other than `seed` (which this function supplies per run). */
   build?: Omit<BuildWorldOptions, "seed">;
@@ -84,7 +84,7 @@ export interface AverageStockpileRatioOptions {
  * point.
  */
 export function averageStockpileRatio(options: AverageStockpileRatioOptions): { ratios: number[]; stats: Stats } {
-  const { seeds, days = 90, windowDays = 30, maxRouteDistance = 1000, build = {} } = options;
+  const { seeds, days = 90, windowDays = 30, maxRouteDistance = 3000, build = {} } = options;
   const ratios: number[] = [];
   for (const seed of seeds) {
     const { world } = buildWorld(maxRouteDistance, { ...build, seed });

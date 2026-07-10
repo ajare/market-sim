@@ -115,6 +115,15 @@
   border-bottom: 1.5px solid var(--muted);
 }
 
+.legend-ring {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: none;
+  border: 1.5px solid var(--muted);
+}
+
 .network-canvas-wrap {
   position: relative;
   width: 100%;
@@ -144,6 +153,13 @@
 .network-tooltip-title {
   font-weight: 600;
   color: var(--text-h);
+}
+
+.network-tooltip-events {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--warning, #c98500);
 }
 
 .chart-filters {
@@ -187,6 +203,14 @@
 .legend-line-dashed {
   border-bottom-style: dashed;
   border-bottom-color: var(--muted);
+}
+
+.legend-bar {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .chart-canvas-wrap {

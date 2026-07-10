@@ -37,7 +37,9 @@
       "Bash(npm --version)",
       "Bash(node -e \"console.log\\(process.platform, process.arch\\)\")",
       "Bash(node -e ' *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(cd /d/Code/Projects/market-sim)",
+      "Bash(.venv/Scripts/python.exe main.py --help)"
     ]
   }
 }

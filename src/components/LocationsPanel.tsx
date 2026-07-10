@@ -1,6 +1,18 @@
 import { useSimStore } from "../state/useSimStore";
 import { marketKey } from "../sim/markets";
+import { ROUTES, type Route } from "../sim/routes";
 import { pirateNote } from "./pirateNote";
+
+/** Every Route touching `location`, paired with the Location at its other end -- sorted by distance so the nearest connections show first. */
+function connectionsFor(location: string): Array<{ other: string; route: Route }> {
+  const result: Array<{ other: string; route: Route }> = [];
+  for (const route of ROUTES.values()) {
+    if (route.origin === location) result.push({ other: route.destination, route });
+    else if (route.destination === location) result.push({ other: route.origin, route });
+  }
+  result.sort((a, b) => a.route.distance - b.route.distance);
+  return result;
+}
 
 export function LocationsPanel() {
   const world = useSimStore((s) => s.world);
@@ -15,6 +27,7 @@ export function LocationsPanel() {
             <tr>
               <th>Location</th>
               <th>Country</th>
+              <th>Connections</th>
               <th>Produces (buyable)</th>
               <th>Consumes (sellable)</th>
             </tr>
@@ -23,10 +36,24 @@ export function LocationsPanel() {
             {world.locations.map((loc) => {
               const produced = Object.entries(loc.producedCommodities);
               const consumed = Object.entries(loc.consumedCommodities);
+              const connections = connectionsFor(loc.name);
               return (
                 <tr key={loc.name}>
                   <td>{loc.name}</td>
                   <td>{loc.country !== null ? loc.country.name : <span className="muted">-</span>}</td>
+                  <td>
+                    {connections.length === 0 ? (
+                      <span className="muted">none</span>
+                    ) : (
+                      <ul className="mini-list">
+                        {connections.map(({ other, route }) => (
+                          <li key={`${route.routeType}-${other}`}>
+                            {other} ({route.routeType}, {route.distance.toFixed(0)})
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
                   <td>
                     {produced.length === 0 ? (
                       <span className="muted">none</span>

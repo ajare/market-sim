@@ -12,7 +12,7 @@ import {
 } from "./worldData";
 import type { Commodity } from "./commodity";
 import type { Country } from "./country";
-import { generateRoutes, setRoutes } from "./routes";
+import { generateRoutes, setRoutes, ROUTES } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
 import { DUTCH_FIRST_NAMES, DUTCH_LAST_NAMES, randomName } from "./names";
@@ -79,20 +79,34 @@ export interface BuildWorldOptions {
   pirateCashPerShip?: number;
   /** Coast Guard ship count, forwarded to World -- see WorldInit.numPoliceShips. Default DEFAULT_NUM_POLICE_SHIPS. */
   numPoliceShips?: number;
-  /**
-   * Uniform multiplier applied to every generated Location's coordinates
-   * before routes are generated. Default 1.0 (no change). Since every
-   * distance in the sim (Route.distance, travel time, fuel burn) derives
-   * from `distanceBetween`'s coordinate math, scaling coordinates scales
-   * every leg's real-world distance proportionally -- letting a sweep
-   * isolate "what if the world were bigger/smaller" without touching route
-   * topology (which pairs of Locations are connected at all stays the same,
-   * since `maxRouteDistance` is scaled by the same factor -- see below).
-   */
-  distanceScale?: number;
   /** Override applied to every generated Location's `contractThresholdFraction` (see location.ts's DEFAULT_CONTRACT_THRESHOLD_FRACTION). Default: each Location keeps its own class default (1.5). */
   contractThresholdFraction?: number;
+  /**
+   * If true, ignore `minStockpileDays` and derive it instead from the
+   * generated route network's total length: `11 * (totalRouteLength /
+   * BASELINE_TOTAL_ROUTE_LENGTH)`. Empirically (bisected against the
+   * fraction of zero-stock days, not just the coarser stockpile-vs-minimum
+   * ratio -- 9x undershoots, landing an 11.22% mean zero-stock fraction
+   * across 5 seeds vs. the <10% target; 11x clears it with margin at 8.38%
+   * mean / 9.31% max; 12x barely improves on that for extra buffer stock
+   * tied up), a location needs roughly 11 days of buffer per multiple of
+   * `BASELINE_TOTAL_ROUTE_LENGTH` the world's routes add up to -- expressing
+   * that in terms of total route length (rather than a hardcoded days
+   * number) generalizes to a custom `locationNames`/`maxRouteDistance` world
+   * where the "right" buffer isn't obvious upfront. Default false.
+   */
+  autoMinStockpileDaysFromRoutes?: boolean;
 }
+
+/**
+ * Total Route.distance summed across the default 30-location + 3-depot
+ * world's route network at the geography's original (pre-3x) scale,
+ * maxRouteDistance=1000 -- the fixed reference point
+ * `autoMinStockpileDaysFromRoutes` normalizes against. Recompute this (sum
+ * `ROUTES.values()` distances right after a plain `buildWorld()`) if the
+ * default location/commodity roster or coordinate spread ever changes.
+ */
+export const BASELINE_TOTAL_ROUTE_LENGTH = 39050.02;
 
 const DEFAULT_SEED = 42;
 // Fleet is sized off the number of Locations, not a hardcoded count, so it
@@ -159,12 +173,12 @@ function pad3(n: number): string {
  * Builds a full World plus its Factions, procedurally, without running any
  * days. `maxRouteDistance` prunes the generated route network down to
  * pairs within that distance (matching exp-ui's SimState.reset(), which
- * passes 1000); pass `undefined` for an uncapped network (cli.py's
+ * passes 3000); pass `undefined` for an uncapped network (cli.py's
  * default). `options` tweaks the dynamics seed and fleet sizing for sweeps
  * -- omit it entirely for the default world.
  */
 export function buildWorld(
-  maxRouteDistance: number | undefined = 1000,
+  maxRouteDistance: number | undefined = 3000,
   options: BuildWorldOptions = {},
 ): BuiltWorld {
   const seed = options.seed ?? DEFAULT_SEED;
@@ -180,30 +194,41 @@ export function buildWorld(
   const locationNames = options.locationNames ?? ALL_LOCATION_NAMES;
   const commodities = options.commodities ?? COMMODITIES;
   const [minPerRole, maxPerRole] = options.commodityCountRange ?? [2, 4];
-  const minStockpileDays = options.minStockpileDays ?? DEFAULT_MIN_STOCKPILE_DAYS;
+  let minStockpileDays = options.minStockpileDays ?? DEFAULT_MIN_STOCKPILE_DAYS;
   const consumedStockpileFactor = options.consumedStockpileFactor ?? DEFAULT_CONSUMED_STOCKPILE_FACTOR;
   const locationsPerCountry = options.locationsPerCountry ?? DEFAULT_LOCATIONS_PER_COUNTRY;
   const numPirateShips = options.numPirateShips ?? DEFAULT_NUM_PIRATE_SHIPS;
   const pirateCashPerShip = options.pirateCashPerShip ?? DEFAULT_PIRATE_CASH_PER_SHIP;
   const numPoliceShips = options.numPoliceShips ?? DEFAULT_NUM_POLICE_SHIPS;
-  const distanceScale = options.distanceScale ?? 1.0;
 
-  const locations = generateLocations(
+  let locations = generateLocations(
     locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,
   );
   if (options.contractThresholdFraction !== undefined) {
     for (const location of locations) location.contractThresholdFraction = options.contractThresholdFraction;
   }
   const coordinates = generateCoordinates(locationNames);
-  if (distanceScale !== 1.0) {
-    for (const name of Object.keys(coordinates)) {
-      const [x, y] = coordinates[name];
-      coordinates[name] = [x * distanceScale, y * distanceScale];
-    }
-  }
   setGeography(locations, coordinates);
-  const scaledMaxRouteDistance = maxRouteDistance === undefined ? undefined : maxRouteDistance * distanceScale;
-  setRoutes(generateRoutes(locations, WORLD_GEN_SEED, scaledMaxRouteDistance));
+  setRoutes(generateRoutes(locations, WORLD_GEN_SEED, maxRouteDistance));
+
+  // Regenerate locations against a route-derived minStockpileDays now that
+  // the route network (and therefore its total length) exists. Safe to redo
+  // from scratch: generateLocations' RNG draw sequence never depends on
+  // minStockpileDays (it only scales the derived minStockpiles/stockpiles
+  // values at the end), so this reproduces identical produced/consumed
+  // rates and terminal types, just with different stockpile targets.
+  if (options.autoMinStockpileDaysFromRoutes) {
+    let totalRouteLength = 0;
+    for (const route of ROUTES.values()) totalRouteLength += route.distance;
+    minStockpileDays = 11 * (totalRouteLength / BASELINE_TOTAL_ROUTE_LENGTH);
+    locations = generateLocations(
+      locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,
+    );
+    if (options.contractThresholdFraction !== undefined) {
+      for (const location of locations) location.contractThresholdFraction = options.contractThresholdFraction;
+    }
+    setGeography(locations, coordinates);
+  }
   // Grouped by proximity only once coordinates are set (assignCountries
   // reads them via distanceBetween) -- own seed stream (WORLD_GEN_SEED + 3),
   // independent of location/coordinate/route generation and the fleet.

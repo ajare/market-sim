@@ -94,6 +94,7 @@ export function StockHistoryPanel() {
     let minDay = 0;
     let dayRange = 1;
     let yMax = 1;
+    let barWidth = 1;
 
     const px = (day: number) => padL + ((day - minDay) / dayRange) * plotW;
     const py = (value: number) => padT + plotH - (Math.min(value, yMax) / yMax) * plotH;
@@ -123,6 +124,11 @@ export function StockHistoryPanel() {
       minDay = history[0].day;
       const maxDay = history[history.length - 1].day;
       dayRange = Math.max(1, maxDay - minDay);
+      // Spacing between adjacent days in pixels (history is one record per
+      // sim day), narrowed to leave a gap between bars and capped so a short
+      // history doesn't produce absurdly wide bars.
+      const daySpacing = plotW / dayRange;
+      barWidth = Math.max(2, Math.min(18, daySpacing * 0.7));
 
       // A produced commodity's "reference" is just its frozen starting
       // stockpile, not a real floor -- only a consumed commodity's minimum
@@ -175,30 +181,19 @@ export function StockHistoryPanel() {
         ctx.setLineDash([]);
       }
 
-      // Stockpile line -- the primary series.
-      ctx.strokeStyle = lineColor;
-      ctx.lineWidth = 2;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      history.forEach((r, i) => {
+      // Stockpile bars -- the primary series. The most recent bar gets a
+      // solid outline so the current value stands out among the rest.
+      const baseline = py(0);
+      ctx.fillStyle = lineColor;
+      history.forEach((r) => {
         const x = px(r.day);
         const y = py(r.stockpile);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        ctx.fillRect(x - barWidth / 2, y, barWidth, baseline - y);
       });
-      ctx.stroke();
-
-      // End-dot marker, ringed in the surface color so it stays legible.
       const last = history[history.length - 1];
-      ctx.beginPath();
-      ctx.arc(px(last.day), py(last.stockpile), 6, 0, Math.PI * 2);
-      ctx.fillStyle = surface;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(px(last.day), py(last.stockpile), 4, 0, Math.PI * 2);
-      ctx.fillStyle = lineColor;
-      ctx.fill();
+      ctx.strokeStyle = cssVar("--text-h", "#08060d");
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(px(last.day) - barWidth / 2, py(last.stockpile), barWidth, baseline - py(last.stockpile));
 
       drawEventMarkerLane(ctx, markers, px, markerY, surface, cssVar);
     }
@@ -213,8 +208,7 @@ export function StockHistoryPanel() {
       const x = px(record.day);
 
       const muted = cssVar("--muted", "#9a97a3");
-      const surface = cssVar("--panel-bg", "#ffffff");
-      const lineColor = side === "sell" ? cssVar("--consumed", "#1baf7a") : cssVar("--accent", "#7c3aed");
+      const highlightColor = cssVar("--text-h", "#08060d");
 
       ctx.strokeStyle = muted;
       ctx.lineWidth = 1;
@@ -224,14 +218,10 @@ export function StockHistoryPanel() {
       ctx.stroke();
 
       const y = py(record.stockpile);
-      ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = surface;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = lineColor;
-      ctx.fill();
+      const baseline = py(0);
+      ctx.strokeStyle = highlightColor;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - barWidth / 2, y, barWidth, baseline - y);
 
       setHover({ kind: "data", x, record });
     }
@@ -361,7 +351,7 @@ export function StockHistoryPanel() {
         <>
           <div className="chart-legend">
             <span>
-              <i className="legend-line" style={{ borderBottomColor: lineColorVar }} />
+              <i className="legend-bar" style={{ background: lineColorVar }} />
               Stockpile ({roleLabel})
             </span>
             {side === "sell" && (
@@ -383,7 +373,7 @@ export function StockHistoryPanel() {
               <div className="network-tooltip chart-tooltip" style={{ left: hover.x }}>
                 <div className="network-tooltip-title">Day {hover.record.day}</div>
                 <div>
-                  <i className="legend-line" style={{ borderBottomColor: lineColorVar }} /> Stockpile:{" "}
+                  <i className="legend-bar" style={{ background: lineColorVar }} /> Stockpile:{" "}
                   <strong>{hover.record.stockpile.toFixed(1)}</strong>
                 </div>
                 {side === "sell" && (
