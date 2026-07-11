@@ -6,6 +6,7 @@ import { CommodityMapEditor } from "./CommodityMapEditor";
 export function LocationInspector() {
   const selectedId = useEditorStore((s) => s.selectedId);
   const location = useEditorStore((s) => s.locations.find((l) => l.id === s.selectedId));
+  const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const updateLocation = useEditorStore((s) => s.updateLocation);
   const toggleTerminalType = useEditorStore((s) => s.toggleTerminalType);
   const removeLocation = useEditorStore((s) => s.removeLocation);
@@ -32,6 +33,22 @@ export function LocationInspector() {
       </div>
 
       <div className="field-row">
+        <label>
+          Political entity
+          <select
+            value={location.politicalEntityId ?? ""}
+            onChange={(e) =>
+              updateLocation(location.id, { politicalEntityId: e.target.value === "" ? null : e.target.value })
+            }
+          >
+            {location.politicalEntityId === null && <option value="">(none)</option>}
+            {politicalEntities.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           x
           <input

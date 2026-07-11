@@ -25,19 +25,19 @@
   --faction-company: #2a78d6;
   --faction-solo: #eb6834;
 
-  /* Country categorical palette (Network view location icons) -- the full
-     8-hue theme (same values as the event and faction palettes above,
+  /* PoliticalEntity categorical palette (Network view location icons) -- the
+     full 8-hue theme (same values as the event and faction palettes above,
      which each use a subset), validated via dataviz's validate_palette.js
-     against these panel surfaces. Cycled by Country index if there are
-     ever more than 8. */
-  --country-1: #2a78d6;
-  --country-2: #1baf7a;
-  --country-3: #eda100;
-  --country-4: #008300;
-  --country-5: #4a3aa7;
-  --country-6: #e34948;
-  --country-7: #e87ba4;
-  --country-8: #eb6834;
+     against these panel surfaces. Cycled by PoliticalEntity index if there
+     are ever more than 8. */
+  --political-entity-1: #2a78d6;
+  --political-entity-2: #1baf7a;
+  --political-entity-3: #eda100;
+  --political-entity-4: #008300;
+  --political-entity-5: #4a3aa7;
+  --political-entity-6: #e34948;
+  --political-entity-7: #e87ba4;
+  --political-entity-8: #eb6834;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
@@ -73,14 +73,14 @@
     --faction-company: #3987e5;
     --faction-solo: #d95926;
 
-    --country-1: #3987e5;
-    --country-2: #199e70;
-    --country-3: #c98500;
-    --country-4: #008300;
-    --country-5: #9085e9;
-    --country-6: #e66767;
-    --country-7: #d55181;
-    --country-8: #d95926;
+    --political-entity-1: #3987e5;
+    --political-entity-2: #199e70;
+    --political-entity-3: #c98500;
+    --political-entity-4: #008300;
+    --political-entity-5: #9085e9;
+    --political-entity-6: #e66767;
+    --political-entity-7: #d55181;
+    --political-entity-8: #d95926;
   }
 }
 

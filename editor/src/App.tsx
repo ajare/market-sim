@@ -4,6 +4,7 @@ import { WorldSizeControl } from "./components/WorldSizeControl";
 import { LocationList } from "./components/LocationList";
 import { LocationInspector } from "./components/LocationInspector";
 import { CommoditiesPanel } from "./components/CommoditiesPanel";
+import { PoliticalEntitiesPanel } from "./components/PoliticalEntitiesPanel";
 import { locationsToCsv, commoditiesToCsv, downloadCsv } from "./csvExport";
 import "./App.css";
 
@@ -33,6 +34,7 @@ function App() {
       </header>
       <div className="app-body">
         <aside className="sidebar-left">
+          <PoliticalEntitiesPanel />
           <div className="sidebar-section-header">Locations</div>
           <LocationList />
           <CommoditiesPanel />

@@ -7,11 +7,11 @@
 import { Rng } from "./rng";
 import {
   ALL_LOCATION_NAMES, COMMODITIES, FUEL_DEPOT_NAMES, WORLD_GEN_SEED,
-  DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR, DEFAULT_LOCATIONS_PER_COUNTRY,
-  generateLocations, generateCoordinates, setGeography, assignCountries,
+  DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR, DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY,
+  generateLocations, generateCoordinates, setGeography, assignPoliticalEntities,
 } from "./worldData";
 import type { Commodity } from "./commodity";
-import type { Country } from "./country";
+import type { PoliticalEntity } from "./politicalEntity";
 import { generateRoutes, setRoutes, ROUTES } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
@@ -23,7 +23,7 @@ import type { TenderContractsOptions } from "./contracts";
 export interface BuiltWorld {
   world: World;
   factions: Faction[];
-  countries: Country[];
+  politicalEntities: PoliticalEntity[];
 }
 
 /** Overrides for buildWorld -- all optional; omitting them reproduces the default world byte-for-byte. */
@@ -71,8 +71,8 @@ export interface BuildWorldOptions {
   minStockpileDays?: number;
   /** Multiple N a consumed commodity's starting stockpile is set to, relative to its minStockpile (stockpile = minStockpile * N). Default worldData.DEFAULT_CONSUMED_STOCKPILE_FACTOR (2.0). */
   consumedStockpileFactor?: number;
-  /** Target Locations grouped into each Country (by proximity -- see worldData.assignCountries). Default worldData.DEFAULT_LOCATIONS_PER_COUNTRY (5). The last Country may end up smaller if locations.length doesn't divide evenly. */
-  locationsPerCountry?: number;
+  /** Target Locations grouped into each PoliticalEntity (by proximity -- see worldData.assignPoliticalEntities). Default worldData.DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY (5). The last PoliticalEntity may end up smaller if locations.length doesn't divide evenly. */
+  locationsPerPoliticalEntity?: number;
   /** Ship count for the single PirateBrigade, forwarded to World -- see WorldInit.numPirateShips. Default DEFAULT_NUM_PIRATE_SHIPS. Set to 0 to build a pirate-free world, e.g. for sweeps isolating their effect on the stockpile metric. */
   numPirateShips?: number;
   /** Starting cash per PirateBrigade ship (that ship's own captain's private balance). Default DEFAULT_PIRATE_CASH_PER_SHIP (5,000). */
@@ -196,7 +196,7 @@ export function buildWorld(
   const [minPerRole, maxPerRole] = options.commodityCountRange ?? [2, 4];
   let minStockpileDays = options.minStockpileDays ?? DEFAULT_MIN_STOCKPILE_DAYS;
   const consumedStockpileFactor = options.consumedStockpileFactor ?? DEFAULT_CONSUMED_STOCKPILE_FACTOR;
-  const locationsPerCountry = options.locationsPerCountry ?? DEFAULT_LOCATIONS_PER_COUNTRY;
+  const locationsPerPoliticalEntity = options.locationsPerPoliticalEntity ?? DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY;
   const numPirateShips = options.numPirateShips ?? DEFAULT_NUM_PIRATE_SHIPS;
   const pirateCashPerShip = options.pirateCashPerShip ?? DEFAULT_PIRATE_CASH_PER_SHIP;
   const numPoliceShips = options.numPoliceShips ?? DEFAULT_NUM_POLICE_SHIPS;
@@ -229,10 +229,10 @@ export function buildWorld(
     }
     setGeography(locations, coordinates);
   }
-  // Grouped by proximity only once coordinates are set (assignCountries
+  // Grouped by proximity only once coordinates are set (assignPoliticalEntities
   // reads them via distanceBetween) -- own seed stream (WORLD_GEN_SEED + 3),
   // independent of location/coordinate/route generation and the fleet.
-  const countries = assignCountries(locations, WORLD_GEN_SEED + 3, locationsPerCountry);
+  const politicalEntities = assignPoliticalEntities(locations, WORLD_GEN_SEED + 3, locationsPerPoliticalEntity);
 
   const availableHomePorts = locations.map((l) => l.name).filter((name) => !FUEL_DEPOT_NAMES.includes(name));
 
@@ -324,5 +324,5 @@ export function buildWorld(
     contractOptions: options.contractOptions,
   });
 
-  return { world, factions, countries };
+  return { world, factions, politicalEntities };
 }

@@ -20,12 +20,12 @@ Everything below is the TypeScript implementation under `src/sim/`.
 | Change a location's produce/consume model, buy/sell rules, or its `cash` pool | `location.ts`'s `Location` class (`LocationInit`, `canBuy`/`canSell`/`dailyUpdate`) |
 | Change how many locations the world requires overall | `world.ts`'s `MIN_LOCATIONS`/`MAX_LOCATIONS` (`[20, 50]`, throws outside this) |
 | Change the network layout / how far apart locations sit | `worldData.ts`'s `generateCoordinates()` (`minDistance`, `WORLD_GEN_SEED`) |
-| Change how Locations are grouped into Countries, or how many per Country | `worldData.ts`'s `assignCountries()` (proximity-based grouping, `DEFAULT_LOCATIONS_PER_COUNTRY = 5`) and `buildWorld.ts`'s `BuildWorldOptions.locationsPerCountry` |
-| Change what a Country does (it currently only pools its members' cash) | `country.ts`'s `Country` class |
+| Change how Locations are grouped into PoliticalEntities, or how many per PoliticalEntity | `worldData.ts`'s `assignPoliticalEntities()` (proximity-based grouping, `DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY = 5`) and `buildWorld.ts`'s `BuildWorldOptions.locationsPerPoliticalEntity` |
+| Change what a PoliticalEntity does (it currently only pools its members' cash) | `politicalEntity.ts`'s `PoliticalEntity` class |
 | Build a hand-authored world instead of the procedural one | Construct `Location` objects directly (see `contracts.test.ts`'s `makeLocation` helper) and pass them into `new World({ locations: [...] })` yourself, bypassing `buildWorld()` entirely -- there's no CSV/file-driven loader in this implementation |
 
 Architecture.md §3.1 (Location model), §3.5 (procedural generation), §3.6
-(`Country`), §10 (World's location-count validation).
+(`PoliticalEntity`), §10 (World's location-count validation).
 
 ## Commodities
 

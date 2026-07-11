@@ -75,6 +75,87 @@ body {
   padding: 0.6rem 0.75rem 0.3rem;
 }
 
+.political-entities-panel {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.new-location-political-entity-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.new-location-political-entity-label select {
+  padding: 0.2rem 0.35rem;
+  font-size: 0.85rem;
+}
+
+.political-entities-empty {
+  color: #888;
+  font-size: 0.8rem;
+  padding: 0.25rem 0 0.5rem;
+}
+
+.political-entity-card {
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.5rem;
+  background: #fafafa;
+}
+
+.political-entity-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+
+.political-entity-card-header .political-entity-name-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.political-entity-card-header button {
+  flex-shrink: 0;
+  border: none;
+  background: #eee;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.1rem 0.45rem;
+}
+
+.political-entity-locations-empty {
+  color: #888;
+  font-size: 0.75rem;
+}
+
+.political-entity-locations {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.political-entity-locations button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0.1rem 0;
+  font-size: 0.8rem;
+  text-align: left;
+  color: #2b6cb0;
+}
+
+.political-entity-locations button:hover {
+  text-decoration: underline;
+}
+
 .commodities-panel {
   padding: 0 0.75rem 0.75rem;
   border-top: 1px solid #eee;
@@ -147,6 +228,26 @@ body {
 .canvas-area {
   flex: 1;
   position: relative;
+}
+
+.canvas-wrapper {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.canvas-hint {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 20, 0.85);
+  color: #fff;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 4px;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .world-canvas {

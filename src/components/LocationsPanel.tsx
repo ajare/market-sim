@@ -26,7 +26,7 @@ export function LocationsPanel() {
           <thead>
             <tr>
               <th>Location</th>
-              <th>Country</th>
+              <th>Political Entity</th>
               <th>Connections</th>
               <th>Produces (buyable)</th>
               <th>Consumes (sellable)</th>
@@ -40,7 +40,9 @@ export function LocationsPanel() {
               return (
                 <tr key={loc.name}>
                   <td>{loc.name}</td>
-                  <td>{loc.country !== null ? loc.country.name : <span className="muted">-</span>}</td>
+                  <td>
+                    {loc.politicalEntity !== null ? loc.politicalEntity.name : <span className="muted">-</span>}
+                  </td>
                   <td>
                     {connections.length === 0 ? (
                       <span className="muted">none</span>

@@ -13,13 +13,13 @@
 import { create } from "zustand";
 import { buildWorld } from "../sim/buildWorld";
 import type { World } from "../sim/world";
-import type { Country } from "../sim/country";
+import type { PoliticalEntity } from "../sim/politicalEntity";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 
 interface SimStore {
   world: World | null;
   factions: Faction[];
-  countries: Country[];
+  politicalEntities: PoliticalEntity[];
   day: number;
   playing: boolean;
   secondsPerDay: number;
@@ -49,7 +49,7 @@ function applyContractStrategy(factions: Faction[], strategy: ContractStrategy):
 export const useSimStore = create<SimStore>((set, get) => ({
   world: null,
   factions: [],
-  countries: [],
+  politicalEntities: [],
   day: 0,
   playing: false,
   secondsPerDay: 1.0,
@@ -57,10 +57,10 @@ export const useSimStore = create<SimStore>((set, get) => ({
   version: 0,
 
   reset: () => {
-    const { world, factions, countries } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
+    const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
-    set((s) => ({ world, factions, countries, day: 0, playing: false, version: s.version + 1 }));
+    set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));
   },
 
   step: () => {

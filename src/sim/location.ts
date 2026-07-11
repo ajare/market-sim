@@ -9,7 +9,7 @@ import {
   DEFAULT_CONTRACT_EXPIRY_DAYS, contractKey, round2,
   type BulletinBoard, type Contract, type TenderContractsOptions,
 } from "./contracts";
-import type { Country } from "./country";
+import type { PoliticalEntity } from "./politicalEntity";
 import { DEFAULT_BASE_CONSUMPTION_RATE, DEFAULT_BASE_PRICE, DEFAULT_BASE_PRODUCTION_RATE } from "./commodity";
 // Deferred (not destructured) import -- worldData.ts imports Location, so this
 // binding is read lazily via the COMMODITIES getter below, never at this
@@ -41,7 +41,7 @@ export interface LocationInit {
   fuelPrice: number;
   terminalTypes: ReadonlySet<TerminalType>;
   fenceFraction?: number;
-  /** Starting cash, used only if this Location never joins a Country. Defaults to 10 billion -- see Location.cash. */
+  /** Starting cash, used only if this Location never joins a PoliticalEntity. Defaults to 10 billion -- see Location.cash. */
   cash?: number;
   /** Contract-tendering threshold, as a multiple of minStockpiles. Defaults to DEFAULT_CONTRACT_THRESHOLD_FRACTION -- see needsContractRestock. */
   contractThresholdFraction?: number;
@@ -60,8 +60,8 @@ export class Location extends ContractIssuer {
   fenceFraction: number;
   /** Multiple of minStockpiles at which a Contract is proactively tendered -- see needsContractRestock. */
   contractThresholdFraction: number;
-  /** The Country this Location belongs to, if any. Set by Country's constructor, not this one. */
-  country: Country | null = null;
+  /** The PoliticalEntity this Location belongs to, if any. Set by PoliticalEntity's constructor, not this one. */
+  politicalEntity: PoliticalEntity | null = null;
   private _ownCash: number;
   /**
    * The stockpile level a PRODUCED commodity's price is measured against
@@ -106,19 +106,20 @@ export class Location extends ContractIssuer {
    * Cash that funds this Location's side of every trade (buy and sell) and
    * its Contract deliveries -- previously an unlimited pool, now finite so a
    * Location can go broke and stop tendering new Contracts. A Location
-   * doesn't keep its own balance once it belongs to a Country: reads/writes
-   * redirect to that Country's `cash` (mirrors `Captain.cash`'s
-   * pooling-vs-own-balance split against a `Faction`); a standalone Location
-   * with no Country (e.g. in a hand-built test world) just uses its own.
+   * doesn't keep its own balance once it belongs to a PoliticalEntity:
+   * reads/writes redirect to that PoliticalEntity's `cash` (mirrors
+   * `Captain.cash`'s pooling-vs-own-balance split against a `Faction`); a
+   * standalone Location with no PoliticalEntity (e.g. in a hand-built test
+   * world) just uses its own.
    */
   get cash(): number {
-    if (this.country !== null) return this.country.cash;
+    if (this.politicalEntity !== null) return this.politicalEntity.cash;
     return this._ownCash;
   }
 
   set cash(value: number) {
-    if (this.country !== null) {
-      this.country.cash = value;
+    if (this.politicalEntity !== null) {
+      this.politicalEntity.cash = value;
     } else {
       this._ownCash = value;
     }

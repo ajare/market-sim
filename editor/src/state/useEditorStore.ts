@@ -6,10 +6,11 @@
 import { create } from "zustand";
 import {
   createLocation, DEFAULT_COMMODITY_RATE,
-  type Commodity, type CommodityField, type EditorLocation, type TerminalType,
+  type Commodity, type CommodityField, type PoliticalEntity, type EditorLocation, type TerminalType,
 } from "../types";
 
 let nextId = 1;
+let nextPoliticalEntityId = 1;
 
 export const WORLD_ASPECT_RATIO = 4 / 3;
 export const MIN_WORLD_WIDTH = 100;
@@ -40,6 +41,17 @@ interface EditorStore {
   /** World width in units; height is always worldWidth / WORLD_ASPECT_RATIO, keeping a fixed 4:3 world. */
   worldWidth: number;
   setWorldWidth: (width: number) => void;
+
+  /** PoliticalEntities a new Location can be placed into -- membership is required at creation time (see addLocation/pendingPoliticalEntityId), so an empty registry blocks placement entirely. */
+  politicalEntities: PoliticalEntity[];
+  /** Which PoliticalEntity a click on the canvas will assign to the new Location -- must be set (via the PoliticalEntities panel's dropdown) before addLocation will do anything. */
+  pendingPoliticalEntityId: string | null;
+  addPoliticalEntity: (name: string) => void;
+  /** Removes the PoliticalEntity; any Locations that belonged to it fall back to unassigned (politicalEntityId: null) rather than being deleted themselves. */
+  removePoliticalEntity: (id: string) => void;
+  setPendingPoliticalEntityId: (id: string | null) => void;
+
+  /** No-ops if pendingPoliticalEntityId is unset -- a Location can't be created without a PoliticalEntity selected first. */
   addLocation: (x: number, y: number) => void;
   updateLocation: (id: string, patch: Partial<EditorLocation>) => void;
   moveLocation: (id: string, x: number, y: number) => void;
@@ -78,6 +90,32 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   selectedId: null,
   worldWidth: DEFAULT_WORLD_WIDTH,
 
+  politicalEntities: [],
+  pendingPoliticalEntityId: null,
+
+  addPoliticalEntity: (name: string) =>
+    set((s) => {
+      const trimmed = name.trim();
+      if (trimmed === "") return s;
+      const id = `political-entity-${nextPoliticalEntityId++}`;
+      return {
+        politicalEntities: [...s.politicalEntities, { id, name: trimmed }],
+        // First PoliticalEntity defined becomes the default target for new Locations.
+        pendingPoliticalEntityId: s.pendingPoliticalEntityId ?? id,
+      };
+    }),
+
+  removePoliticalEntity: (id) =>
+    set((s) => ({
+      politicalEntities: s.politicalEntities.filter((c) => c.id !== id),
+      locations: s.locations.map((loc) =>
+        loc.politicalEntityId === id ? { ...loc, politicalEntityId: null } : loc,
+      ),
+      pendingPoliticalEntityId: s.pendingPoliticalEntityId === id ? null : s.pendingPoliticalEntityId,
+    })),
+
+  setPendingPoliticalEntityId: (id) => set({ pendingPoliticalEntityId: id }),
+
   setWorldWidth: (width: number) => {
     const worldWidth = clamp(width, MIN_WORLD_WIDTH, MAX_WORLD_WIDTH);
     const worldHeight = worldWidth / WORLD_ASPECT_RATIO;
@@ -92,7 +130,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   addLocation: (x: number, y: number) => {
-    const { worldWidth } = get();
+    const { worldWidth, pendingPoliticalEntityId } = get();
+    if (pendingPoliticalEntityId === null) return;
     const worldHeight = worldWidth / WORLD_ASPECT_RATIO;
     const id = `loc-${nextId++}`;
     const location = createLocation(
@@ -100,6 +139,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       `Location ${nextId - 1}`,
       clamp(x, 0, worldWidth),
       clamp(y, 0, worldHeight),
+      pendingPoliticalEntityId,
     );
     set((s) => ({ locations: [...s.locations, location], selectedId: id }));
   },

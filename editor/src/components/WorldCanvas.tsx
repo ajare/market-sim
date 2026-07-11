@@ -6,6 +6,7 @@ export function WorldCanvas() {
   const locations = useEditorStore((s) => s.locations);
   const selectedId = useEditorStore((s) => s.selectedId);
   const worldWidth = useEditorStore((s) => s.worldWidth);
+  const pendingPoliticalEntityId = useEditorStore((s) => s.pendingPoliticalEntityId);
   const addLocation = useEditorStore((s) => s.addLocation);
   const selectLocation = useEditorStore((s) => s.selectLocation);
   const moveLocation = useEditorStore((s) => s.moveLocation);
@@ -53,33 +54,40 @@ export function WorldCanvas() {
   }
 
   return (
-    <svg
-      ref={svgRef}
-      className="world-canvas"
-      viewBox={`0 0 ${worldWidth} ${worldHeight}`}
-      preserveAspectRatio="xMidYMid meet"
-      onClick={handleBackgroundClick}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-    >
-      <rect className="world-bounds" x={0} y={0} width={worldWidth} height={worldHeight} />
-      {locations.map((loc) => (
-        // The inner scale counteracts the viewBox's own scaling (tied to
-        // worldWidth) so the pin/label render at a constant screen size
-        // regardless of how large or small the World currently is.
-        <g
-          key={loc.id}
-          transform={`translate(${loc.x}, ${loc.y}) scale(${worldWidth / DEFAULT_WORLD_WIDTH})`}
-          onPointerDown={(e) => handlePinPointerDown(e, loc.id)}
-          onClick={(e) => e.stopPropagation()}
-          className={`location-pin${loc.id === selectedId ? " selected" : ""}`}
-        >
-          <circle r={10} />
-          <text y={-16} textAnchor="middle">
-            {loc.name}
-          </text>
-        </g>
-      ))}
-    </svg>
+    <div className="canvas-wrapper">
+      {pendingPoliticalEntityId === null && (
+        <div className="canvas-hint">
+          Select (or create) a Political Entity in the sidebar before placing a Location
+        </div>
+      )}
+      <svg
+        ref={svgRef}
+        className="world-canvas"
+        viewBox={`0 0 ${worldWidth} ${worldHeight}`}
+        preserveAspectRatio="xMidYMid meet"
+        onClick={handleBackgroundClick}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        <rect className="world-bounds" x={0} y={0} width={worldWidth} height={worldHeight} />
+        {locations.map((loc) => (
+          // The inner scale counteracts the viewBox's own scaling (tied to
+          // worldWidth) so the pin/label render at a constant screen size
+          // regardless of how large or small the World currently is.
+          <g
+            key={loc.id}
+            transform={`translate(${loc.x}, ${loc.y}) scale(${worldWidth / DEFAULT_WORLD_WIDTH})`}
+            onPointerDown={(e) => handlePinPointerDown(e, loc.id)}
+            onClick={(e) => e.stopPropagation()}
+            className={`location-pin${loc.id === selectedId ? " selected" : ""}`}
+          >
+            <circle r={10} />
+            <text y={-16} textAnchor="middle">
+              {loc.name}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
   );
 }

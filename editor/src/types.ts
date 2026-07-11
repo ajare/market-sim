@@ -33,11 +33,19 @@ export type CommodityField =
   | "minStockpiles"
   | "basePriceModifiers";
 
+/** A group of Locations -- mirrors src/sim/politicalEntity.ts's PoliticalEntity (TS-only, no Python original). The editor only needs name/membership; shared cash pooling is a simulation-runtime concern. */
+export interface PoliticalEntity {
+  id: string;
+  name: string;
+}
+
 export interface EditorLocation {
   id: string;
   name: string;
   x: number;
   y: number;
+  /** The PoliticalEntity this Location belongs to -- required at creation time (see useEditorStore.addLocation), but can go null if its PoliticalEntity is later deleted. */
+  politicalEntityId: string | null;
   /** commodity name -> production rate MODIFIER (default 1.0), scaling that Commodity's registered productionRate. */
   producedCommodities: Record<string, number>;
   /** commodity name -> consumption rate MODIFIER (default 1.0), scaling that Commodity's registered consumptionRate. */
@@ -50,12 +58,19 @@ export interface EditorLocation {
   terminalTypes: TerminalType[];
 }
 
-export function createLocation(id: string, name: string, x: number, y: number): EditorLocation {
+export function createLocation(
+  id: string,
+  name: string,
+  x: number,
+  y: number,
+  politicalEntityId: string,
+): EditorLocation {
   return {
     id,
     name,
     x,
     y,
+    politicalEntityId,
     producedCommodities: {},
     consumedCommodities: {},
     stockpiles: {},

@@ -1,7 +1,7 @@
 import { useSimStore } from "./state/useSimStore";
 import { useSimLoop } from "./state/useSimLoop";
 import { ControlsPanel } from "./components/ControlsPanel";
-import { CountriesPanel } from "./components/CountriesPanel";
+import { PoliticalEntitiesPanel } from "./components/PoliticalEntitiesPanel";
 import { LocationsPanel } from "./components/LocationsPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { ContractsPanel } from "./components/ContractsPanel";
@@ -28,7 +28,7 @@ function App() {
       <PriceHistoryPanel />
       <NetWorthHistoryPanel />
       <div className="panels">
-        <CountriesPanel />
+        <PoliticalEntitiesPanel />
         <LocationsPanel />
         <FleetPanel />
         <ContractsPanel />

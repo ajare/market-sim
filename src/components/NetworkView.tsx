@@ -6,7 +6,7 @@ import { Ship, WagonTrain, Plane, type Transport } from "../sim/transport";
 import type { Captain } from "../sim/captain";
 import { PirateBrigade, PoliceFleet, SoloTrader, Company } from "../sim/faction";
 import type { Location, TerminalType } from "../sim/location";
-import type { Country } from "../sim/country";
+import type { PoliticalEntity } from "../sim/politicalEntity";
 import type { MarketEvent } from "../sim/events";
 import type { World } from "../sim/world";
 import { findShortestPath, pathNodeSequence } from "../sim/pathfinding";
@@ -29,8 +29,8 @@ function captainRouteNodes(captain: Captain): string[] {
   return pathNodeSequence(captain.location, path);
 }
 
-/** Number of distinct hues in the --country-N categorical palette (index.css) -- Country colors cycle through these by index if there are more countries than slots. */
-const COUNTRY_PALETTE_SIZE = 8;
+/** Number of distinct hues in the --political-entity-N categorical palette (index.css) -- PoliticalEntity colors cycle through these by index if there are more political entities than slots. */
+const POLITICAL_ENTITY_PALETTE_SIZE = 8;
 
 const ROUTE_COLORS: Record<RouteType, string> = {
   Sea: "#3b82f6",
@@ -245,7 +245,7 @@ function locationActiveEvents(world: World, location: string): MarketEvent[] {
 export function NetworkView() {
   const world = useSimStore((s) => s.world);
   const version = useSimStore((s) => s.version);
-  const countries = useSimStore((s) => s.countries);
+  const politicalEntities = useSimStore((s) => s.politicalEntities);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -256,8 +256,8 @@ export function NetworkView() {
     if (canvas === null || container === null || world === null) return;
     const locations = world.locations;
 
-    const countryIndex = new Map<Country, number>();
-    countries.forEach((country, i) => countryIndex.set(country, i));
+    const politicalEntityIndex = new Map<PoliticalEntity, number>();
+    politicalEntities.forEach((politicalEntity, i) => politicalEntityIndex.set(politicalEntity, i));
 
     const captainsByLocation = new Map<string, Captain[]>();
     for (const captain of world.captains) {
@@ -306,11 +306,11 @@ export function NetworkView() {
       const accent = cssVar("--accent", "#7c3aed");
       const muted = cssVar("--muted", "#9a97a3");
 
-      /** A Location's icon is colored by whichever Country owns it (cycling through the palette by Country index), falling back to `accent` for a Location with no Country. */
-      function colorForLocation(country: Country | null): string {
-        if (country === null) return accent;
-        const idx = countryIndex.get(country) ?? 0;
-        return cssVar(`--country-${(idx % COUNTRY_PALETTE_SIZE) + 1}`, accent);
+      /** A Location's icon is colored by whichever PoliticalEntity owns it (cycling through the palette by PoliticalEntity index), falling back to `accent` for a Location with no PoliticalEntity. */
+      function colorForLocation(politicalEntity: PoliticalEntity | null): string {
+        if (politicalEntity === null) return accent;
+        const idx = politicalEntityIndex.get(politicalEntity) ?? 0;
+        return cssVar(`--political-entity-${(idx % POLITICAL_ENTITY_PALETTE_SIZE) + 1}`, accent);
       }
 
       /** Traces a Route's cached curve sample points onto the current path, in the direction from `fromNode` (its `curvePoints()` run origin-to-destination, so a leg being walked in reverse needs them flipped). */
@@ -387,7 +387,7 @@ export function NetworkView() {
       for (const loc of locations) {
         const [x, y] = project(loc.name);
         const isDepot = FUEL_DEPOT_NAMES.includes(loc.name);
-        drawLocationIcon(ctx, loc, isDepot, x, y, 14, colorForLocation(loc.country));
+        drawLocationIcon(ctx, loc, isDepot, x, y, 14, colorForLocation(loc.politicalEntity));
         locationMarkers.push({ location: loc, x, y, r: 14 });
       }
 
@@ -572,7 +572,7 @@ export function NetworkView() {
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
     };
-  }, [world, version, countries]);
+  }, [world, version, politicalEntities]);
 
   if (world === null) return null;
 
@@ -583,7 +583,9 @@ export function NetworkView() {
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Sea }} />Sea route</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Land }} />Land route</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Air }} />Air route</span>
-        <span>Anchor = Port · Barrel = Fuel depot · Wheel = Wagon yard · Plane = Airport (icon color = Country)</span>
+        <span>
+          Anchor = Port · Barrel = Fuel depot · Wheel = Wagon yard · Plane = Airport (icon color = Political Entity)
+        </span>
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.pirate }} />Pirates</span>
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.police }} />Police</span>
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.company }} />Company</span>
@@ -637,7 +639,7 @@ export function NetworkView() {
                 ? `Closed (${world.closedLocations.get(hover.location.name)!.name}, ${world.closedLocations.get(hover.location.name)!.daysRemaining}d left)`
                 : "Open"}
             </div>
-            <div>Country: {hover.location.country?.name ?? "(none)"}</div>
+            <div>Political Entity: {hover.location.politicalEntity?.name ?? "(none)"}</div>
             <div>Transports at location: {hover.atLocation}</div>
             <div>Transports in transit: {hover.inTransit}</div>
             {hover.events.length > 0 && (
