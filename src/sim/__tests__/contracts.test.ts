@@ -1,15 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildWorld } from "../buildWorld";
 import {
   BulletinBoard, contractKey, CONTRACT_FEE_ESCALATION_BASE, type Contract,
 } from "../contracts";
+import { Commodity } from "../commodity";
 import { Location, type LocationInit } from "../location";
-import { setGeography } from "../worldData";
+import { COMMODITIES, setCommodities, setGeography } from "../worldData";
 import { generateRoutes, setRoutes } from "../routes";
 import { Market, marketKey } from "../markets";
 import { Company, SoloTrader } from "../faction";
 import { Captain } from "../captain";
 import { SHIP_CLASSES } from "../transport";
+
+// Location.basePrice() reads worldData.COMMODITIES live -- every
+// basePriceModifiers value below is written against a controlled
+// Wheat/Gold/Silver registry (each with basePrice 1, so a modifier of e.g.
+// 10 resolves to an effective basePrice of exactly 10, keeping every
+// existing assertion's arithmetic below unchanged) rather than the real
+// default roster, so this file's numbers stay legible and don't silently
+// drift if the real roster's prices ever change. Restored for the one test
+// that actually wants the real default world (see "Contract system
+// integration" below).
+const defaultCommodities = COMMODITIES;
+const testCommodities: Record<string, Commodity> = {
+  Wheat: new Commodity("Wheat", 1),
+  Gold: new Commodity("Gold", 1),
+  Silver: new Commodity("Silver", 1),
+};
+beforeAll(() => setCommodities(testCommodities));
+afterAll(() => setCommodities(defaultCommodities));
 
 function makeLocation(overrides: Partial<LocationInit> = {}): Location {
   return new Location({
@@ -18,7 +37,7 @@ function makeLocation(overrides: Partial<LocationInit> = {}): Location {
     consumedCommodities: { Wheat: 5 },
     stockpiles: { Wheat: 50 },
     minStockpiles: { Wheat: 100 },
-    basePrices: { Wheat: 10 },
+    basePriceModifiers: { Wheat: 10 },
     fuelPrice: 1.0,
     terminalTypes: new Set(["Port"]),
     ...overrides,
@@ -232,19 +251,19 @@ describe("serviceContracts producer selection", () => {
   it("repositions toward a farther but well-stocked producer over a nearer but thin one", () => {
     const home = makeLocation({
       name: "Home", producedCommodities: {}, consumedCommodities: {},
-      stockpiles: {}, minStockpiles: {}, basePrices: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {},
     });
     const nearLow = makeLocation({
       name: "NearLow", producedCommodities: { Gold: 5 }, consumedCommodities: {},
-      stockpiles: { Gold: 10 }, minStockpiles: {}, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 10 }, minStockpiles: {}, basePriceModifiers: { Gold: 100 },
     });
     const farHigh = makeLocation({
       name: "FarHigh", producedCommodities: { Gold: 5 }, consumedCommodities: {},
-      stockpiles: { Gold: 200 }, minStockpiles: {}, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 200 }, minStockpiles: {}, basePriceModifiers: { Gold: 100 },
     });
     const dest = makeLocation({
       name: "Dest", producedCommodities: {}, consumedCommodities: { Gold: 5 },
-      stockpiles: { Gold: 0 }, minStockpiles: { Gold: 100 }, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 0 }, minStockpiles: { Gold: 100 }, basePriceModifiers: { Gold: 100 },
     });
 
     const locations = [home, nearLow, farHigh, dest];
@@ -274,19 +293,19 @@ describe("serviceContracts producer selection", () => {
   it("still prefers the nearer producer when both can fully supply the contract", () => {
     const home = makeLocation({
       name: "Home", producedCommodities: {}, consumedCommodities: {},
-      stockpiles: {}, minStockpiles: {}, basePrices: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {},
     });
     const near = makeLocation({
       name: "Near", producedCommodities: { Gold: 5 }, consumedCommodities: {},
-      stockpiles: { Gold: 200 }, minStockpiles: {}, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 200 }, minStockpiles: {}, basePriceModifiers: { Gold: 100 },
     });
     const far = makeLocation({
       name: "Far", producedCommodities: { Gold: 5 }, consumedCommodities: {},
-      stockpiles: { Gold: 200 }, minStockpiles: {}, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 200 }, minStockpiles: {}, basePriceModifiers: { Gold: 100 },
     });
     const dest = makeLocation({
       name: "Dest", producedCommodities: {}, consumedCommodities: { Gold: 5 },
-      stockpiles: { Gold: 0 }, minStockpiles: { Gold: 100 }, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 0 }, minStockpiles: { Gold: 100 }, basePriceModifiers: { Gold: 100 },
     });
 
     const locations = [home, near, far, dest];
@@ -319,19 +338,19 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
   function setupStrategyWorld(deliveryFee: number) {
     const home = makeLocation({
       name: "Home", producedCommodities: { Silver: 5 }, consumedCommodities: {},
-      stockpiles: { Silver: 1000 }, minStockpiles: {}, basePrices: { Silver: 10 },
+      stockpiles: { Silver: 1000 }, minStockpiles: {}, basePriceModifiers: { Silver: 10 },
     });
     const silverDest = makeLocation({
       name: "SilverDest", producedCommodities: {}, consumedCommodities: { Silver: 5 },
-      stockpiles: { Silver: 0 }, minStockpiles: { Silver: 100 }, basePrices: { Silver: 100 },
+      stockpiles: { Silver: 0 }, minStockpiles: { Silver: 100 }, basePriceModifiers: { Silver: 100 },
     });
     const mine = makeLocation({
       name: "Mine", producedCommodities: { Gold: 5 }, consumedCommodities: {},
-      stockpiles: { Gold: 1000 }, minStockpiles: {}, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 1000 }, minStockpiles: {}, basePriceModifiers: { Gold: 100 },
     });
     const goldDest = makeLocation({
       name: "GoldDest", producedCommodities: {}, consumedCommodities: { Gold: 5 },
-      stockpiles: { Gold: 0 }, minStockpiles: { Gold: 100 }, basePrices: { Gold: 100 },
+      stockpiles: { Gold: 0 }, minStockpiles: { Gold: 100 }, basePriceModifiers: { Gold: 100 },
     });
     const locations = [home, silverDest, mine, goldDest];
     setGeography(locations, { Home: [0, 0], SilverDest: [20, 0], Mine: [600, 0], GoldDest: [620, 0] });
@@ -410,6 +429,10 @@ describe("SoloTrader never accepts a Contract", () => {
 });
 
 describe("Contract system integration", () => {
+  // This one wants the real default 10-commodity roster (buildWorld's own
+  // default), not the file's controlled Wheat/Gold/Silver-only registry.
+  beforeAll(() => setCommodities(defaultCommodities));
+
   it("tenders, services, and prunes contracts over a run without ballooning world.contracts", () => {
     const { world } = buildWorld();
     world.run(60);

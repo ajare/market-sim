@@ -13,7 +13,7 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
     consumedCommodities: { Wheat: 5 },
     stockpiles: { Wheat: 0 }, // deficit -- canSell/isAvailable is true
     minStockpiles: { Wheat: 100 },
-    basePrices: { Wheat: 10 },
+    basePriceModifiers: { Wheat: 1 },
     fuelPrice: 1.0,
     terminalTypes: new Set(["Port"]),
   });

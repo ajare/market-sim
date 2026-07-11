@@ -13,7 +13,7 @@ import pytest
 import sim
 from sim import (
     Location, TerminalType, Route, RouteType, Company, SoloTrader, Captain,
-    Ship, Train, Plane, Transport, SHIP_CLASSES,
+    Ship, Train, Plane, Transport, SHIP_CLASSES, build_commodities,
 )
 
 _COMPANY_TYPES = {"Company": Company, "SoloTrader": SoloTrader}
@@ -58,7 +58,7 @@ def load_fixture_locations(path: str = None) -> Tuple[List[Location], Dict[str, 
                 consumed_commodities=_float_map(row["consumed_commodities"]),
                 stockpiles=_float_map(row["stockpiles"]),
                 min_stockpiles=_float_map(row["min_stockpiles"]),
-                base_prices=_float_map(row["base_prices"]),
+                base_price_modifiers=_float_map(row["base_prices"]),
                 fuel_price=float(row["fuel_price"]),
                 terminal_types=frozenset(TerminalType[t] for t in _split(row["terminal_types"])),
             ))
@@ -174,6 +174,19 @@ def fixture_world(monkeypatch):
     monkeypatch.setattr(sim.world_data, "LOCATION_COORDINATES", merged)
 
     commodity_names, commodity_base_prices = load_fixture_commodities()
+
+    # Location.base_price()/production_rate()/consumption_rate() read the
+    # commodity registry live off sim.world_data.COMMODITIES at call time
+    # (see location.py) -- patch it to the fixture's own roster (Fuel
+    # excluded, same as world_data.COMMODITIES itself: it's priced via
+    # Location.fuel_price, never as a Commodity) so a fixture Location's
+    # base_price_modifier of 1.0 actually resolves to the fixture's base
+    # price, not the real default world's.
+    tradeable_names = [name for name in commodity_names if name != "Fuel"]
+    tradeable_base_prices = {name: commodity_base_prices[name] for name in tradeable_names}
+    monkeypatch.setattr(
+        sim.world_data, "COMMODITIES", build_commodities(tradeable_names, tradeable_base_prices),
+    )
 
     return {
         "locations": locations,

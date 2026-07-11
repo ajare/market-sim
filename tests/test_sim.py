@@ -150,11 +150,12 @@ class TestFixtureLoading:
         }
 
     def test_commodity_base_prices_match_location_base_prices(self, fixture_world):
-        # Alpha's Crude Oil base price and fuel_price were authored to match
-        # the commodities fixture's base prices, so the two CSVs stay consistent.
+        # Alpha's Crude Oil base_price_modifier is 1.0, so its effective
+        # base_price() matches the commodities fixture's base price exactly;
+        # fuel_price is a flat per-location price, authored to match too.
         alpha = next(loc for loc in fixture_world["locations"] if loc.name == "Testport Alpha")
         base_prices = fixture_world["commodity_base_prices"]
-        assert alpha.base_prices["Crude Oil"] == base_prices["Crude Oil"]
+        assert alpha.base_price("Crude Oil") == base_prices["Crude Oil"]
         assert alpha.fuel_price == base_prices["Fuel"]
 
 
@@ -203,7 +204,7 @@ class TestLocationPlatformIsExclusive:
     def _location(self, terminal_types):
         return Location(
             name="Test Rig", produced_commodities={}, consumed_commodities={},
-            stockpiles={}, min_stockpiles={}, base_prices={}, fuel_price=1.25,
+            stockpiles={}, min_stockpiles={}, base_price_modifiers={}, fuel_price=1.25,
             terminal_types=frozenset(terminal_types),
         )
 

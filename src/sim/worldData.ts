@@ -133,10 +133,12 @@ export function generateLocations(
     const remaining = commodityNames.filter((c) => !produced.includes(c));
     const consumed = rng.sample(remaining, Math.min(rng.randint(minPerRole, maxPerRole), remaining.length));
 
+    // Rate MODIFIERS scattered +/-30% around the default 1.0 (see
+    // Location.productionRate/consumptionRate) -- not absolute rates.
     const producedCommodities: Record<string, number> = {};
-    for (const c of produced) producedCommodities[c] = round2(rng.uniform(3, 15));
+    for (const c of produced) producedCommodities[c] = round2(rng.uniform(0.7, 1.3));
     const consumedCommodities: Record<string, number> = {};
-    for (const c of consumed) consumedCommodities[c] = round2(rng.uniform(3, 15));
+    for (const c of consumed) consumedCommodities[c] = round2(rng.uniform(0.7, 1.3));
 
     const otherTerminals = rng.sample(OTHER_TERMINAL_TYPES, rng.randint(0, 2));
     drafts.push({ name, isDepot: false, produced, consumed, producedCommodities, consumedCommodities, otherTerminals });
@@ -148,13 +150,21 @@ export function generateLocations(
   // amount of trading can fix -- a different problem from the throughput-
   // limited scarcity tuned elsewhere (fleet size, cargo capacity, pricing).
   // Rescaling both sides toward their average preserves each location's
-  // relative share of world supply/demand for that commodity.
+  // relative share of world supply/demand for that commodity. Totals are
+  // computed in effective units/day (modifier * the commodity's own
+  // baseProductionRate/baseConsumptionRate, which can differ from each
+  // other) -- but since that base rate is a constant factor for a given
+  // commodity+role, scaling the MODIFIER by produceScale/consumeScale is
+  // equivalent to scaling the effective rate by it, so the drafts stay in
+  // modifier space throughout.
   for (const commodityName of commodityNames) {
+    const producedRate = commodities[commodityName].baseProductionRate;
+    const consumedRate = commodities[commodityName].baseConsumptionRate;
     let totalProduced = 0;
     let totalConsumed = 0;
     for (const d of drafts) {
-      totalProduced += d.producedCommodities[commodityName] ?? 0;
-      totalConsumed += d.consumedCommodities[commodityName] ?? 0;
+      totalProduced += (d.producedCommodities[commodityName] ?? 0) * producedRate;
+      totalConsumed += (d.consumedCommodities[commodityName] ?? 0) * consumedRate;
     }
     if (totalProduced <= 0 || totalConsumed <= 0) continue;
 
@@ -171,8 +181,11 @@ export function generateLocations(
     }
   }
 
-  // Pass 3: derive stockpiles/minStockpiles/basePrices off the now-balanced
-  // rates, continuing the same RNG draw order the original single pass used.
+  // Pass 3: derive stockpiles/minStockpiles/basePriceModifiers off the
+  // now-balanced rates, continuing the same RNG draw order the original
+  // single pass used. basePriceModifiers is a MODIFIER (default 1.0, here
+  // scattered +/-15% around it), not an absolute price -- Location.basePrice()
+  // multiplies it by the commodity's own basePrice at lookup time.
   const locations: Location[] = [];
   for (const d of drafts) {
     if (d.isDepot) {
@@ -183,7 +196,7 @@ export function generateLocations(
           consumedCommodities: {},
           stockpiles: {},
           minStockpiles: {},
-          basePrices: {},
+          basePriceModifiers: {},
           fuelPrice: FUEL_BASE_PRICE,
           terminalTypes: new Set(["Port"]),
         }),
@@ -193,18 +206,18 @@ export function generateLocations(
 
     const stockpiles: Record<string, number> = {};
     const minStockpiles: Record<string, number> = {};
-    const basePrices: Record<string, number> = {};
+    const basePriceModifiers: Record<string, number> = {};
 
     for (const c of d.produced) {
-      const rate = d.producedCommodities[c];
-      stockpiles[c] = round2(rate * rng.uniform(10, 25));
-      basePrices[c] = round2(commodities[c].basePrice * rng.uniform(0.85, 1.15));
+      const effectiveRate = commodities[c].baseProductionRate * d.producedCommodities[c];
+      stockpiles[c] = round2(effectiveRate * rng.uniform(10, 25));
+      basePriceModifiers[c] = round2(rng.uniform(0.85, 1.15));
     }
     for (const c of d.consumed) {
-      const rate = d.consumedCommodities[c];
-      minStockpiles[c] = round2(rate * minStockpileDays);
+      const effectiveRate = commodities[c].baseConsumptionRate * d.consumedCommodities[c];
+      minStockpiles[c] = round2(effectiveRate * minStockpileDays);
       stockpiles[c] = round2(minStockpiles[c] * consumedStockpileFactor);
-      basePrices[c] = round2(commodities[c].basePrice * rng.uniform(0.85, 1.15));
+      basePriceModifiers[c] = round2(rng.uniform(0.85, 1.15));
     }
 
     const terminalTypes: Set<TerminalType> = d.otherTerminals.includes("Platform")
@@ -218,7 +231,7 @@ export function generateLocations(
         consumedCommodities: d.consumedCommodities,
         stockpiles,
         minStockpiles,
-        basePrices,
+        basePriceModifiers,
         fuelPrice: FUEL_BASE_PRICE,
         terminalTypes,
       }),

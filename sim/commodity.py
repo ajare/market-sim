@@ -14,7 +14,7 @@ Fuel is deliberately NOT a Commodity -- it's priced per-Location
 consume/stockpile system at all (see world_data.FUEL_BASE_PRICE).
 """
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # Fallback sensitivity/deficit-boost for a commodity with no explicit
 # hand-tuned value -- lets a custom commodities_csv (see cli.build_world)
@@ -22,14 +22,26 @@ from typing import Dict, List
 DEFAULT_PRICE_SENSITIVITY = 0.45
 DEFAULT_DEFICIT_PRICE_BOOST = 1.4
 
+# Fallback base production/consumption rate (units/day, at a Location whose
+# rate modifier is the default 1.0 -- see Location.production_rate/
+# consumption_rate) for a commodity with no explicit hand-tuned value.
+DEFAULT_BASE_PRODUCTION_RATE = 8.0
+DEFAULT_BASE_CONSUMPTION_RATE = 8.0
+
+# Fallback reference price for a Location.base_price() lookup whose commodity
+# has no registry entry at all (e.g. a custom locations_csv introducing a
+# commodity never registered via a matching commodities_csv).
+DEFAULT_BASE_PRICE = 1.0
+
 
 @dataclass
 class Commodity:
     """
     name: the commodity's identifier, matching Location.produced_commodities/
-        consumed_commodities/stockpiles/min_stockpiles/base_prices keys.
-    base_price: the world-wide reference price locations scatter their own
-        `base_prices` entry around (see world_data._generate_locations).
+        consumed_commodities/stockpiles/min_stockpiles/base_price_modifiers
+        keys.
+    base_price: the world-wide reference price a Location's own
+        base_price_modifiers entry scales (see Location.base_price()).
     price_sensitivity: how strongly this commodity's price reacts to its
         stockpile sitting away from its reference level (see
         Market._stockpile_price) -- e.g. 0.6 means a stockpile fully
@@ -46,12 +58,20 @@ class Commodity:
         this commodity, LOCALLY (one location's market) or GLOBALLY (every
         location that trades it) -- see Market._maybe_trigger_local_event /
         World._maybe_trigger_global_event.
+    base_production_rate / base_consumption_rate: this commodity's
+        units/day rate at a Location with the default 1.0 rate modifier --
+        the actual per-location rate is this times that Location's own
+        modifier (see Location.production_rate/consumption_rate), so two
+        locations producing the same commodity can still differ (a modifier
+        of 1.5 produces 50% faster than the commodity's own baseline).
     """
     name: str
     base_price: float
     price_sensitivity: float = DEFAULT_PRICE_SENSITIVITY
     deficit_price_boost: float = DEFAULT_DEFICIT_PRICE_BOOST
     event_templates: List[dict] = field(default_factory=list)
+    base_production_rate: float = DEFAULT_BASE_PRODUCTION_RATE
+    base_consumption_rate: float = DEFAULT_BASE_CONSUMPTION_RATE
 
 
 def _make_commodity_events(commodity: str, boom: str, disruption: str, glut: str, slump: str) -> List[dict]:
@@ -137,6 +157,20 @@ _DEFICIT_PRICE_BOOST: Dict[str, float] = {
     "Natural Gas": 1.6, "Coffee": 2.0, "Cotton": 1.5, "Iron Ore": 1.3, "Aluminum": 1.3,
 }
 
+# Hand-tuned base production/consumption rates (units/day) for the ten
+# default commodities -- bulkier/cheaper goods (Crude Oil, Natural Gas, Iron
+# Ore) move at a higher daily volume than scarce/expensive ones (Gold,
+# Silver). Anything not listed here (a custom commodities_csv's commodity)
+# uses DEFAULT_BASE_PRODUCTION_RATE/DEFAULT_BASE_CONSUMPTION_RATE instead.
+_BASE_PRODUCTION_RATE: Dict[str, float] = {
+    "Crude Oil": 14.0, "Copper": 8.0, "Wheat": 10.0, "Gold": 2.0, "Silver": 4.0,
+    "Natural Gas": 12.0, "Coffee": 6.0, "Cotton": 7.0, "Iron Ore": 11.0, "Aluminum": 8.0,
+}
+_BASE_CONSUMPTION_RATE: Dict[str, float] = {
+    "Crude Oil": 13.0, "Copper": 7.0, "Wheat": 9.0, "Gold": 2.0, "Silver": 4.0,
+    "Natural Gas": 11.0, "Coffee": 6.0, "Cotton": 6.0, "Iron Ore": 10.0, "Aluminum": 7.0,
+}
+
 
 def _event_templates_for(name: str) -> List[dict]:
     """The event-template pack for `name`: bespoke if hand-authored,
@@ -148,15 +182,26 @@ def _event_templates_for(name: str) -> List[dict]:
     return _make_commodity_events(name, *drivers)
 
 
-def build_commodities(names: List[str], base_prices: Dict[str, float]) -> Dict[str, Commodity]:
+def build_commodities(
+    names: List[str],
+    base_prices: Dict[str, float],
+    production_rates: Optional[Dict[str, float]] = None,
+    consumption_rates: Optional[Dict[str, float]] = None,
+) -> Dict[str, Commodity]:
     """
     Build one `Commodity` per name, pulling hand-tuned price_sensitivity/
     deficit_price_boost/event_templates where they exist (the ten default
     commodities) and falling back to the DEFAULT_*/generic-driver values
     otherwise -- so a custom commodities_csv (see cli.build_world) can
     introduce entirely new commodities without needing to also hand-tune
-    every one of these.
+    every one of these. production_rates/consumption_rates are an optional
+    per-name CSV override (see load_commodities_csv); any name absent from
+    them falls back to the hand-tuned _BASE_PRODUCTION_RATE/
+    _BASE_CONSUMPTION_RATE dicts, then DEFAULT_BASE_PRODUCTION_RATE/
+    DEFAULT_BASE_CONSUMPTION_RATE.
     """
+    production_rates = production_rates or {}
+    consumption_rates = consumption_rates or {}
     return {
         name: Commodity(
             name=name,
@@ -164,6 +209,10 @@ def build_commodities(names: List[str], base_prices: Dict[str, float]) -> Dict[s
             price_sensitivity=_PRICE_SENSITIVITY.get(name, DEFAULT_PRICE_SENSITIVITY),
             deficit_price_boost=_DEFICIT_PRICE_BOOST.get(name, DEFAULT_DEFICIT_PRICE_BOOST),
             event_templates=_event_templates_for(name),
+            base_production_rate=production_rates.get(
+                name, _BASE_PRODUCTION_RATE.get(name, DEFAULT_BASE_PRODUCTION_RATE)),
+            base_consumption_rate=consumption_rates.get(
+                name, _BASE_CONSUMPTION_RATE.get(name, DEFAULT_BASE_CONSUMPTION_RATE)),
         )
         for name in names
     }

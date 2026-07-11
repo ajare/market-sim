@@ -59,9 +59,10 @@ export function LocationsPanel() {
                       <span className="muted">none</span>
                     ) : (
                       <ul className="mini-list">
-                        {produced.map(([commodity, rate]) => {
+                        {produced.map(([commodity]) => {
                           const market = world.buyMarkets.get(marketKey(loc.name, commodity));
                           const stock = loc.stockpiles[commodity] ?? 0;
+                          const rate = loc.productionRate(commodity);
                           const note = pirateNote(market?.history[market.history.length - 1]);
                           return (
                             <li key={commodity}>
@@ -79,10 +80,11 @@ export function LocationsPanel() {
                       <span className="muted">none</span>
                     ) : (
                       <ul className="mini-list">
-                        {consumed.map(([commodity, rate]) => {
+                        {consumed.map(([commodity]) => {
                           const market = world.sellMarkets.get(marketKey(loc.name, commodity));
                           const stock = loc.stockpiles[commodity] ?? 0;
                           const min = loc.minStockpiles[commodity] ?? 0;
+                          const rate = loc.consumptionRate(commodity);
                           const note = pirateNote(market?.history[market.history.length - 1]);
                           return (
                             <li key={commodity}>

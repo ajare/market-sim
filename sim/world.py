@@ -193,8 +193,8 @@ class World:
         self.agent_order_fn = agent_order_fn
 
         for location in locations:
-            for commodity, rate in location.produced_commodities.items():
-                base_price = location.base_prices[commodity]
+            for commodity in location.produced_commodities:
+                base_price = location.base_price(commodity)
                 market = Market(
                     commodity_name=commodity, location_name=location.name, location=location,
                     starting_price=base_price, base_price=base_price, side="buy",
@@ -202,8 +202,8 @@ class World:
                 )
                 self.buy_markets[(location.name, commodity)] = market
 
-            for commodity, rate in location.consumed_commodities.items():
-                base_price = location.base_prices[commodity]
+            for commodity in location.consumed_commodities:
+                base_price = location.base_price(commodity)
                 market = Market(
                     commodity_name=commodity, location_name=location.name, location=location,
                     starting_price=base_price, base_price=base_price, side="sell",

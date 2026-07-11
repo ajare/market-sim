@@ -81,6 +81,16 @@ def _generate_locations(names: List[str], commodities: Dict[str, Commodity], see
     simulation's own random stream. Names in FUEL_DEPOT_NAMES are the
     exception: they only ever deal in Fuel, nothing else.
 
+    produced_commodities/consumed_commodities are rate MODIFIERS (scattered
+    +/-30% around the default 1.0 -- see Location.production_rate/
+    consumption_rate), not absolute rates; stockpile/min_stockpile sizing
+    below multiplies each modifier by the commodity's own
+    base_production_rate/base_consumption_rate to get the actual units/day
+    rate a "days of buffer" target is measured against. base_price_modifiers
+    is the same idea applied to price: a MODIFIER (default 1.0) scattered
+    +/-15% around 1.0, multiplied by the commodity's own base_price at
+    lookup time (see Location.base_price()), not an absolute price.
+
     `consumed_stockpile_factor` sets a consumed commodity's starting
     stockpile as a straight multiple of its minimum (2x by default, i.e.
     every location starts comfortably above the point where it would buy).
@@ -99,7 +109,7 @@ def _generate_locations(names: List[str], commodities: Dict[str, Commodity], see
                 consumed_commodities={},
                 stockpiles={},
                 min_stockpiles={},
-                base_prices={},
+                base_price_modifiers={},
                 fuel_price=FUEL_BASE_PRICE,
                 terminal_types=frozenset({TerminalType.Port}),
             ))
@@ -109,22 +119,24 @@ def _generate_locations(names: List[str], commodities: Dict[str, Commodity], see
         remaining = [c for c in commodity_names if c not in produced]
         consumed = rng.sample(remaining, min(rng.randint(2, 4), len(remaining)))
 
-        produced_commodities = {c: round(rng.uniform(3, 15), 2) for c in produced}
-        consumed_commodities = {c: round(rng.uniform(3, 15), 2) for c in consumed}
+        produced_commodities = {c: round(rng.uniform(0.7, 1.3), 2) for c in produced}
+        consumed_commodities = {c: round(rng.uniform(0.7, 1.3), 2) for c in consumed}
 
         stockpiles: Dict[str, float] = {}
         min_stockpiles: Dict[str, float] = {}
-        base_prices: Dict[str, float] = {}
-        for c, rate in produced_commodities.items():
+        base_price_modifiers: Dict[str, float] = {}
+        for c, modifier in produced_commodities.items():
             # 10-25 days of accumulated output as the starting/reference level.
-            stockpiles[c] = round(rate * rng.uniform(10, 25), 2)
-            base_prices[c] = round(commodities[c].base_price * rng.uniform(0.85, 1.15), 2)
-        for c, rate in consumed_commodities.items():
+            effective_rate = commodities[c].base_production_rate * modifier
+            stockpiles[c] = round(effective_rate * rng.uniform(10, 25), 2)
+            base_price_modifiers[c] = round(rng.uniform(0.85, 1.15), 2)
+        for c, modifier in consumed_commodities.items():
             # A 5-10 day buffer as the minimum, with the starting stockpile
             # set as a straight multiple of it (see consumed_stockpile_factor).
-            min_stockpiles[c] = round(rate * rng.uniform(5, 10), 2)
+            effective_rate = commodities[c].base_consumption_rate * modifier
+            min_stockpiles[c] = round(effective_rate * rng.uniform(5, 10), 2)
             stockpiles[c] = round(min_stockpiles[c] * consumed_stockpile_factor, 2)
-            base_prices[c] = round(commodities[c].base_price * rng.uniform(0.85, 1.15), 2)
+            base_price_modifiers[c] = round(rng.uniform(0.85, 1.15), 2)
 
         # Every location has a Port, plus a random subset of the other
         # terminal kinds so the network has room to grow into land/air/rail
@@ -143,7 +155,7 @@ def _generate_locations(names: List[str], commodities: Dict[str, Commodity], see
             consumed_commodities=consumed_commodities,
             stockpiles=stockpiles,
             min_stockpiles=min_stockpiles,
-            base_prices=base_prices,
+            base_price_modifiers=base_price_modifiers,
             fuel_price=FUEL_BASE_PRICE,
             terminal_types=terminal_types,
         ))

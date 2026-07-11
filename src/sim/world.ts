@@ -214,12 +214,12 @@ export class World {
 
     for (const location of init.locations) {
       for (const commodity of Object.keys(location.producedCommodities)) {
-        const basePrice = location.basePrices[commodity];
+        const basePrice = location.basePrice(commodity);
         const market = new Market(commodity, location.name, location, basePrice, basePrice, "buy", localEventProbability);
         this.buyMarkets.set(marketKey(location.name, commodity), market);
       }
       for (const commodity of Object.keys(location.consumedCommodities)) {
-        const basePrice = location.basePrices[commodity];
+        const basePrice = location.basePrice(commodity);
         const market = new Market(commodity, location.name, location, basePrice, basePrice, "sell", localEventProbability);
         this.sellMarkets.set(marketKey(location.name, commodity), market);
       }

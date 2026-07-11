@@ -10,6 +10,11 @@ import {
   type BulletinBoard, type Contract, type TenderContractsOptions,
 } from "./contracts";
 import type { Country } from "./country";
+import { DEFAULT_BASE_CONSUMPTION_RATE, DEFAULT_BASE_PRICE, DEFAULT_BASE_PRODUCTION_RATE } from "./commodity";
+// Deferred (not destructured) import -- worldData.ts imports Location, so this
+// binding is read lazily via the COMMODITIES getter below, never at this
+// module's own top-level evaluation time.
+import * as worldData from "./worldData";
 
 export type TerminalType = "Port" | "Wagon yard" | "Airport" | "Platform";
 
@@ -25,11 +30,14 @@ export class ContractIssuer {
 
 export interface LocationInit {
   name: string;
+  /** commodity name -> production rate MODIFIER (default 1.0), scaling Commodity.baseProductionRate -- see Location.productionRate. */
   producedCommodities: Record<string, number>;
+  /** commodity name -> consumption rate MODIFIER (default 1.0), scaling Commodity.baseConsumptionRate -- see Location.consumptionRate. */
   consumedCommodities: Record<string, number>;
   stockpiles: Record<string, number>;
   minStockpiles: Record<string, number>;
-  basePrices: Record<string, number>;
+  /** commodity name -> price MODIFIER (default 1.0), scaling Commodity.basePrice -- see Location.basePrice. */
+  basePriceModifiers: Record<string, number>;
   fuelPrice: number;
   terminalTypes: ReadonlySet<TerminalType>;
   fenceFraction?: number;
@@ -45,7 +53,7 @@ export class Location extends ContractIssuer {
   consumedCommodities: Record<string, number>;
   stockpiles: Record<string, number>;
   minStockpiles: Record<string, number>;
-  basePrices: Record<string, number>;
+  basePriceModifiers: Record<string, number>;
   fuelPrice: number;
   terminalTypes: ReadonlySet<TerminalType>;
   /** Fraction of a commodity's live sell price recovered when stolen goods are fenced here. */
@@ -69,7 +77,7 @@ export class Location extends ContractIssuer {
     this.consumedCommodities = init.consumedCommodities;
     this.stockpiles = init.stockpiles;
     this.minStockpiles = init.minStockpiles;
-    this.basePrices = init.basePrices;
+    this.basePriceModifiers = init.basePriceModifiers;
     this.fuelPrice = init.fuelPrice;
     this.terminalTypes = init.terminalTypes;
     this.fenceFraction = init.fenceFraction ?? 0.5;
@@ -152,15 +160,50 @@ export class Location extends ContractIssuer {
     return this.frozenReferenceStockpiles[commodityName] ?? 0;
   }
 
+  /**
+   * This Location's actual units/day production rate for commodityName: the
+   * commodity's world-wide baseProductionRate times this Location's own
+   * modifier (defaults to 1.0 if the commodity isn't in producedCommodities
+   * at all, or falls back to DEFAULT_BASE_PRODUCTION_RATE if the commodity
+   * has no registry entry at all -- e.g. a custom world introducing a
+   * commodity never registered in worldData.COMMODITIES).
+   */
+  productionRate(commodityName: string): number {
+    const modifier = this.producedCommodities[commodityName] ?? 1.0;
+    const commodity = worldData.COMMODITIES[commodityName];
+    const baseRate = commodity !== undefined ? commodity.baseProductionRate : DEFAULT_BASE_PRODUCTION_RATE;
+    return baseRate * modifier;
+  }
+
+  /** This Location's actual units/day consumption rate for commodityName -- mirrors productionRate. */
+  consumptionRate(commodityName: string): number {
+    const modifier = this.consumedCommodities[commodityName] ?? 1.0;
+    const commodity = worldData.COMMODITIES[commodityName];
+    const baseRate = commodity !== undefined ? commodity.baseConsumptionRate : DEFAULT_BASE_CONSUMPTION_RATE;
+    return baseRate * modifier;
+  }
+
+  /**
+   * This Location's actual reference price for commodityName: the
+   * commodity's world-wide basePrice times this Location's own modifier
+   * (defaults to 1.0 if the commodity isn't in basePriceModifiers at all, or
+   * falls back to DEFAULT_BASE_PRICE if the commodity has no registry entry
+   * at all -- mirrors productionRate/consumptionRate's same fallback).
+   */
+  basePrice(commodityName: string): number {
+    const modifier = this.basePriceModifiers[commodityName] ?? 1.0;
+    const commodity = worldData.COMMODITIES[commodityName];
+    const base = commodity !== undefined ? commodity.basePrice : DEFAULT_BASE_PRICE;
+    return base * modifier;
+  }
+
   /** Apply one day of production/consumption to stockpiles (floored at 0). */
   dailyUpdate(): void {
     for (const commodity of Object.keys(this.producedCommodities)) {
-      const rate = this.producedCommodities[commodity];
-      this.stockpiles[commodity] = (this.stockpiles[commodity] ?? 0) + rate;
+      this.stockpiles[commodity] = (this.stockpiles[commodity] ?? 0) + this.productionRate(commodity);
     }
     for (const commodity of Object.keys(this.consumedCommodities)) {
-      const rate = this.consumedCommodities[commodity];
-      this.stockpiles[commodity] = Math.max(0, (this.stockpiles[commodity] ?? 0) - rate);
+      this.stockpiles[commodity] = Math.max(0, (this.stockpiles[commodity] ?? 0) - this.consumptionRate(commodity));
     }
   }
 
@@ -213,7 +256,7 @@ export class Location extends ContractIssuer {
       const deficitRatio = Math.max(0, Math.min(1, (minQuantity - stock) / minQuantity));
       const feeMultiplier = feeEscalationBase ** deficitRatio;
 
-      const basePrice = this.basePrices[commodity] ?? 0;
+      const basePrice = this.basePrice(commodity);
       const deliveryFee = round2(quantity * basePrice * baseFeeRate * feeMultiplier * pirateBoost);
 
       const contract: Contract = {

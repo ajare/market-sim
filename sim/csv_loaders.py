@@ -39,29 +39,42 @@ def _parse_float_map(value: str) -> Dict[str, float]:
 
 def load_commodities_csv(path: str) -> Dict[str, Commodity]:
     """
-    Load Commodities from a CSV with columns: name,base_price. Only
-    base_price is CSV-driven -- price_sensitivity/deficit_price_boost/
-    event_templates are filled in by build_commodities, which falls back
-    to DEFAULT_PRICE_SENSITIVITY/DEFAULT_DEFICIT_PRICE_BOOST and a generic
-    event four-pack for any name it has no hand-tuned entry for (see
-    commodity.py).
+    Load Commodities from a CSV with columns: name,base_price, plus two
+    optional columns, production_rate/consumption_rate (each a bare float;
+    blank or absent falls back to build_commodities' own hand-tuned/
+    DEFAULT_BASE_PRODUCTION_RATE/DEFAULT_BASE_CONSUMPTION_RATE lookup, same
+    as an unrecognized name would). price_sensitivity/deficit_price_boost/
+    event_templates aren't CSV-driven at all -- build_commodities falls
+    back to DEFAULT_PRICE_SENSITIVITY/DEFAULT_DEFICIT_PRICE_BOOST and a
+    generic event four-pack for any name it has no hand-tuned entry for
+    (see commodity.py).
     """
     names = []
     base_prices = {}
+    production_rates = {}
+    consumption_rates = {}
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
-            names.append(row["name"])
-            base_prices[row["name"]] = float(row["base_price"])
-    return build_commodities(names, base_prices)
+            name = row["name"]
+            names.append(name)
+            base_prices[name] = float(row["base_price"])
+            if row.get("production_rate"):
+                production_rates[name] = float(row["production_rate"])
+            if row.get("consumption_rate"):
+                consumption_rates[name] = float(row["consumption_rate"])
+    return build_commodities(names, base_prices, production_rates, consumption_rates)
 
 
 def load_locations_csv(path: str) -> Tuple[List["Location"], Dict[str, Tuple[float, float]]]:
     """
     Load Locations + their (x, y) coordinates from a CSV with columns:
     name,x,y,produced_commodities,consumed_commodities,stockpiles,min_stockpiles,base_prices,fuel_price,terminal_types
-    (produced_commodities/consumed_commodities/stockpiles/min_stockpiles/
-    base_prices are semicolon-separated "commodity:number" pairs;
-    fuel_price is a bare float; terminal_types are TerminalType member names).
+    (produced_commodities/consumed_commodities/stockpiles/min_stockpiles are
+    semicolon-separated "commodity:number" pairs; base_prices is the same
+    shape but holds a price MODIFIER per commodity, default 1.0, scaling
+    that commodity's own base_price (see Location.base_price_modifiers/
+    base_price()) -- fuel_price is a bare float; terminal_types are
+    TerminalType member names).
     """
     locations = []
     coordinates = {}
@@ -73,7 +86,7 @@ def load_locations_csv(path: str) -> Tuple[List["Location"], Dict[str, Tuple[flo
                 consumed_commodities=_parse_float_map(row["consumed_commodities"]),
                 stockpiles=_parse_float_map(row["stockpiles"]),
                 min_stockpiles=_parse_float_map(row["min_stockpiles"]),
-                base_prices=_parse_float_map(row["base_prices"]),
+                base_price_modifiers=_parse_float_map(row["base_prices"]),
                 fuel_price=float(row["fuel_price"]),
                 terminal_types=frozenset(TerminalType[t] for t in _split_list(row["terminal_types"])),
             ))

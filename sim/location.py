@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, FrozenSet, List
 
+from .commodity import DEFAULT_BASE_CONSUMPTION_RATE, DEFAULT_BASE_PRICE, DEFAULT_BASE_PRODUCTION_RATE
+
 
 class TerminalType(Enum):
     Port = auto()
@@ -28,11 +30,11 @@ class Location:
     more of it.
     """
     name: str
-    produced_commodities: Dict[str, float]  # commodity_name -> production rate/day, added to stockpile
-    consumed_commodities: Dict[str, float]  # commodity_name -> consumption rate/day, drawn from stockpile
+    produced_commodities: Dict[str, float]  # commodity_name -> production rate MODIFIER (default 1.0), scaling Commodity.base_production_rate -- see production_rate()
+    consumed_commodities: Dict[str, float]  # commodity_name -> consumption rate MODIFIER (default 1.0), scaling Commodity.base_consumption_rate -- see consumption_rate()
     stockpiles: Dict[str, float]            # commodity_name -> current stockpile (produced + consumed)
     min_stockpiles: Dict[str, float]        # commodity_name -> minimum target (consumed commodities only)
-    base_prices: Dict[str, float]           # commodity_name -> reference price (produced + consumed)
+    base_price_modifiers: Dict[str, float]  # commodity_name -> price MODIFIER (default 1.0), scaling Commodity.base_price -- see base_price()
     fuel_price: float                       # flat, never-fluctuating Fuel price at this location
     terminal_types: FrozenSet["TerminalType"] = field(default_factory=frozenset)  # which kinds of terminal this location has
     # Fraction of a commodity's live sell price recovered when stolen
@@ -70,6 +72,46 @@ class Location:
         return (commodity_name in self.consumed_commodities
                 and self.stockpiles.get(commodity_name, 0.0) < self.min_stockpiles.get(commodity_name, 0.0))
 
+    def production_rate(self, commodity_name: str) -> float:
+        """
+        This Location's actual units/day production rate for
+        commodity_name: the commodity's world_data.COMMODITIES-wide
+        base_production_rate times this Location's own modifier (defaults
+        to 1.0 if the commodity isn't in produced_commodities at all, or
+        falls back to DEFAULT_BASE_PRODUCTION_RATE if the commodity has no
+        registry entry at all -- e.g. a custom locations_csv introducing a
+        commodity never registered via a matching commodities_csv, mirrors
+        Market._stockpile_price's same fallback).
+        """
+        from . import world_data  # deferred: world_data imports Location, so this must stay a call-time import
+        modifier = self.produced_commodities.get(commodity_name, 1.0)
+        commodity = world_data.COMMODITIES.get(commodity_name)
+        base_rate = commodity.base_production_rate if commodity is not None else DEFAULT_BASE_PRODUCTION_RATE
+        return base_rate * modifier
+
+    def consumption_rate(self, commodity_name: str) -> float:
+        """This Location's actual units/day consumption rate for commodity_name -- mirrors production_rate()."""
+        from . import world_data
+        modifier = self.consumed_commodities.get(commodity_name, 1.0)
+        commodity = world_data.COMMODITIES.get(commodity_name)
+        base_rate = commodity.base_consumption_rate if commodity is not None else DEFAULT_BASE_CONSUMPTION_RATE
+        return base_rate * modifier
+
+    def base_price(self, commodity_name: str) -> float:
+        """
+        This Location's actual reference price for commodity_name: the
+        commodity's world_data.COMMODITIES-wide base_price times this
+        Location's own modifier (defaults to 1.0 if the commodity isn't in
+        base_price_modifiers at all, or falls back to DEFAULT_BASE_PRICE if
+        the commodity has no registry entry at all -- mirrors
+        production_rate/consumption_rate's same fallback pattern).
+        """
+        from . import world_data
+        modifier = self.base_price_modifiers.get(commodity_name, 1.0)
+        commodity = world_data.COMMODITIES.get(commodity_name)
+        base = commodity.base_price if commodity is not None else DEFAULT_BASE_PRICE
+        return base * modifier
+
     def reference_stockpile(self, commodity_name: str) -> float:
         """
         The baseline a commodity's price is measured against (see
@@ -84,7 +126,7 @@ class Location:
 
     def daily_update(self) -> None:
         """Apply one day of production/consumption to stockpiles (floored at 0)."""
-        for commodity, rate in self.produced_commodities.items():
-            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0.0) + rate
-        for commodity, rate in self.consumed_commodities.items():
-            self.stockpiles[commodity] = max(0.0, self.stockpiles.get(commodity, 0.0) - rate)
+        for commodity in self.produced_commodities:
+            self.stockpiles[commodity] = self.stockpiles.get(commodity, 0.0) + self.production_rate(commodity)
+        for commodity in self.consumed_commodities:
+            self.stockpiles[commodity] = max(0.0, self.stockpiles.get(commodity, 0.0) - self.consumption_rate(commodity))
