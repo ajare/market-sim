@@ -10,7 +10,7 @@ import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, AGENT_EVENT_TEMPLATES, type TransportEventKind } from "./events";
 import type { TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
-import { getRoute, type Route, type RouteType } from "./routes";
+import { getRoute, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randRandom, randChoice } from "./simRandom";
@@ -286,7 +286,6 @@ export class Captain extends Crew {
 
     for (let i = 0; i < path.length; i++) {
       const legOrigin = nodes[i];
-      const legDestination = nodes[i + 1];
       const route = path[i];
       const legFuelUnits = route.distance * fuelRate * quantity;
       if (legFuelUnits > this.transport!.fuelCapacity) {
@@ -297,7 +296,7 @@ export class Captain extends Crew {
       const legFuelPrice = legFuelMarket !== undefined ? legFuelMarket.price : fuelPrice;
 
       totalDistance += route.distance;
-      totalDays += travelDaysBetween(legOrigin, legDestination, this.transport!.speedUnitsPerDay);
+      totalDays += routeTravelDays(route, this.transport!.speedUnitsPerDay);
       totalFuelUnits += legFuelUnits;
       totalFuelCost += legFuelUnits * legFuelPrice;
       if (!routeTypes.includes(route.routeType)) routeTypes.push(route.routeType);
@@ -455,7 +454,7 @@ export class Captain extends Crew {
       const legFuelUnits = this.refuelAtStop(day, buyMarkets, nextRoute.distance, closedLocations);
       this.transport!.refuel(legFuelUnits);
       this.destination = nextNode;
-      this.daysRemaining = travelDaysBetween(this.currentNode, nextNode, this.transport!.speedUnitsPerDay);
+      this.daysRemaining = routeTravelDays(nextRoute, this.transport!.speedUnitsPerDay);
       this.dailyFuelBurn = this.daysRemaining > 0 ? legFuelUnits / this.daysRemaining : 0.0;
       return false;
     }
@@ -753,10 +752,9 @@ export class Captain extends Crew {
 
     const deliveryPath = findShortestPath(producer, contract.location, canUse);
     if (deliveryPath === null) return null;
-    const deliveryNodes = pathNodeSequence(producer, deliveryPath);
     let deliveryDays = 0;
-    for (let i = 0; i < deliveryPath.length; i++) {
-      deliveryDays += travelDaysBetween(deliveryNodes[i], deliveryNodes[i + 1], this.transport!.speedUnitsPerDay);
+    for (const leg of deliveryPath) {
+      deliveryDays += routeTravelDays(leg, this.transport!.speedUnitsPerDay);
     }
 
     let repositionDays = 0;
@@ -846,7 +844,7 @@ export class Captain extends Crew {
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
-    this.daysRemaining = travelDaysBetween(originLocation, nextNode, this.transport!.speedUnitsPerDay);
+    this.daysRemaining = routeTravelDays(firstLeg, this.transport!.speedUnitsPerDay);
     this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
 
     this.tradeLog.push({
@@ -924,14 +922,13 @@ export class Captain extends Crew {
     issuingLocation.cash -= goodsCost;
     if (fuelMarket !== undefined) this.applyPriceImpact(fuelMarket, leg1FuelUnits, "buy");
 
-    const nodes = pathNodeSequence(originLocation, path);
     let totalDistance = 0.0;
     let totalDays = 0;
     const routeTypes: RouteType[] = [];
-    for (let i = 0; i < path.length; i++) {
-      totalDistance += path[i].distance;
-      totalDays += travelDaysBetween(nodes[i], nodes[i + 1], this.transport!.speedUnitsPerDay);
-      if (!routeTypes.includes(path[i].routeType)) routeTypes.push(path[i].routeType);
+    for (const leg of path) {
+      totalDistance += leg.distance;
+      totalDays += routeTravelDays(leg, this.transport!.speedUnitsPerDay);
+      if (!routeTypes.includes(leg.routeType)) routeTypes.push(leg.routeType);
     }
 
     contract.inFlightCaptain = this;
@@ -958,7 +955,7 @@ export class Captain extends Crew {
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
-    this.daysRemaining = travelDaysBetween(originLocation, nextNode, this.transport!.speedUnitsPerDay);
+    this.daysRemaining = routeTravelDays(firstLeg, this.transport!.speedUnitsPerDay);
     this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
 
     this.tradeLog.push({

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSimStore } from "../state/useSimStore";
 import { LOCATION_COORDINATES, FUEL_DEPOT_NAMES, travelDaysBetween } from "../sim/worldData";
-import { ROUTES, type RouteType } from "../sim/routes";
+import { ROUTES, getRoute, routeTravelDays, type Point, type Route, type RouteType } from "../sim/routes";
 import { Ship, WagonTrain, Plane, type Transport } from "../sim/transport";
 import type { Captain } from "../sim/captain";
 import { PirateBrigade, PoliceFleet, SoloTrader, Company } from "../sim/faction";
@@ -9,6 +9,25 @@ import type { Location, TerminalType } from "../sim/location";
 import type { Country } from "../sim/country";
 import type { MarketEvent } from "../sim/events";
 import type { World } from "../sim/world";
+import { findShortestPath, pathNodeSequence } from "../sim/pathfinding";
+
+/**
+ * Every node a Captain's current voyage still passes through, from where it
+ * is right now to its ultimate destination -- recomputed fresh via
+ * findShortestPath rather than read off `Captain.path`, since that field
+ * only advances leg-by-leg for cargo-carrying trips (see Captain.arrive) and
+ * is left stale during a reposition, where the whole multi-hop trip is
+ * modeled as one continuous transit with no per-leg bookkeeping at all (see
+ * Captain.departEmptyTo). Empty for a Captain not actively routed.
+ */
+function captainRouteNodes(captain: Captain): string[] {
+  if (captain.transport === null || captain.destination === null) return [];
+  const finalDestination = captain.cargo !== null ? captain.cargo.destination : captain.destination;
+  if (finalDestination === captain.location) return [];
+  const path = findShortestPath(captain.location, finalDestination, (r) => captain.transport!.canUseRoute(r));
+  if (path === null) return [captain.location, finalDestination];
+  return pathNodeSequence(captain.location, path);
+}
 
 /** Number of distinct hues in the --country-N categorical palette (index.css) -- Country colors cycle through these by index if there are more countries than slots. */
 const COUNTRY_PALETTE_SIZE = 8;
@@ -250,6 +269,7 @@ export function NetworkView() {
 
     let markers: Marker[] = [];
     let locationMarkers: LocationMarker[] = [];
+    let highlightedCaptain: Captain | null = null;
 
     function draw(): void {
       const dpr = window.devicePixelRatio || 1;
@@ -275,10 +295,11 @@ export function NetworkView() {
       const pad = 52;
       const scaleX = (width - pad * 2) / (maxX - minX || 1);
       const scaleY = (height - pad * 2) / (maxY - minY || 1);
-      const project = (name: string): [number, number] => {
-        const [x, y] = LOCATION_COORDINATES[name];
+      const projectPoint = (point: Point): [number, number] => {
+        const [x, y] = point;
         return [pad + (x - minX) * scaleX, pad + (y - minY) * scaleY];
       };
+      const project = (name: string): [number, number] => projectPoint(LOCATION_COORDINATES[name]);
 
       const border = cssVar("--border", "#999999");
       const textColor = cssVar("--muted", "#666666");
@@ -292,18 +313,75 @@ export function NetworkView() {
         return cssVar(`--country-${(idx % COUNTRY_PALETTE_SIZE) + 1}`, accent);
       }
 
+      /** Traces a Route's cached curve sample points onto the current path, in the direction from `fromNode` (its `curvePoints()` run origin-to-destination, so a leg being walked in reverse needs them flipped). */
+      function traceCurve(route: Route, fromNode: string, started: boolean): boolean {
+        const pts = route.origin === fromNode ? route.curvePoints() : [...route.curvePoints()].reverse();
+        for (const pt of pts) {
+          const [x, y] = projectPoint(pt);
+          if (!started) {
+            ctx!.moveTo(x, y);
+            started = true;
+          } else {
+            ctx!.lineTo(x, y);
+          }
+        }
+        return started;
+      }
+
       ctx.lineWidth = 1;
       ctx.globalAlpha = 0.55;
       for (const route of ROUTES.values()) {
-        const [x1, y1] = project(route.origin);
-        const [x2, y2] = project(route.destination);
         ctx.strokeStyle = ROUTE_COLORS[route.routeType];
         ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
+        traceCurve(route, route.origin, false);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
+
+      // The hovered Captain's full remaining route (current leg plus any
+      // further queued legs -- see captainRouteNodes), drawn over the base
+      // route network in a thick highlight color, following each leg's
+      // actual curve, with intermediate stops ringed so a multi-hop
+      // voyage's waypoints are legible.
+      if (highlightedCaptain !== null) {
+        const nodes = captainRouteNodes(highlightedCaptain);
+        if (nodes.length >= 2) {
+          const highlight = cssVar("--warning", "#f59e0b");
+          ctx.strokeStyle = highlight;
+          ctx.lineWidth = 3;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          let started = false;
+          for (let i = 0; i < nodes.length - 1; i++) {
+            const legRoute = getRoute(nodes[i], nodes[i + 1]);
+            if (legRoute !== undefined) {
+              started = traceCurve(legRoute, nodes[i], started);
+            } else {
+              const [x, y] = project(nodes[i]);
+              const [nx, ny] = project(nodes[i + 1]);
+              if (!started) {
+                ctx.moveTo(x, y);
+                started = true;
+              }
+              ctx.lineTo(nx, ny);
+            }
+          }
+          ctx.stroke();
+
+          const surface = cssVar("--panel-bg", "#ffffff");
+          for (let i = 1; i < nodes.length - 1; i++) {
+            const [nx, ny] = project(nodes[i]);
+            ctx.beginPath();
+            ctx.arc(nx, ny, 5, 0, Math.PI * 2);
+            ctx.fillStyle = surface;
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = highlight;
+            ctx.stroke();
+          }
+        }
+      }
 
       locationMarkers = [];
       for (const loc of locations) {
@@ -364,15 +442,18 @@ export function NetworkView() {
         });
       }
 
-      // In-transit ships: placed along the straight line between their
-      // current node and next node, at the fraction of the leg they've
-      // completed so far -- computed by comparing the leg's total travel
-      // time (recomputed fresh from the same origin/destination/speed
-      // Captain.departXxx used, since those don't change mid-leg) against
-      // daysRemaining, which ticks down toward 0 as Captain.act() advances
-      // the voyage day by day. Ships sharing the same route line are spread
-      // out with a small perpendicular offset so they don't stack exactly on
-      // top of each other.
+      // In-transit ships: placed on their route's actual Bezier curve, at
+      // the fraction of the leg's (curve-length) distance they've completed
+      // so far -- computed by comparing the leg's total travel time
+      // (recomputed fresh via routeTravelDays from the same Route
+      // Captain.departXxx used, since a Route's distance is cached and never
+      // changes mid-leg) against daysRemaining, which ticks down toward 0 as
+      // Captain.act() advances the voyage day by day. A reposition leg
+      // spanning more than one Route edge (see captainRouteNodes' comment)
+      // has no single curve to follow, so it falls back to a straight-line
+      // fraction between its two endpoints, same as before. Ships sharing
+      // the same route line are spread out with a small perpendicular
+      // offset so they don't stack exactly on top of each other.
       const inTransitGroups = new Map<string, Captain[]>();
       for (const captain of world!.captains) {
         if (captain.transport === null || captain.status !== "InTransit" || captain.destination === null) continue;
@@ -392,12 +473,23 @@ export function NetworkView() {
         const perpY = lineDx / lineLen;
         const n = group.length;
         group.forEach((captain, i) => {
-          const totalDays = travelDaysBetween(captain.location, captain.destination!, captain.transport!.speedUnitsPerDay);
+          const legRoute = getRoute(captain.location, captain.destination!);
+          const totalDays = legRoute !== undefined
+            ? routeTravelDays(legRoute, captain.transport!.speedUnitsPerDay)
+            : travelDaysBetween(captain.location, captain.destination!, captain.transport!.speedUnitsPerDay);
           const fraction = totalDays > 0 ? Math.min(1, Math.max(0, (totalDays - captain.daysRemaining) / totalDays)) : 0;
-          const [cox, coy] = project(captain.location);
-          const [cdx, cdy] = project(captain.destination!);
-          const baseX = cox + (cdx - cox) * fraction;
-          const baseY = coy + (cdy - coy) * fraction;
+
+          let baseX: number;
+          let baseY: number;
+          if (legRoute !== undefined) {
+            const curveFraction = legRoute.origin === captain.location ? fraction : 1 - fraction;
+            [baseX, baseY] = projectPoint(legRoute.pointAtFraction(curveFraction));
+          } else {
+            const [cox, coy] = project(captain.location);
+            const [cdx, cdy] = project(captain.destination!);
+            baseX = cox + (cdx - cox) * fraction;
+            baseY = coy + (cdy - coy) * fraction;
+          }
           const offset = (i - (n - 1) / 2) * shipSpacing;
           drawShipMarker(captain, baseX + perpX * offset, baseY + perpY * offset, false);
         });
@@ -429,6 +521,8 @@ export function NetworkView() {
       if (shipHit !== undefined) {
         if (hoveredKey === shipHit.captain) return;
         hoveredKey = shipHit.captain;
+        highlightedCaptain = shipHit.captain;
+        draw();
         setHover({ kind: "captain", captain: shipHit.captain, x: shipHit.x, y: shipHit.y });
         return;
       }
@@ -437,6 +531,10 @@ export function NetworkView() {
       if (locationHit !== undefined) {
         if (hoveredKey === locationHit.location) return;
         hoveredKey = locationHit.location;
+        if (highlightedCaptain !== null) {
+          highlightedCaptain = null;
+          draw();
+        }
         const captainsHere = captainsByLocation.get(locationHit.location.name) ?? [];
         setHover({
           kind: "location",
@@ -452,10 +550,18 @@ export function NetworkView() {
 
       if (hoveredKey === null) return;
       hoveredKey = null;
+      if (highlightedCaptain !== null) {
+        highlightedCaptain = null;
+        draw();
+      }
       setHover(null);
     }
     function handleMouseLeave(): void {
       hoveredKey = null;
+      if (highlightedCaptain !== null) {
+        highlightedCaptain = null;
+        draw();
+      }
       setHover(null);
     }
     canvas.addEventListener("mousemove", handleMouseMove);
@@ -483,6 +589,7 @@ export function NetworkView() {
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.company }} />Company</span>
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.soloTrader }} />Solo trader</span>
         <span><i className="legend-ring" />Docked (not in transit)</span>
+        <span><i className="legend-line" style={{ borderBottomColor: "var(--warning, #f59e0b)" }} />Hover a ship to see its route</span>
       </div>
       <div className="network-canvas-wrap" ref={containerRef}>
         <canvas ref={canvasRef} />
@@ -504,7 +611,7 @@ export function NetworkView() {
                 Cargo: {hover.captain.cargo.commodity} × {hover.captain.cargo.quantity.toFixed(1)}
               </div>
             )}
-            <div>Cash: ${hover.captain.cash.toFixed(2)}</div>
+            {Number.isFinite(hover.captain.cash) && <div>Cash: ${hover.captain.cash.toFixed(2)}</div>}
             {hover.captain.cargo?.contract != null && (
               <div className="network-tooltip-events">
                 📦 Contract: {hover.captain.cargo.contract.quantity.toFixed(1)} {hover.captain.cargo.contract.commodity} →{" "}
