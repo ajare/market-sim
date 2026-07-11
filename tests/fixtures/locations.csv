@@ -1,5 +1,0 @@
-name,x,y,produced_commodities,consumed_commodities,stockpiles,min_stockpiles,base_prices,fuel_price,terminal_types
-Testport Alpha,0,0,Crude Oil:10,,Crude Oil:200,,Crude Oil:1.0,1.20,Port
-Testport Beta,500,0,,Wheat:8,Wheat:50,Wheat:40,Wheat:1.0,1.30,Port;Station
-Testport Gamma,250,400,Gold:2,,Gold:20,,Gold:1.0,1.10,Port;Airport
-Testport Delta,900,50,,Wheat:8,Wheat:30,Wheat:40,Wheat:1.0,1.25,Station

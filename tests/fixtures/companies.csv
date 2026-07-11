@@ -1,7 +1,0 @@
-company_name,captain_name,ship_name,home_location,ship_class,min_daily_return_pct,company_starting_cash,company_type
-Fixture Shipping,Captain Alice,Ship-01,Testport Alpha,Panamax,0.02,10000,Company
-Fixture Shipping,Captain Bob,Ship-02,Testport Beta,Speedster,0.02,10000,Company
-Fixture Rail Co,Captain Carol,Rail-01,Testport Delta,Train,0.015,5000,Company
-Fixture Sailing Co,Captain Dana,Sailor-01,Testport Gamma,SailingVessel,0.02,8000,Company
-Fixture Solo Traders,Captain Eve,Ship-03,Testport Alpha,Handysize,0.02,10000,SoloTrader
-Fixture Solo Traders,Captain Frank,Ship-04,Testport Beta,Handysize,0.02,10000,SoloTrader
