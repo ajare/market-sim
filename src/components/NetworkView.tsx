@@ -36,6 +36,9 @@ const ROUTE_COLORS: Record<RouteType, string> = {
   Sea: "#3b82f6",
   Land: "#b45309",
   Air: "#10b981",
+  Space: "#a855f7",
+  Road: "#6b7280",
+  Railroad: "#0891b2",
 };
 
 /** Ship markers are colored by the operating Faction, not transport kind. */
@@ -541,7 +544,10 @@ export function NetworkView() {
           location: locationHit.location,
           atLocation: captainsHere.filter((c) => c.status === "AtLocation").length,
           inTransit: captainsHere.filter((c) => c.status === "InTransit").length,
-          events: locationActiveEvents(world, locationHit.location.name),
+          // world is guaranteed non-null by the effect's early return above,
+          // but TS doesn't carry that narrowing into this nested handler --
+          // guard inline (the [] branch never runs at runtime).
+          events: world === null ? [] : locationActiveEvents(world, locationHit.location.name),
           x: locationHit.x,
           y: locationHit.y,
         });

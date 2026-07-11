@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useSimStore } from "../state/useSimStore";
 import type { ContractStrategy } from "../sim/faction";
 
@@ -11,6 +12,7 @@ export function ControlsPanel() {
   const version = useSimStore((s) => s.version);
   const step = useSimStore((s) => s.step);
   const reset = useSimStore((s) => s.reset);
+  const loadWorldFromJson = useSimStore((s) => s.loadWorldFromJson);
   const setPlaying = useSimStore((s) => s.setPlaying);
   const setSecondsPerDay = useSimStore((s) => s.setSecondsPerDay);
   const setContractStrategy = useSimStore((s) => s.setContractStrategy);
@@ -18,6 +20,28 @@ export function ControlsPanel() {
   const removePirateShip = useSimStore((s) => s.removePirateShip);
   const addPoliceShip = useSimStore((s) => s.addPoliceShip);
   const removePoliceShip = useSimStore((s) => s.removePoliceShip);
+
+  const [pasteError, setPasteError] = useState<string | null>(null);
+
+  async function handlePasteWorld() {
+    setPasteError(null);
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (err) {
+      setPasteError(`Could not read the clipboard: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    if (text.trim() === "") {
+      setPasteError("Clipboard is empty -- copy a World from the editor first.");
+      return;
+    }
+    try {
+      loadWorldFromJson(text);
+    } catch (err) {
+      setPasteError(`Could not create a World from the clipboard: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   const traderCount = world?.captains.length ?? 0;
   const locationCount = world?.locations.length ?? 0;
@@ -37,6 +61,9 @@ export function ControlsPanel() {
       </button>
       <button type="button" onClick={reset}>
         Reset
+      </button>
+      <button type="button" onClick={handlePasteWorld}>
+        Paste World
       </button>
       <label className="speed-control">
         Speed: {secondsPerDay.toFixed(1)} s/day
@@ -73,6 +100,7 @@ export function ControlsPanel() {
       <span className="stat">{factions.length} factions</span>
       <span className="stat">{traderCount} traders</span>
       <span className="stat">{locationCount} locations</span>
+      {pasteError !== null && <span className="paste-error" role="alert">{pasteError}</span>}
     </div>
   );
 }

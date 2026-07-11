@@ -2,6 +2,7 @@
 import { useEditorStore } from "../state/useEditorStore";
 import { TERMINAL_TYPES } from "../types";
 import { CommodityMapEditor } from "./CommodityMapEditor";
+import { LocationRoutesTable } from "./LocationRoutesTable";
 
 export function LocationInspector() {
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -36,12 +37,9 @@ export function LocationInspector() {
         <label>
           Political entity
           <select
-            value={location.politicalEntityId ?? ""}
-            onChange={(e) =>
-              updateLocation(location.id, { politicalEntityId: e.target.value === "" ? null : e.target.value })
-            }
+            value={location.politicalEntityId}
+            onChange={(e) => updateLocation(location.id, { politicalEntityId: e.target.value })}
           >
-            {location.politicalEntityId === null && <option value="">(none)</option>}
             {politicalEntities.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -88,6 +86,8 @@ export function LocationInspector() {
           </label>
         ))}
       </div>
+
+      <LocationRoutesTable locationId={location.id} />
 
       <CommodityMapEditor
         locationId={location.id}

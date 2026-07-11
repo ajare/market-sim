@@ -57,8 +57,11 @@ body {
 }
 
 .sidebar-left {
-  width: 200px;
-  flex-shrink: 0;
+  /* Starts at 200px, then grows to absorb the 10% of leftover space the
+     canvas gives up (see .canvas-area's flex-grow: 9 vs. this 1), so the
+     canvas renders 10% narrower and the left panel gets that width. Never
+     shrinks below the 200px basis. */
+  flex: 1 0 200px;
   border-right: 1px solid #ddd;
   overflow-x: hidden;
   overflow-y: auto;
@@ -112,11 +115,23 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.3rem;
+  gap: 0.35rem;
 }
 
-.political-entity-card-header .political-entity-name-label {
+.political-entity-card-header .political-entity-name-input {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   font-size: 0.9rem;
+  border: none;
+  background: none;
+  padding: 0.1rem 0.2rem;
+}
+
+.political-entity-card-header .political-entity-name-input:focus {
+  background: #fff;
+  outline: 1px solid #ccc;
+  border-radius: 3px;
 }
 
 .political-entity-card-header button {
@@ -126,6 +141,20 @@ body {
   border-radius: 4px;
   cursor: pointer;
   padding: 0.1rem 0.45rem;
+}
+
+.political-entity-type-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: #666;
+  margin-bottom: 0.35rem;
+}
+
+.political-entity-type-label select {
+  padding: 0.15rem 0.3rem;
+  font-size: 0.8rem;
 }
 
 .political-entity-locations-empty {
@@ -156,19 +185,22 @@ body {
   text-decoration: underline;
 }
 
-.commodities-panel {
+.commodities-panel,
+.companies-panel {
   padding: 0 0.75rem 0.75rem;
   border-top: 1px solid #eee;
   margin-top: 0.5rem;
 }
 
-.commodities-empty {
+.commodities-empty,
+.companies-empty {
   color: #888;
   font-size: 0.8rem;
   padding: 0.25rem 0 0.5rem;
 }
 
-.commodity-card {
+.commodity-card,
+.company-card {
   border: 1px solid #e2e2e2;
   border-radius: 6px;
   padding: 0.4rem 0.5rem;
@@ -176,11 +208,143 @@ body {
   background: #fafafa;
 }
 
-.commodity-card-header {
+.commodity-card-header,
+.company-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.35rem;
+  gap: 0.35rem;
+}
+
+.company-name-input {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+  border: none;
+  background: none;
+  padding: 0.1rem 0.2rem;
+}
+
+.company-name-input:focus {
+  background: #fff;
+  outline: 1px solid #ccc;
+  border-radius: 3px;
+}
+
+.company-faction-type {
+  font-size: 0.72rem;
+  color: #666;
+  margin-bottom: 0.35rem;
+}
+
+.company-faction-type-value {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.fleet-section {
+  margin-top: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed #ddd;
+}
+
+.fleet-section-header {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #888;
+  margin-bottom: 0.25rem;
+}
+
+.fleet-empty {
+  color: #888;
+  font-size: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.fleet-list {
+  list-style: none;
+  margin: 0 0 0.35rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.fleet-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.fleet-member-summary {
+  flex: 1;
+  min-width: 0;
+}
+
+.fleet-list-item button {
+  flex-shrink: 0;
+  border: none;
+  background: #eee;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+
+.fleet-member-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: #f2f2f2;
+  border-radius: 5px;
+  padding: 0.35rem;
+}
+
+.fleet-member-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+  color: #666;
+}
+
+.fleet-member-field input,
+.fleet-member-field select {
+  padding: 0.2rem 0.35rem;
+  font-size: 0.85rem;
+}
+
+.fleet-captain-name-row {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.fleet-captain-name-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fleet-captain-name-row button {
+  flex-shrink: 0;
+  border: none;
+  background: #eee;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+}
+
+.fleet-member-form > button {
+  align-self: flex-start;
+  border: none;
+  background: #dde7ff;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
 }
 
 .commodity-card-header .commodity-name-label {
@@ -188,7 +352,8 @@ body {
   font-size: 0.9rem;
 }
 
-.commodity-card-header button {
+.commodity-card-header button,
+.company-card-header button {
   flex-shrink: 0;
   border: none;
   background: #eee;
@@ -203,7 +368,8 @@ body {
   gap: 0.3rem;
 }
 
-.commodity-field {
+.commodity-field,
+.company-field {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -211,7 +377,8 @@ body {
   color: #666;
 }
 
-.commodity-field input {
+.commodity-field input,
+.company-field input {
   padding: 0.2rem 0.35rem;
   font-size: 0.85rem;
 }
@@ -226,7 +393,9 @@ body {
 }
 
 .canvas-area {
-  flex: 1;
+  /* Takes 9/10 of the leftover space (the left sidebar's flex-grow: 1 takes
+     the other 1/10), making the canvas 10% narrower than if it took it all. */
+  flex: 9 1 0;
   position: relative;
 }
 
@@ -250,6 +419,11 @@ body {
   pointer-events: none;
 }
 
+.canvas-hint-warning {
+  top: 2.75rem;
+  background: rgba(153, 27, 27, 0.9);
+}
+
 .world-canvas {
   width: 100%;
   height: 100%;
@@ -264,6 +438,51 @@ body {
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+
+.route-line {
+  fill: none;
+  stroke: #999;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* Invisible, wider stroke rendered behind .route-line -- the real click/shift-drag target, since a 2px line is too thin to reliably hit. */
+.route-hit-area {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+.route-hit-area:hover + .route-line {
+  stroke: #e53e3e;
+}
+
+.route-line-pending {
+  fill: none;
+  stroke: #2b6cb0;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.route-line-pending.invalid {
+  stroke: #e53e3e;
+}
+
+.route-control-point rect {
+  fill: #fff;
+  stroke: #2b6cb0;
+  stroke-width: 2;
+  cursor: pointer;
+}
+
+.route-control-point:hover rect {
+  fill: #2b6cb0;
 }
 
 .location-pin circle {
@@ -287,6 +506,38 @@ body {
 .location-list {
   display: flex;
   flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  border-bottom: 1px solid #eee;
+}
+
+/* Bounds a section's list of cards so many entries scroll within this pane
+   rather than growing the sidebar and forcing it to scroll as a whole. */
+.rollup-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 0.3rem;
+}
+
+.rollup-toggle {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-size: 0.7rem;
+  color: #666;
+  line-height: 1;
+}
+
+.rollup-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .location-list-empty {
@@ -382,17 +633,20 @@ body {
   font-size: 0.85rem;
 }
 
-.commodity-table-section {
+.commodity-table-section,
+.routes-table-section {
   margin-bottom: 0.75rem;
 }
 
-.commodity-table {
+.commodity-table,
+.routes-table {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 0.4rem;
 }
 
-.commodity-table th {
+.commodity-table th,
+.routes-table th {
   font-size: 0.7rem;
   font-weight: 600;
   color: #666;
@@ -401,13 +655,16 @@ body {
   border-bottom: 1px solid #ddd;
 }
 
-.commodity-table td {
+.commodity-table td,
+.routes-table td {
   padding: 0.25rem 0.35rem;
   border-bottom: 1px solid #f0f0f0;
   vertical-align: middle;
+  font-size: 0.85rem;
 }
 
-.commodity-table .commodity-name-cell {
+.commodity-table .commodity-name-cell,
+.routes-table .routes-table-name-cell {
   font-size: 0.85rem;
   white-space: nowrap;
   overflow: hidden;
@@ -420,7 +677,8 @@ body {
   min-width: 56px;
 }
 
-.commodity-table button {
+.commodity-table button,
+.routes-table button {
   border: none;
   background: #eee;
   border-radius: 4px;
@@ -428,6 +686,12 @@ body {
   padding: 0.2rem 0.5rem;
   font-size: 0.75rem;
   white-space: nowrap;
+}
+
+.routes-empty {
+  color: #888;
+  font-size: 0.8rem;
+  padding: 0.25rem 0 0.5rem;
 }
 
 .commodity-row {

@@ -12,6 +12,7 @@
  */
 import { create } from "zustand";
 import { buildWorld } from "../sim/buildWorld";
+import { buildWorldFromJson } from "../sim/buildWorldFromJson";
 import type { World } from "../sim/world";
 import type { PoliticalEntity } from "../sim/politicalEntity";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
@@ -26,6 +27,8 @@ interface SimStore {
   contractStrategy: ContractStrategy;
   version: number;
   reset: () => void;
+  /** Builds a fresh World from an editor JSON export (see buildWorldFromJson) and installs it, replacing the current one. Throws if the JSON can't be turned into a valid World -- the caller surfaces the message. */
+  loadWorldFromJson: (text: string) => void;
   step: () => void;
   tick: (deltaTimeSeconds: number) => void;
   setPlaying: (playing: boolean) => void;
@@ -58,6 +61,16 @@ export const useSimStore = create<SimStore>((set, get) => ({
 
   reset: () => {
     const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
+    applyContractStrategy(factions, get().contractStrategy);
+    accumulator = 0;
+    set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));
+  },
+
+  loadWorldFromJson: (text: string) => {
+    // buildWorldFromJson throws on any failure (bad JSON, empty world, or a
+    // domain-constructor validation error) -- let it propagate to the caller,
+    // which shows the message; leave the current world untouched on failure.
+    const { world, factions, politicalEntities } = buildWorldFromJson(text);
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
     set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));

@@ -38,6 +38,12 @@
   border-radius: 999px;
 }
 
+.paste-error {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: #b00020;
+}
+
 .panels {
   display: flex;
   flex-direction: column;

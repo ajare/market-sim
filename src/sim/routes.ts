@@ -1,26 +1,43 @@
 /**
  * Routes: direct, typed connections between locations (Sea/Land/Air),
  * and the procedurally generated route network. Ported from sim/routes.py,
- * extended with a Bezier-curve geometry (see Route) so a route reads as a
- * curved lane on a map rather than a straight edge.
+ * extended with a geometry a Route can render/measure itself along (see
+ * Route) -- either a plain straight line between endpoints, or a bowed
+ * Bezier curve through generated control points, so a route can read as a
+ * distinct curved lane on a map rather than always a straight edge.
  */
 import { Rng } from "./rng";
 import type { Location, TerminalType } from "./location";
 import { distanceBetween, LOCATION_COORDINATES, WORLD_GEN_SEED } from "./worldData";
 
-export type RouteType = "Land" | "Air" | "Sea";
+export type RouteType = "Land" | "Air" | "Sea" | "Space" | "Road" | "Railroad";
 export type Point = readonly [number, number];
+
+/** Whether a Route's geometry is a plain straight line between its endpoints, or a bowed Bezier curve through generated control points (see Route.controlPoints). */
+export type RouteCurveType = "Straight" | "Bezier";
 
 export const ROUTE_TERMINAL_COMPATIBILITY: Record<RouteType, TerminalType[]> = {
   Land: ["Wagon yard"],
   Air: ["Airport"],
   Sea: ["Port", "Platform"],
+  // A Space route can only connect Spaceports.
+  Space: ["Spaceport"],
+  // A Road route can only connect TransitDepots.
+  Road: ["TransitDepot"],
+  // A Railroad route can only connect Stations.
+  Railroad: ["Station"],
 };
 
 export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   Air: 1.0,
   Sea: 0.8,
   Land: 0.5,
+  // Space routes reach the furthest -- never pruned for distance any more
+  // aggressively than Air.
+  Space: 1.0,
+  // Surface haulage -- short-to-medium reach, like Land.
+  Road: 0.5,
+  Railroad: 0.6,
 };
 
 /** Number of interior Bezier control points a Route's curve is built from by default -- two interior points plus the origin/destination endpoints makes a cubic Bezier. */
@@ -79,13 +96,16 @@ export class Route {
   origin: string;
   destination: string;
   routeType: RouteType;
-  /** Interior Bezier control points between origin and destination, in the same coordinate space as LOCATION_COORDINATES -- length is `controlPointCount` (default 2). */
+  curveType: RouteCurveType;
+  /** Interior Bezier control points between origin and destination, in the same coordinate space as LOCATION_COORDINATES -- empty for a "Straight" Route, length `controlPointCount` (default 2) for a "Bezier" one. */
   controlPoints: Point[];
   /**
-   * Arc length of the Bezier curve through origin, controlPoints, and
-   * destination -- computed once here (control points never change
-   * afterward) and used everywhere a Route's distance matters: fuel cost,
-   * travel time (see routeTravelDays), and pathfinding edge weight.
+   * Arc length of this Route's curve through origin, controlPoints, and
+   * destination -- the plain Euclidean distance for a "Straight" Route
+   * (controlPoints is empty), or the Bezier curve's arc length otherwise.
+   * Computed once here (control points never change afterward) and used
+   * everywhere a Route's distance matters: fuel cost, travel time (see
+   * routeTravelDays), and pathfinding edge weight.
    */
   distance: number;
   private samplePoints: Point[];
@@ -97,15 +117,25 @@ export class Route {
     routeType: RouteType,
     seed: number = WORLD_GEN_SEED,
     controlPointCount: number = DEFAULT_CONTROL_POINT_COUNT,
+    curveType: RouteCurveType = "Straight",
   ) {
     this.origin = origin;
     this.destination = destination;
     this.routeType = routeType;
+    this.curveType = curveType;
 
     const originPoint = LOCATION_COORDINATES[origin];
     const destPoint = LOCATION_COORDINATES[destination];
-    const rng = new Rng(hashSeed(seed, origin, destination));
-    this.controlPoints = generateControlPoints(rng, originPoint, destPoint, controlPointCount);
+    // A "Straight" Route skips control-point generation entirely (rather than
+    // just passing controlPointCount=0) so its geometry never depends on the
+    // bow-generating RNG stream at all, and so curveType alone always wins
+    // regardless of what controlPointCount a caller happens to pass in.
+    if (curveType === "Straight") {
+      this.controlPoints = [];
+    } else {
+      const rng = new Rng(hashSeed(seed, origin, destination));
+      this.controlPoints = generateControlPoints(rng, originPoint, destPoint, controlPointCount);
+    }
 
     const curvePoints: Point[] = [originPoint, ...this.controlPoints, destPoint];
     this.samplePoints = [curvePoints[0]];

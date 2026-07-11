@@ -146,6 +146,63 @@ export class Plane extends Transport {
   }
 }
 
+export class Lorry extends Transport {
+  constructor(init: TransportInit = {}) {
+    super({
+      name: "Box Lorry",
+      cargoCapacity: 15.0,
+      speedUnitsPerDay: 500.0,
+      fuelConsumptionPerUnitDistance: 0.0035,
+      repositionFuelConsumptionPerDistance: 0.03,
+      fixedShipmentCost: 8.0,
+      fuelCapacity: 50.0,
+      ...init,
+    });
+  }
+
+  override allowedRouteTypes(): RouteType[] | null {
+    return ["Road"];
+  }
+}
+
+export class FreightTrain extends Transport {
+  constructor(init: TransportInit = {}) {
+    super({
+      name: "Freight Train",
+      cargoCapacity: 40.0,
+      speedUnitsPerDay: 550.0,
+      fuelConsumptionPerUnitDistance: 0.0025,
+      repositionFuelConsumptionPerDistance: 0.02,
+      fixedShipmentCost: 12.0,
+      fuelCapacity: 80.0,
+      ...init,
+    });
+  }
+
+  override allowedRouteTypes(): RouteType[] | null {
+    return ["Railroad"];
+  }
+}
+
+export class Spaceship extends Transport {
+  constructor(init: TransportInit = {}) {
+    super({
+      name: "Star Freighter",
+      cargoCapacity: 50.0,
+      speedUnitsPerDay: 5000.0,
+      fuelConsumptionPerUnitDistance: 0.012,
+      repositionFuelConsumptionPerDistance: 0.1,
+      fixedShipmentCost: 120.0,
+      fuelCapacity: 200.0,
+      ...init,
+    });
+  }
+
+  override allowedRouteTypes(): RouteType[] | null {
+    return ["Space"];
+  }
+}
+
 // Off-the-shelf classes spanning the capacity/speed/efficiency trade-off
 // space. Small and fast burns less fuel per trip but can't move much
 // cargo; large and slow moves a lot but ties up more capital per voyage.

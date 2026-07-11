@@ -6,7 +6,7 @@ import { COMMODITIES } from "./worldData";
 import { DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST, DEFAULT_EXCESS_PRICE_BOOST } from "./commodity";
 import { MarketEvent } from "./events";
 import type { Location } from "./location";
-import { randRandom, randChoice, randGauss } from "./simRandom";
+import { randGauss } from "./simRandom";
 
 export type MarketSide = "buy" | "sell";
 
@@ -127,16 +127,6 @@ export class Market {
     this.activeEvents.push(event);
   }
 
-  private maybeTriggerLocalEvent(): MarketEvent | null {
-    if (randRandom() >= this.eventProbability) return null;
-    const commodity = COMMODITIES[this.commodityName];
-    if (commodity === undefined || commodity.eventTemplates.length === 0) return null;
-    const template = randChoice(commodity.eventTemplates);
-    const event = new MarketEvent({ ...template, location: this.locationName, commodity: this.commodityName });
-    this.applyEvent(event);
-    return event;
-  }
-
   private updateEvents(): void {
     this.activeEvents = this.activeEvents.filter((e) => e.tick());
   }
@@ -229,11 +219,10 @@ export class Market {
       return record;
     }
 
-    const triggeredEvent = this.maybeTriggerLocalEvent();
-    if (triggeredEvent !== null) {
-      triggeredEvent.day = day;
-      this.lastTriggeredEvent = triggeredEvent;
-    }
+    // No new local MarketEvent is ever randomly rolled here -- events are
+    // disabled -- but any already-active event (from a loaded scenario)
+    // still applies its multiplier and ticks down below (so lastTriggeredEvent
+    // stays null and newEvent stays "").
     const [demandMult, supplyMult] = this.currentMultipliers();
     const pirateMult = this.pirateMultiplier(pirateCount);
 
@@ -256,7 +245,7 @@ export class Market {
       pirateCount,
       pirateMultiplier: round2(pirateMult),
       activeEvents: this.activeEvents.map((e) => e.name).join(", "),
-      newEvent: triggeredEvent !== null ? triggeredEvent.name : "",
+      newEvent: "",
       closed: false,
     };
     this.history.push(record);

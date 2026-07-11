@@ -7,12 +7,7 @@
  * data-shaping code with no new simulation logic, deferred to whichever
  * phase-2 panel first needs it.
  */
-import { COMMODITIES } from "./worldData";
-import {
-  type Event, MarketEvent, LocationClosure, CompanyEvent,
-  LOCATION_EVENT_TEMPLATES, WORLD_EVENT_TEMPLATES,
-  LOCATION_CLOSURE_TEMPLATES, COMPANY_EVENT_TEMPLATES,
-} from "./events";
+import { type Event, MarketEvent, LocationClosure } from "./events";
 import type { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
 import { Ship } from "./transport";
@@ -20,7 +15,7 @@ import { Captain, type Directive } from "./captain";
 import { ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES, SPANISH_FIRST_NAMES, SPANISH_LAST_NAMES } from "./names";
 import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
 import { primeRouteGraphCache } from "./pathfinding";
-import { randRandom, randChoice, randInt, randShuffle, seedSimRandom } from "./simRandom";
+import { randChoice, randInt, randShuffle, seedSimRandom } from "./simRandom";
 import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
 
 // Locations must fall within this range. Calibrated via seed-averaged
@@ -315,58 +310,6 @@ export class World {
     return seen;
   }
 
-  private maybeTriggerGlobalEvent(day: number): void {
-    if (randRandom() >= this.globalEventProbability) return;
-    const commodity = randChoice(this.commoditiesPresent());
-    const commodityData = COMMODITIES[commodity];
-    if (commodityData === undefined || commodityData.eventTemplates.length === 0) return;
-    const template = randChoice(commodityData.eventTemplates);
-    const affectedMarkets = this.allMarkets().filter((m) => m.commodityName === commodity);
-    if (affectedMarkets.length === 0) return;
-    for (const market of affectedMarkets) {
-      market.applyEvent(new MarketEvent({ ...template, location: null, commodity }));
-    }
-    const trackingEvent = new MarketEvent({ ...template, location: null, commodity });
-    trackingEvent.day = day;
-    trackingEvent.type = "Global";
-    this.eventLog.push(trackingEvent);
-    this.activeBroadEvents.push({ scope: "Global", subject: commodity, startDay: day, event: trackingEvent });
-    this.broadEventLog.push({ scope: "Global", subject: commodity, name: template.name, startDay: day, durationDays: template.durationDays });
-  }
-
-  private maybeTriggerLocationEvent(day: number): void {
-    if (randRandom() >= this.locationEventProbability) return;
-    const location = randChoice(this.locations).name;
-    const template = randChoice(LOCATION_EVENT_TEMPLATES);
-    const affectedMarkets = this.allMarkets().filter((m) => m.locationName === location);
-    if (affectedMarkets.length === 0) return;
-    for (const market of affectedMarkets) {
-      market.applyEvent(new MarketEvent({ ...template, location }));
-    }
-    const trackingEvent = new MarketEvent({ ...template, location });
-    trackingEvent.day = day;
-    trackingEvent.type = "Location";
-    this.eventLog.push(trackingEvent);
-    this.activeBroadEvents.push({ scope: "Location", subject: location, startDay: day, event: trackingEvent });
-    this.broadEventLog.push({ scope: "Location", subject: location, name: template.name, startDay: day, durationDays: template.durationDays });
-  }
-
-  private maybeTriggerWorldwideEvent(day: number): void {
-    if (randRandom() >= this.worldwideEventProbability) return;
-    const template = randChoice(WORLD_EVENT_TEMPLATES);
-    const affectedMarkets = this.allMarkets();
-    if (affectedMarkets.length === 0) return;
-    for (const market of affectedMarkets) {
-      market.applyEvent(new MarketEvent({ ...template, location: null }));
-    }
-    const trackingEvent = new MarketEvent({ ...template, location: null });
-    trackingEvent.day = day;
-    trackingEvent.type = "Worldwide";
-    this.eventLog.push(trackingEvent);
-    this.activeBroadEvents.push({ scope: "Worldwide", subject: "Global", startDay: day, event: trackingEvent });
-    this.broadEventLog.push({ scope: "Worldwide", subject: "Global", name: template.name, startDay: day, durationDays: template.durationDays });
-  }
-
   private tickBroadEvents(): void {
     this.activeBroadEvents = this.activeBroadEvents.filter((entry) => entry.event.tick());
   }
@@ -412,42 +355,6 @@ export class World {
     return reopened;
   }
 
-  private maybeTriggerLocationClosure(day: number): void {
-    if (randRandom() >= this.locationClosureProbability) return;
-    const candidates = this.locations.map((l) => l.name).filter((name) => !this.closedLocations.has(name));
-    if (candidates.length === 0) return;
-    const location = randChoice(candidates);
-    const template = randChoice(LOCATION_CLOSURE_TEMPLATES);
-    const closure = new LocationClosure(template);
-    closure.day = day;
-    closure.scope = location;
-    closure.subject = location;
-    this.closedLocations.set(location, closure);
-    this.eventLog.push(closure);
-    this.closureLog.push({ day, location, event: closure.name, durationDays: closure.durationDays });
-  }
-
-  private maybeTriggerCompanyEvents(day: number): void {
-    for (const faction of this.factions) {
-      // `type(faction) is Company` in Python (exact type, not isinstance --
-      // SoloTrader extends Company but doesn't pool cash). Compared via
-      // Object.getPrototypeOf rather than `faction.constructor !== Company`
-      // to sidestep TS narrowing `faction` to `never` from that pattern.
-      if (Object.getPrototypeOf(faction) !== Company.prototype) continue;
-      if (randRandom() >= this.companyEventProbability) continue;
-      const template = randChoice(COMPANY_EVENT_TEMPLATES);
-      const event = new CompanyEvent(template);
-      event.day = day;
-      event.subject = faction.name;
-      if (event.kind === "cash_gain") {
-        faction.cash += event.magnitude;
-      } else {
-        faction.cash = Math.max(0.0, faction.cash - event.magnitude);
-      }
-      this.eventLog.push(event);
-    }
-  }
-
   run(numDays: number): MarketRecord[] {
     const commoditiesPresent = this.commoditiesPresent();
     for (let day = 1; day <= numDays; day++) {
@@ -487,11 +394,11 @@ export class World {
       location.tenderContracts(day, this.bulletinBoard, activeContractKeys, this.contractOptions, pirateCount);
     }
 
-    // Location closures resolve before anyone acts today.
+    // Location closures resolve before anyone acts today. No new closures or
+    // Company/Market/Transport events are ever randomly rolled -- events are
+    // disabled -- but already-active ones (from a loaded scenario) still tick.
     this.tickLocationClosures();
     this.tickBroadEvents();
-    this.maybeTriggerLocationClosure(day);
-    this.maybeTriggerCompanyEvents(day);
 
     // Traders act first, against the previous day's closing prices.
     const closedLocations = new Set(this.closedLocations.keys());
@@ -514,10 +421,6 @@ export class World {
         if (e.day === day) this.eventLog.push(e);
       }
     }
-
-    this.maybeTriggerGlobalEvent(day);
-    this.maybeTriggerLocationEvent(day);
-    this.maybeTriggerWorldwideEvent(day);
 
     // Production/consumption keep happening regardless of whether the port
     // can currently load or unload anyone -- only actual trading is

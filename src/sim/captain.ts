@@ -7,13 +7,13 @@
  */
 import { Crew } from "./crew";
 import type { Faction, PirateBrigade } from "./faction";
-import { TransportEvent, AGENT_EVENT_TEMPLATES, type TransportEventKind } from "./events";
+import { TransportEvent, type TransportEventKind } from "./events";
 import type { TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
 import { getRoute, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
-import { randRandom, randChoice } from "./simRandom";
+import { randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
 
 export interface CargoState {
@@ -128,15 +128,6 @@ function isContractDeliveryDirective(d: Directive): d is ContractDeliveryDirecti
   return "action" in d && d.action === "CONTRACT_DELIVER";
 }
 
-function fmt1(n: number): string {
-  return n.toFixed(1);
-}
-function fmtMoney(n: number): string {
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function fmtPercent0(n: number): string {
-  return `${Math.round(n * 100)}%`;
-}
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -335,7 +326,9 @@ export class Captain extends Crew {
     directedRoute: Directive | null = null,
     pirateBrigade: PirateBrigade | null = null,
   ): void {
-    this.maybeTriggerAgentEvent(day);
+    // No new TransportEvent is ever randomly rolled here -- events are
+    // disabled -- but any already-active event (from a loaded scenario)
+    // still applies and ticks down below.
     this.activeAgentEvents = this.activeAgentEvents.filter((e) => e.tick());
 
     let justArrived = false;
@@ -390,57 +383,6 @@ export class Captain extends Crew {
         this.planAndDepart(day, buyMarkets, sellMarkets, commodities, closedLocations);
       }
     }
-  }
-
-  private maybeTriggerAgentEvent(day: number): void {
-    if (randRandom() >= this.agentEventProbability) return;
-    const eligible = AGENT_EVENT_TEMPLATES.filter(
-      (t) => t.kind !== "cargo_loss" || this.cargo !== null,
-    );
-    if (eligible.length === 0) return;
-    const template = randChoice(eligible);
-    const event = new TransportEvent(template);
-    this.applyAgentEvent(event, day);
-  }
-
-  private applyAgentEvent(event: TransportEvent, day: number): void {
-    event.startedDay = day;
-    event.day = day;
-    event.subject = this.name;
-    this.eventLog.push(event);
-    let detail = "";
-    if (event.kind === "delay") {
-      const days = Math.trunc(event.magnitude);
-      if (this.status === "InTransit") {
-        this.daysRemaining += days;
-        detail = `voyage delayed ${days}d (now ${this.daysRemaining}d out)`;
-      } else {
-        this.groundedDaysRemaining += days;
-        detail = `grounded at ${this.location} for ${days}d`;
-      }
-    } else if (event.kind === "cargo_loss" && this.cargo !== null) {
-      const lostQty = this.cargo.quantity * event.magnitude;
-      this.cargo.quantity = Math.max(0.0, this.cargo.quantity - lostQty);
-      detail = `lost ${fmt1(lostQty)} units of ${this.cargo.commodity}`;
-    } else if (event.kind === "cash_gain") {
-      this.cash += event.magnitude;
-      detail = `+$${fmtMoney(event.magnitude)} cash`;
-    } else if (event.kind === "cash_loss") {
-      const paid = Math.min(event.magnitude, this.cash);
-      this.cash = Math.max(0.0, this.cash - event.magnitude);
-      detail = `-$${fmtMoney(paid)} cash`;
-    } else if (event.kind === "fuel_discount" || event.kind === "fixed_cost_discount") {
-      this.activeAgentEvents.push(event);
-      detail = `${fmtPercent0(event.magnitude)} off for ${event.durationDays}d`;
-    }
-
-    this.agentEventLog.push({
-      day,
-      location: this.location,
-      name: event.name,
-      kind: event.kind,
-      detail,
-    });
   }
 
   /** Returns true for a genuine arrival at the final destination; false if only an intermediate refueling stop. */
