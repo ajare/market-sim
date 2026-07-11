@@ -11,6 +11,7 @@ export function LocationInspector() {
   const updateLocation = useEditorStore((s) => s.updateLocation);
   const toggleTerminalType = useEditorStore((s) => s.toggleTerminalType);
   const removeLocation = useEditorStore((s) => s.removeLocation);
+  const worldScale = useEditorStore((s) => s.worldScale);
 
   if (selectedId === null || location === undefined) {
     return (
@@ -51,16 +52,16 @@ export function LocationInspector() {
           x
           <input
             type="number"
-            value={location.x}
-            onChange={(e) => updateLocation(location.id, { x: Number(e.target.value) })}
+            value={Math.round(location.x * worldScale * 100) / 100}
+            onChange={(e) => updateLocation(location.id, { x: Number(e.target.value) / worldScale })}
           />
         </label>
         <label>
           y
           <input
             type="number"
-            value={location.y}
-            onChange={(e) => updateLocation(location.id, { y: Number(e.target.value) })}
+            value={Math.round(location.y * worldScale * 100) / 100}
+            onChange={(e) => updateLocation(location.id, { y: Number(e.target.value) / worldScale })}
           />
         </label>
         <label>

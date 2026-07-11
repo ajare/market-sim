@@ -5,11 +5,11 @@
  */
 import { create } from "zustand";
 import {
-  createLocation, compatibleRouteTypes, deriveRouteCurveType,
-  DEFAULT_COMMODITY_RATE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE, DEFAULT_ROUTE_CURVE_TYPE,
+  createLocation, compatibleRouteTypes,
+  DEFAULT_COMMODITY_RATE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
   ROUTE_TERMINAL_COMPATIBILITY,
   type Commodity, type CommodityField, type EditorCompany, type EditorFleetMember, type EditorRoute,
-  type PoliticalEntity, type PoliticalEntityType, type EditorLocation, type TerminalType, type TransportType,
+  type PoliticalEntity, type PoliticalEntityType, type EditorLocation, type RouteType, type TerminalType, type TransportType,
 } from "../types";
 import type { EditorWorld } from "../worldJson";
 
@@ -31,10 +31,12 @@ function nextIdAfter(ids: Iterable<string>, prefix: string): number {
   return max + 1;
 }
 
-export const WORLD_ASPECT_RATIO = 4 / 3;
-export const MIN_WORLD_WIDTH = 100;
-export const MAX_WORLD_WIDTH = 1000;
-export const DEFAULT_WORLD_WIDTH = 800;
+/** World scale multiplies each Location's normalized [0,1] canvas position to
+ * produce its world (exported/simulation) position -- see EditorLocation and
+ * worldJson.ts. It does NOT affect the editor's visual layout at all. */
+export const MIN_WORLD_SCALE = 10;
+export const MAX_WORLD_SCALE = 1000;
+export const DEFAULT_WORLD_SCALE = 100;
 
 // Mirror world_data.py/worldData.ts's procedural stockpile sizing (there
 // drawn from a random range per location; here a single sensible default
@@ -57,9 +59,13 @@ function round2(value: number): number {
 interface EditorStore {
   locations: EditorLocation[];
   selectedId: string | null;
-  /** World width in units; height is always worldWidth / WORLD_ASPECT_RATIO, keeping a fixed 4:3 world. */
-  worldWidth: number;
-  setWorldWidth: (width: number) => void;
+  /** Multiplier applied to each Location's normalized [0,1] canvas position to get its world (exported/simulation) position. Purely a coordinate multiplier -- changing it never moves anything on the canvas. Range [MIN_WORLD_SCALE, MAX_WORLD_SCALE]. */
+  worldScale: number;
+  setWorldScale: (scale: number) => void;
+
+  /** A user-picked background image (data URL) drawn behind the canvas, or null for none. Rendered as a plain HTML image fixed to the canvas viewport, so it does NOT scale when the world size changes (see WorldCanvas). Purely an editor view setting -- not part of the exported World. */
+  backgroundImage: string | null;
+  setBackgroundImage: (dataUrl: string | null) => void;
 
   /** Replaces the entire authored World with an imported one (see worldJson.ts), clearing UI state (selection) and re-seeding id counters past every imported id so later additions can't collide. */
   loadWorld: (world: EditorWorld) => void;
@@ -83,6 +89,12 @@ interface EditorStore {
   selectLocation: (id: string | null) => void;
   toggleTerminalType: (id: string, terminal: TerminalType) => void;
 
+  /** The currently selected Route, shown in the RouteInspector panel; null when none is selected. Selecting a Route clears any selected Location and vice versa -- only one thing is inspected at a time. */
+  selectedRouteId: string | null;
+  selectRoute: (id: string | null) => void;
+  /** Changes a Route's RouteType -- the UI only offers types both endpoints' terminals support (see compatibleRouteTypes), so this is trusted to receive a compatible one. No-op if the Route doesn't exist. */
+  setRouteType: (id: string, routeType: RouteType) => void;
+
   /** Direct connections between two Locations, created by shift-dragging from one pin to another; a Route's own path can be bent by shift-dragging on it to add/move control points (see WorldCanvas). */
   routes: EditorRoute[];
   /**
@@ -94,11 +106,11 @@ interface EditorStore {
    */
   addRoute: (locationAId: string, locationBId: string) => void;
   removeRoute: (id: string) => void;
-  /** Adds a new control point to a Route at (x, y), re-derives curveType from the new count (see deriveRouteCurveType), and returns the point's id so the caller (WorldCanvas) can immediately start dragging it. No-ops (returning null) if the Route doesn't exist. */
+  /** Adds a new control point to a Route at (x, y) and returns the point's id so the caller (WorldCanvas) can immediately start dragging it. The Route's curveType follows from the resulting count (see deriveRouteCurveType). No-ops (returning null) if the Route doesn't exist. */
   addRouteControlPoint: (routeId: string, x: number, y: number) => string | null;
-  /** Repositions an existing control point -- no-op if the Route or point doesn't exist. Doesn't change the point count, so curveType is untouched. */
+  /** Repositions an existing control point -- no-op if the Route or point doesn't exist. */
   moveRouteControlPoint: (routeId: string, pointId: string, x: number, y: number) => void;
-  /** Removes a control point and re-derives curveType from the new (smaller) count -- no-op if the Route or point doesn't exist. */
+  /** Removes a control point -- no-op if the Route or point doesn't exist. The Route's curveType follows from the resulting (smaller) count (see deriveRouteCurveType). */
   removeRouteControlPoint: (routeId: string, pointId: string) => void;
   setCommodityValue: (id: string, field: CommodityField, commodity: string, value: number) => void;
   /** Sets commodity's modifier in producedCommodities (adding it if new) and re-derives its starting stockpile from the commodity's registered production rate -- stockpiles are never hand-edited, so this is the only path that touches them. */
@@ -140,7 +152,9 @@ function updateOne(locations: EditorLocation[], id: string, patch: Partial<Edito
 export const useEditorStore = create<EditorStore>((set, get) => ({
   locations: [],
   selectedId: null,
-  worldWidth: DEFAULT_WORLD_WIDTH,
+  selectedRouteId: null,
+  worldScale: DEFAULT_WORLD_SCALE,
+  backgroundImage: null,
 
   politicalEntities: [],
   pendingPoliticalEntityId: null,
@@ -162,11 +176,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set((s) => {
       const removedIds = new Set(s.locations.filter((loc) => loc.politicalEntityId === id).map((loc) => loc.id));
       const remainingLocations = s.locations.filter((loc) => !removedIds.has(loc.id));
+      const routes = s.routes.filter((r) => !removedIds.has(r.locationAId) && !removedIds.has(r.locationBId));
       return {
         politicalEntities: s.politicalEntities.filter((c) => c.id !== id),
         locations: remainingLocations,
-        routes: s.routes.filter((r) => !removedIds.has(r.locationAId) && !removedIds.has(r.locationBId)),
+        routes,
         selectedId: remainingLocations.some((loc) => loc.id === s.selectedId) ? s.selectedId : null,
+        selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
         pendingPoliticalEntityId: s.pendingPoliticalEntityId === id ? null : s.pendingPoliticalEntityId,
       };
     }),
@@ -183,23 +199,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       politicalEntities: s.politicalEntities.map((c) => (c.id === id ? { ...c, name } : c)),
     })),
 
-  setWorldWidth: (width: number) => {
-    // Resizing the world must never reposition existing Locations. A Location
-    // that ends up outside the new (smaller) bounds simply scrolls off the
-    // canvas while keeping its coordinates, so growing the world back brings
-    // it into view unchanged. (Clamping here would silently pull every
-    // out-of-bounds pin onto the edge, permanently losing its position.)
-    const worldWidth = clamp(width, MIN_WORLD_WIDTH, MAX_WORLD_WIDTH);
-    set({ worldWidth });
+  setWorldScale: (scale) => {
+    if (!Number.isFinite(scale)) return;
+    // Pure coordinate multiplier -- never touches any Location's normalized
+    // position, so nothing moves on the canvas when it changes.
+    set({ worldScale: clamp(scale, MIN_WORLD_SCALE, MAX_WORLD_SCALE) });
   },
 
+  setBackgroundImage: (dataUrl) => set({ backgroundImage: dataUrl }),
+
   loadWorld: (world) => {
-    const worldWidth = clamp(world.worldWidth, MIN_WORLD_WIDTH, MAX_WORLD_WIDTH);
-    const worldHeight = worldWidth / WORLD_ASPECT_RATIO;
+    // world.locations / route control points arrive already normalized to
+    // [0,1] (parseWorldJson converts the exported world coords back down using
+    // the file's own worldScale) -- just clamp defensively.
+    const worldScale = clamp(world.worldScale, MIN_WORLD_SCALE, MAX_WORLD_SCALE);
     const locations = world.locations.map((loc) => ({
       ...loc,
-      x: clamp(loc.x, 0, worldWidth),
-      y: clamp(loc.y, 0, worldHeight),
+      x: clamp(loc.x, 0, 1),
+      y: clamp(loc.y, 0, 1),
     }));
 
     // Re-seed every id counter past the imported ids so a subsequently-added
@@ -215,50 +232,56 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     nextFleetMemberId = nextIdAfter(world.companies.flatMap((c) => c.fleet.map((m) => m.id)), "fleet-");
 
     set({
-      worldWidth,
+      worldScale,
       locations,
       politicalEntities: world.politicalEntities,
       commodities: world.commodities,
       companies: world.companies,
       routes: world.routes,
       selectedId: null,
+      selectedRouteId: null,
       pendingPoliticalEntityId: world.politicalEntities[0]?.id ?? null,
     });
   },
 
+  // x/y are normalized canvas coordinates in [0,1] (see WorldCanvas) -- the
+  // world position they map to is (x, y) * worldScale.
   addLocation: (x: number, y: number) => {
-    const { worldWidth, pendingPoliticalEntityId } = get();
+    const { pendingPoliticalEntityId } = get();
     if (pendingPoliticalEntityId === null) return;
-    const worldHeight = worldWidth / WORLD_ASPECT_RATIO;
     const id = `loc-${nextId++}`;
     const location = createLocation(
       id,
       `Location ${nextId - 1}`,
-      clamp(x, 0, worldWidth),
-      clamp(y, 0, worldHeight),
+      clamp(x, 0, 1),
+      clamp(y, 0, 1),
       pendingPoliticalEntityId,
     );
-    set((s) => ({ locations: [...s.locations, location], selectedId: id }));
+    set((s) => ({ locations: [...s.locations, location], selectedId: id, selectedRouteId: null }));
   },
 
   updateLocation: (id, patch) => set((s) => ({ locations: updateOne(s.locations, id, patch) })),
 
-  moveLocation: (id, x, y) => {
-    const { worldWidth } = get();
-    const worldHeight = worldWidth / WORLD_ASPECT_RATIO;
+  // x/y are normalized canvas coordinates in [0,1] (see WorldCanvas).
+  moveLocation: (id, x, y) =>
     set((s) => ({
-      locations: updateOne(s.locations, id, { x: clamp(x, 0, worldWidth), y: clamp(y, 0, worldHeight) }),
-    }));
-  },
-
-  removeLocation: (id) =>
-    set((s) => ({
-      locations: s.locations.filter((loc) => loc.id !== id),
-      routes: s.routes.filter((r) => r.locationAId !== id && r.locationBId !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      locations: updateOne(s.locations, id, { x: clamp(x, 0, 1), y: clamp(y, 0, 1) }),
     })),
 
-  selectLocation: (id) => set({ selectedId: id }),
+  removeLocation: (id) =>
+    set((s) => {
+      const routes = s.routes.filter((r) => r.locationAId !== id && r.locationBId !== id);
+      return {
+        locations: s.locations.filter((loc) => loc.id !== id),
+        routes,
+        selectedId: s.selectedId === id ? null : s.selectedId,
+        selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
+      };
+    }),
+
+  // Selecting a Location clears any selected Route -- only one thing is
+  // inspected at a time (see RouteInspector / LocationInspector).
+  selectLocation: (id) => set({ selectedId: id, selectedRouteId: null }),
 
   // Toggling a terminal type off a Location can make an existing Route to it
   // no longer valid -- a Route's routeType requires at least one matching
@@ -292,7 +315,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         const required = ROUTE_TERMINAL_COMPATIBILITY[r.routeType];
         return required.some((t) => a.terminalTypes.includes(t)) && required.some((t) => b.terminalTypes.includes(t));
       });
-      return { locations, routes };
+      return { locations, routes, selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null };
     }),
 
   routes: [],
@@ -322,12 +345,23 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return {
         routes: [
           ...s.routes,
-          { id, locationAId, locationBId, routeType, curveType: DEFAULT_ROUTE_CURVE_TYPE, controlPoints: [] },
+          { id, locationAId, locationBId, routeType, controlPoints: [] },
         ],
       };
     }),
 
-  removeRoute: (id) => set((s) => ({ routes: s.routes.filter((r) => r.id !== id) })),
+  removeRoute: (id) =>
+    set((s) => ({
+      routes: s.routes.filter((r) => r.id !== id),
+      selectedRouteId: s.selectedRouteId === id ? null : s.selectedRouteId,
+    })),
+
+  // Selecting a Route clears any selected Location -- only one thing is
+  // inspected at a time (see RouteInspector / LocationInspector).
+  selectRoute: (id) => set({ selectedRouteId: id, selectedId: null }),
+
+  setRouteType: (id, routeType) =>
+    set((s) => ({ routes: s.routes.map((r) => (r.id === id ? { ...r, routeType } : r)) })),
 
   addRouteControlPoint: (routeId, x, y) => {
     if (!get().routes.some((r) => r.id === routeId)) return null;
@@ -336,7 +370,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       routes: s.routes.map((r) => {
         if (r.id !== routeId) return r;
         const controlPoints = [...r.controlPoints, { id, x, y }];
-        return { ...r, controlPoints, curveType: deriveRouteCurveType(controlPoints.length) };
+        return { ...r, controlPoints };
       }),
     }));
     return id;
@@ -356,7 +390,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       routes: s.routes.map((r) => {
         if (r.id !== routeId) return r;
         const controlPoints = r.controlPoints.filter((p) => p.id !== pointId);
-        return { ...r, controlPoints, curveType: deriveRouteCurveType(controlPoints.length) };
+        return { ...r, controlPoints };
       }),
     })),
 

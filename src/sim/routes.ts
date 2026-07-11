@@ -40,9 +40,6 @@ export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   Railroad: 0.6,
 };
 
-/** Number of interior Bezier control points a Route's curve is built from by default -- two interior points plus the origin/destination endpoints makes a cubic Bezier. */
-export const DEFAULT_CONTROL_POINT_COUNT = 2;
-
 /** How far a control point may bow off the straight origin-destination line, as a fraction of that line's length. */
 const MAX_CONTROL_POINT_BOW_FRACTION = 0.12;
 
@@ -96,8 +93,7 @@ export class Route {
   origin: string;
   destination: string;
   routeType: RouteType;
-  curveType: RouteCurveType;
-  /** Interior Bezier control points between origin and destination, in the same coordinate space as LOCATION_COORDINATES -- empty for a "Straight" Route, length `controlPointCount` (default 2) for a "Bezier" one. */
+  /** Interior Bezier control points between origin and destination, in the same coordinate space as LOCATION_COORDINATES -- empty for a straight Route, `controlPointCount` long for a curved one. The Route's curveType is derived from how many there are (see the curveType getter). */
   controlPoints: Point[];
   /**
    * Arc length of this Route's curve through origin, controlPoints, and
@@ -116,21 +112,18 @@ export class Route {
     destination: string,
     routeType: RouteType,
     seed: number = WORLD_GEN_SEED,
-    controlPointCount: number = DEFAULT_CONTROL_POINT_COUNT,
-    curveType: RouteCurveType = "Straight",
+    controlPointCount: number = 0,
   ) {
     this.origin = origin;
     this.destination = destination;
     this.routeType = routeType;
-    this.curveType = curveType;
 
     const originPoint = LOCATION_COORDINATES[origin];
     const destPoint = LOCATION_COORDINATES[destination];
-    // A "Straight" Route skips control-point generation entirely (rather than
-    // just passing controlPointCount=0) so its geometry never depends on the
-    // bow-generating RNG stream at all, and so curveType alone always wins
-    // regardless of what controlPointCount a caller happens to pass in.
-    if (curveType === "Straight") {
+    // Everything about a Route's shape is derived from its control-point count:
+    // zero -> a straight line (no RNG consumed at all), otherwise that many
+    // bowed Bezier control points. See the curveType getter.
+    if (controlPointCount <= 0) {
       this.controlPoints = [];
     } else {
       const rng = new Rng(hashSeed(seed, origin, destination));
@@ -150,6 +143,11 @@ export class Route {
       prev = point;
     }
     this.distance = cumulative;
+  }
+
+  /** Derived from the control-point count (never stored): "Bezier" once there are two or more, "Straight" otherwise -- the two-point threshold being the minimum for a cubic-or-higher Bezier through both endpoints and every control point. */
+  get curveType(): RouteCurveType {
+    return this.controlPoints.length >= 2 ? "Bezier" : "Straight";
   }
 
   /** Points sampled along this Route's Bezier curve, origin to destination -- for drawing the curve on a map. */

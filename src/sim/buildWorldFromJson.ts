@@ -13,7 +13,7 @@
  */
 import { Commodity } from "./commodity";
 import { Location, type TerminalType } from "./location";
-import { Route, routeKey, type RouteType, type RouteCurveType } from "./routes";
+import { Route, routeKey, type RouteType } from "./routes";
 import { PoliticalEntity, type PoliticalEntityType } from "./politicalEntity";
 import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, type Transport } from "./transport";
 import { Captain } from "./captain";
@@ -75,11 +75,16 @@ interface JsonRoute {
   locationAId: string;
   locationBId: string;
   routeType: string;
-  curveType: string;
+  // A Route's shape is derived from its control points (see routes.ts); the
+  // editor exports them, and we only need how many to rebuild the same curve.
+  controlPoints?: unknown[];
 }
 
 interface JsonWorld {
-  worldWidth?: number;
+  // The editor exports Location/control-point positions already multiplied by
+  // worldScale, i.e. as world coordinates -- so this loader consumes them
+  // directly and never needs worldScale itself.
+  worldScale?: number;
   commodities?: JsonCommodity[];
   locations?: JsonLocation[];
   politicalEntities?: JsonPoliticalEntity[];
@@ -180,8 +185,8 @@ export function buildWorldFromJson(text: string): BuiltWorld {
     const destName = idToName.get(r.locationBId);
     if (originName === undefined || destName === undefined || originName === destName) continue;
     const routeType = VALID_ROUTE_TYPES.has(r.routeType as RouteType) ? (r.routeType as RouteType) : "Sea";
-    const curveType: RouteCurveType = r.curveType === "Bezier" ? "Bezier" : "Straight";
-    routes.set(routeKey(originName, destName), new Route(originName, destName, routeType, undefined, undefined, curveType));
+    const controlPointCount = Array.isArray(r.controlPoints) ? r.controlPoints.length : 0;
+    routes.set(routeKey(originName, destName), new Route(originName, destName, routeType, undefined, controlPointCount));
   }
   setRoutes(routes);
 

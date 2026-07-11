@@ -9,7 +9,7 @@
  * read/delete-only.
  */
 import { useEditorStore } from "../state/useEditorStore";
-import { routePathLength, type EditorLocation } from "../types";
+import { deriveRouteCurveType, routePathLength, type EditorLocation } from "../types";
 
 export function LocationRoutesTable({ locationId }: { locationId: string }) {
   const locations = useEditorStore((s) => s.locations);
@@ -22,6 +22,10 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
   const locationById = new Map(locations.map((loc) => [loc.id, loc]));
   const connections = routes
     .map((route) => {
+      // Only Routes that actually touch this Location -- otherwise every Route
+      // in the World would show up here (a Route not involving this Location
+      // still has a defined "other" end, so it must be excluded explicitly).
+      if (route.locationAId !== locationId && route.locationBId !== locationId) return null;
       const otherId = route.locationAId === locationId ? route.locationBId : route.locationAId;
       const other = locationById.get(otherId);
       if (other === undefined) return null;
@@ -50,7 +54,7 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
               <tr key={route.id}>
                 <td className="routes-table-name-cell">{other.name}</td>
                 <td>{route.routeType}</td>
-                <td>{route.curveType}</td>
+                <td>{deriveRouteCurveType(route.controlPoints.length)}</td>
                 <td>{routePathLength(location, other, route.controlPoints).toFixed(1)}</td>
                 <td>
                   <button type="button" onClick={() => removeRoute(route.id)}>

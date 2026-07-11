@@ -145,30 +145,27 @@ export function compatibleRouteTypes(a: readonly TerminalType[], b: readonly Ter
   });
 }
 
-/** A user-placed bend in a Route's path between its two Locations -- created/moved by shift-dragging on the Route (see WorldCanvas). Mirrors src/sim/routes.ts's Bezier control points; whether they're rendered as a sampled Bezier curve or a straight-segment polyline through them depends on the Route's curveType (see routeRenderPoints). */
+/** A user-placed bend in a Route's path between its two Locations -- created/moved by shift-dragging on the Route (see WorldCanvas). Mirrors src/sim/routes.ts's Bezier control points; the Route is rendered as a sampled Bezier curve through them (see routeRenderPoints). */
 export interface RouteControlPoint {
   id: string;
   x: number;
   y: number;
 }
 
-/** Mirrors src/sim/routes.ts's RouteCurveType. */
+/** Mirrors src/sim/routes.ts's RouteCurveType -- a purely derived label (see deriveRouteCurveType), never stored on a Route. */
 export type RouteCurveType = "Straight" | "Bezier";
 
-export const DEFAULT_ROUTE_CURVE_TYPE: RouteCurveType = "Straight";
-
-/** How a Route's curveType reacts to its control point count changing -- 2 or more forces "Bezier" (the minimum needed for a cubic-or-higher Bezier through both Locations and every control point), fewer than 2 forces "Straight". */
+/** A Route's curveType, derived entirely from how many control points it has: 2 or more is "Bezier" (the minimum for a cubic-or-higher Bezier through both Locations and every control point), fewer is "Straight". Mirrors src/sim/routes.ts's Route.curveType getter. */
 export function deriveRouteCurveType(controlPointCount: number): RouteCurveType {
   return controlPointCount >= 2 ? "Bezier" : "Straight";
 }
 
-/** A direct connection between two Locations -- mirrors src/sim/routes.ts's Route (distance is a simulation-runtime concern, recomputed live from the Locations' current positions instead of stored here). Undirected: locationAId/locationBId order carries no meaning. */
+/** A direct connection between two Locations -- mirrors src/sim/routes.ts's Route (distance and curveType are both derived, not stored: distance is recomputed live from the Locations' current positions, curveType from the control-point count -- see deriveRouteCurveType). Undirected: locationAId/locationBId order carries no meaning. */
 export interface EditorRoute {
   id: string;
   locationAId: string;
   locationBId: string;
   routeType: RouteType;
-  curveType: RouteCurveType;
   controlPoints: RouteControlPoint[];
 }
 

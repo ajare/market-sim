@@ -67,7 +67,7 @@ describe("Spaceship / Space route / Spaceport", () => {
       if (i > 0) {
         routes.push({
           id: `route-${i}`, locationAId: `loc-${i}`, locationBId: `loc-${i + 1}`,
-          routeType: "Space", curveType: "Straight", controlPoints: [],
+          routeType: "Space", controlPoints: [],
         });
       }
     }

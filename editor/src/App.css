@@ -34,20 +34,15 @@ body {
   margin-right: auto;
 }
 
-.world-size-control {
+.world-scale-control {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
 }
 
-.world-size-control input[type="range"] {
-  width: 160px;
-}
-
-.world-size-value {
-  font-variant-numeric: tabular-nums;
-  min-width: 5.5rem;
+.world-scale-control input[type="number"] {
+  width: 5rem;
 }
 
 .app-body {
@@ -57,11 +52,8 @@ body {
 }
 
 .sidebar-left {
-  /* Starts at 200px, then grows to absorb the 10% of leftover space the
-     canvas gives up (see .canvas-area's flex-grow: 9 vs. this 1), so the
-     canvas renders 10% narrower and the left panel gets that width. Never
-     shrinks below the 200px basis. */
-  flex: 1 0 200px;
+  /* Fixed width; the canvas fills whatever's left of the middle. */
+  flex: 0 0 280px;
   border-right: 1px solid #ddd;
   overflow-x: hidden;
   overflow-y: auto;
@@ -384,8 +376,8 @@ body {
 }
 
 .sidebar-right {
-  width: 380px;
-  flex-shrink: 0;
+  /* Fixed width; the canvas fills whatever's left of the middle. */
+  flex: 0 0 380px;
   border-left: 1px solid #ddd;
   overflow-y: auto;
   background: #fff;
@@ -393,9 +385,9 @@ body {
 }
 
 .canvas-area {
-  /* Takes 9/10 of the leftover space (the left sidebar's flex-grow: 1 takes
-     the other 1/10), making the canvas 10% narrower than if it took it all. */
-  flex: 9 1 0;
+  /* Fully fills the middle between the two fixed-width sidebars. */
+  flex: 1 1 0;
+  min-width: 0;
   position: relative;
 }
 
@@ -415,7 +407,7 @@ body {
   font-size: 0.85rem;
   padding: 0.4rem 0.75rem;
   border-radius: 4px;
-  z-index: 1;
+  z-index: 3;
   pointer-events: none;
 }
 
@@ -424,12 +416,37 @@ body {
   background: rgba(153, 27, 27, 0.9);
 }
 
+/* A user-picked background image, fixed to the canvas viewport (behind the
+   SVG) so it never rescales when the world size changes -- see WorldCanvas. */
+.canvas-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
 .world-canvas {
   width: 100%;
   height: 100%;
   display: block;
   background-color: #eaeaea;
   cursor: crosshair;
+  position: relative;
+  z-index: 1;
+}
+
+/* With a background image behind it, the SVG's own fill goes transparent so
+   the image shows through; the world outline (stroke) still draws on top. */
+.world-canvas.has-background {
+  background-color: transparent;
+}
+
+.world-canvas.has-background .world-bounds {
+  fill: transparent;
 }
 
 .world-bounds {
@@ -448,6 +465,13 @@ body {
   pointer-events: none;
 }
 
+/* The currently selected Route (see RouteInspector) is drawn thicker and
+   highlighted so it stands out from the rest of the network. */
+.route-line.selected {
+  stroke: #2563eb;
+  stroke-width: 3;
+}
+
 /* Invisible, wider stroke rendered behind .route-line -- the real click/shift-drag target, since a 2px line is too thin to reliably hit. */
 .route-hit-area {
   fill: none;
@@ -457,8 +481,9 @@ body {
   cursor: pointer;
 }
 
+/* Hovering a Route hints it is clickable to select it (not delete it). */
 .route-hit-area:hover + .route-line {
-  stroke: #e53e3e;
+  stroke: #60a5fa;
 }
 
 .route-line-pending {
@@ -592,6 +617,89 @@ body {
   padding: 0.3rem 0.6rem;
   border-radius: 4px;
   cursor: pointer;
+}
+
+/* --- RouteInspector panel --- */
+.route-inspector-title {
+  flex: 1;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.route-inspector-endpoints {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.route-type-field {
+  align-items: center;
+}
+
+.route-type-field select {
+  margin-left: 0.4rem;
+}
+
+.route-inspector-info {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #444;
+}
+
+.route-inspector-info > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.15rem 0;
+  border-top: 1px solid #eee;
+}
+
+.route-inspector-info dt {
+  color: #777;
+}
+
+.route-inspector-info dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.route-control-points {
+  margin-top: 0.75rem;
+}
+
+.route-control-points-empty {
+  font-size: 0.78rem;
+  color: #888;
+}
+
+.route-control-points-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.route-control-points-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  border-top: 1px solid #eee;
+}
+
+.route-control-point-label {
+  font-size: 0.8rem;
+  color: #444;
+}
+
+.route-control-points-list button {
+  flex-shrink: 0;
+  border: none;
+  background: #eee;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.05rem 0.4rem;
 }
 
 .field-row {
