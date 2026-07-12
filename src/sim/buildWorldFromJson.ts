@@ -32,6 +32,35 @@ import {
 } from "./nationality";
 import { DEFAULT_TARGET_SHIPS_PER_LOCATION, type BuiltWorld } from "./buildWorld";
 
+/**
+ * Optional fleet overrides for buildWorldFromJson -- all default to today's
+ * behavior (no pirates/police, the calibrated ships-per-location ratio) when
+ * omitted, so the editor's own "paste world" flow is completely unaffected.
+ * Added for tooling (see scripts/tune-world.ts) that needs a JSON-authored
+ * World to run with a real pirate/police presence and/or a different fleet
+ * density, without hand-editing the JSON itself.
+ */
+export interface BuildWorldFromJsonOptions {
+  /**
+   * Reseeds the World's own dynamics stream (market events, closures, price
+   * noise, daily act-order -- see World's constructor/simRandom.ts), same as
+   * buildWorld's own `seed` option. Does NOT affect world-gen (Locations,
+   * Routes, PoliticalEntities all come straight from the JSON) or fleet
+   * synthesis (see SYNTH_FLEET_SEED below) -- only which random THINGS
+   * HAPPEN while the World runs. Default: unseeded (whatever the global
+   * simRandom stream's current state is), matching today's behavior.
+   */
+  seed?: number;
+  /** Ships for the single World-wide PirateBrigade -- forwarded to World's numPirateShips. Default 0 (the editor doesn't model pirates). */
+  numPirateShips?: number;
+  /** Starting cash per PirateBrigade ship, only meaningful when numPirateShips > 0 -- forwarded to World's pirateStartingCash (as pirateCashPerShip * numPirateShips). Default 0. */
+  pirateCashPerShip?: number;
+  /** Ships for the Coast Guard PoliceFleet -- forwarded to World's numPoliceShips. Default 0 (the editor doesn't model police). */
+  numPoliceShips?: number;
+  /** Overrides the ships-per-location ratio the fleet-synthesis step (see step 5b below) sizes the fleet against. Default DEFAULT_TARGET_SHIPS_PER_LOCATION (the calibrated default buildWorld itself uses). */
+  targetShipsPerLocation?: number;
+}
+
 // --- The editor's exported JSON shape (mirrors editor/src/types.ts +
 // worldJson.ts). Kept as a local, permissive description here rather than
 // imported across app boundaries, since the sim app and the editor app are
@@ -157,7 +186,7 @@ function makeTransport(transportType: string, name: string): Transport {
  * World's 20-50 location bound, Location's terminal/commodity checks)
  * propagate as the "cannot be created" reason.
  */
-export function buildWorldFromJson(text: string): BuiltWorld {
+export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOptions = {}): BuiltWorld {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -360,7 +389,8 @@ export function buildWorldFromJson(text: string): BuiltWorld {
   //               synthesized Ship. If none of them can (or there are no
   //               Companies at all), the rest become SoloTraders too.
   // If the world already has at least `required` ships, nothing is added.
-  const required = Math.round(locations.length * DEFAULT_TARGET_SHIPS_PER_LOCATION);
+  const targetShipsPerLocation = options.targetShipsPerLocation ?? DEFAULT_TARGET_SHIPS_PER_LOCATION;
+  const required = Math.round(locations.length * targetShipsPerLocation);
   const existingShips =
     pending.reduce((sum, f) => sum + f.crew.length, 0) + soloFactions.reduce((sum, f) => sum + f.captains.length, 0);
   const remainder = required - existingShips;
@@ -413,13 +443,17 @@ export function buildWorldFromJson(text: string): BuiltWorld {
   }
   factions.push(...soloFactions, ...newSoloTraders);
 
-  // 6. Assemble the World. No pirates/police (the editor doesn't model them);
-  // event probabilities are irrelevant since random events are disabled.
+  // 6. Assemble the World. No pirates/police by default (the editor doesn't
+  // model them) -- overridable via options (see BuildWorldFromJsonOptions).
+  // Event probabilities are irrelevant since random events are disabled.
+  const numPirateShips = options.numPirateShips ?? 0;
   const builtWorld = new World({
     locations,
     factions,
-    numPirateShips: 0,
-    numPoliceShips: 0,
+    seed: options.seed,
+    numPirateShips,
+    pirateStartingCash: (options.pirateCashPerShip ?? 0) * numPirateShips,
+    numPoliceShips: options.numPoliceShips ?? 0,
   });
 
   return { world: builtWorld, factions, politicalEntities };

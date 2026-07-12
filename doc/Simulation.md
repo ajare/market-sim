@@ -409,3 +409,129 @@ options plus a `seeds` array, `days`, and `windowDays`, and returns
 metric. Prefer it (or a throwaway harness built on it, gated behind its own
 `vitest.config.ts` `include` so it doesn't run under `npm test`) over
 reading a single `world.run()`'s stockpile numbers directly.
+
+## World-tuning CLI: `scripts/tune-world.ts`
+
+Everything above tunes the *procedural* world (`buildWorld`'s options,
+swept via `npm run sweep`). For a **hand-authored World exported from the
+editor**, `npm run tune` is the equivalent tool: it loads a World JSON, adds
+a fleet/pirates/police (the editor doesn't model any of those), runs the
+simulation, measures shortages, and tries to fix them.
+
+```
+npm run tune -- <world.json> [options]
+```
+
+Key options (all optional -- see `npm run tune -- --help` for the full
+list): `--days` (default 365), `--seeds` (comma-separated dynamics seeds
+averaged across, default `1,2,3`), `--warmup` (days excluded from every
+metric as an initial-transient warmup, default 30), `--top-pairs` (worst
+`(Location, commodity)` pairs targeted per stage, default 10),
+`--ratio-tolerance` (band around `1.0` the average ratio must stay within,
+default 0.15), `--num-pirate-ships`/`--num-police-ships` (default to
+`buildWorld`'s own calibrated `DEFAULT_NUM_PIRATE_SHIPS`/
+`DEFAULT_NUM_POLICE_SHIPS`), `--ships-per-location` (starting point for
+Stage 2's search, default `DEFAULT_TARGET_SHIPS_PER_LOCATION`).
+
+### What it measures
+
+Three metrics, computed from the run's recorded market history (`World.
+combinedHistory` / each `Market.history`) joined against `Location.
+minStockpiles`, all excluding the `--warmup` period (the same reasoning as
+this doc's `windowDays` sweeps -- Locations start deliberately off-
+equilibrium, so an early transient shouldn't count):
+
+- **Zero-stock pair count** -- how many distinct `(Location, commodity)`
+  pairs hit zero stockpile at least once.
+- **Average outage length** -- across every contiguous run of zero-stockpile
+  days ("episode"), how long the average one lasts (see Finding 7 above for
+  why episode length and episode *frequency* are different things).
+- **Average ratio** -- world-wide mean `stockpile / minStockpile`, same
+  definition as `stockpileRatio()` above but averaged over the whole
+  post-warmup run rather than a trailing window.
+
+Every candidate World is evaluated by averaging across `--seeds` (never a
+single run -- see this doc's opening warning about noise), so **this tool is
+slow by design**: expect a full run (365 days, 3 seeds, three simulation-
+based search stages each potentially trying ~10 candidates) to take a long
+while (easily hours) on a non-trivial World -- Stage 0 itself is instant
+(pure arithmetic, no simulation), but still evaluated once before/after for
+the report. Progress is logged to the console as each candidate is tried;
+reduce `--days`/`--seeds`/`--top-pairs` for a quicker, noisier pass while
+iterating.
+
+### The four stages
+
+0. **World-wide commodity balance**: for every commodity, sums total daily
+   production (`commodity.productionRate x modifier`, across every
+   producing Location) and total daily consumption likewise, then rescales
+   every Location's `producedCommodities`/`consumedCommodities` modifier for
+   that commodity toward the midpoint of the two totals -- the same
+   rebalancing `generateLocations` does for a freshly-generated procedural
+   world (see its Pass 2), just applied here to an already-authored World.
+   Applied unconditionally (a direct analytical correction toward supply ==
+   demand, not a heuristic search), **before** any simulation-based search
+   runs. If a commodity is consumed somewhere but produced nowhere at all,
+   the tool exits immediately with an error naming it -- that commodity can
+   never be balanced (or ever actually delivered, no matter how the rest of
+   the World is tuned).
+1. **Consumption-modifier tuning**: ranks every consumed `(Location,
+   commodity)` pair by average zero-stock days, and for the worst
+   `--top-pairs` of them, descends that pair's `consumedCommodities`
+   modifier (halving step size, decrease-only, floored at 30% of the
+   original value) -- re-ranking from a fresh baseline after each accepted
+   change, since fixing one pair can shift the bottleneck elsewhere.
+2. **Ships-per-Location**: the single global fleet-density knob
+   (`targetShipsPerLocation`, forwarded to `buildWorldFromJson` -- see
+   below), searched upward from its starting value with the same
+   halving-step mechanics, capped at 2x the starting ratio.
+3. **Commodity-Location swaps**: for pairs still bad after Stages 1-2, swaps
+   the farthest current producer of the needed commodity with whichever
+   eligible Location is nearest the consumer, trading away one of that
+   nearer Location's own produced commodities in exchange -- kept only if
+   the swap is a net improvement across the whole World (a swap can create
+   a new shortage for the commodity given up).
+
+Stages 1-3 only ever keep a candidate that's a net improvement under a
+**lexicographic objective**: primarily minimize the zero-stock pair count,
+then average outage length as a tiebreaker, subject to the average ratio
+never being pushed outside the `--ratio-tolerance` band around `1.0` (the
+ratio is a guardrail against overcorrecting into oversupply, not something
+independently maximized). Stage 0 is different in kind -- a direct
+arithmetic correction, not a search -- so it's applied unconditionally; the
+report shows its before/after simulated metrics for transparency rather
+than an accept/reject decision.
+
+### Output
+
+Three files are written alongside the input, e.g. for `world.json`:
+
+- `world.report.md` -- metrics before/after each stage, and every change
+  tried/accepted/rejected. Stage 2's result (a single number,
+  `targetShipsPerLocation`) is reported here even when no JSON changes were
+  accepted, since fleet density isn't part of the World JSON schema -- it's
+  a parameter you pass to `buildWorldFromJson` at load time, not something a
+  diff can express.
+- `world.tuned.json` -- the modified World, **only written if Stage 1 or 3
+  actually accepted a change**.
+- `world.tuned.diff` -- a unified diff (original -> tuned), generated in JS
+  (the `diff` package) rather than shelling out to a `diff` binary --
+  apply with `git apply world.tuned.diff` or `patch -p0 < world.tuned.diff`.
+
+### Underlying engine changes
+
+`buildWorldFromJson` (`src/sim/buildWorldFromJson.ts`) gained an optional
+second parameter, `BuildWorldFromJsonOptions`, purely additive -- every
+field defaults to today's behavior (no pirates/police, the calibrated ships-
+per-location ratio, an unseeded dynamics stream) when omitted, so the
+editor's own "paste world" flow is unaffected:
+
+```ts
+buildWorldFromJson(text, {
+  seed: 111,                    // reseeds World's dynamics stream (not world-gen/fleet synthesis)
+  numPirateShips: 20,
+  pirateCashPerShip: 5_000,
+  numPoliceShips: 80,
+  targetShipsPerLocation: 5,
+});
+```

@@ -160,4 +160,41 @@ describe("fleet synthesis on JSON load", () => {
     }
     expect(nationalitiesSeen.size).toBeGreaterThan(1);
   });
+
+  it("adds no pirates/police/fleet-density change by default, but honors the new options when given", () => {
+    const withoutOptions = buildWorldFromJson(world([]));
+    expect(withoutOptions.world.pirateBrigade).toBeNull();
+    expect(withoutOptions.world.policeFleet).toBeNull();
+    expect(ships(withoutOptions.factions)).toBe(REQUIRED);
+
+    const withOptions = buildWorldFromJson(world([]), {
+      numPirateShips: 4, pirateCashPerShip: 1000, numPoliceShips: 3, targetShipsPerLocation: 2,
+    });
+    expect(withOptions.world.pirateBrigade).not.toBeNull();
+    expect(withOptions.world.pirateBrigade!.captains.length).toBe(4);
+    expect(withOptions.world.policeFleet).not.toBeNull();
+    expect(withOptions.world.policeFleet!.captains.length).toBe(3);
+    // required = round(20 locations * 2) = 40, not the default 100.
+    expect(ships(withOptions.factions)).toBe(40);
+  });
+
+  it("honors a seed override for reproducible (but seed-distinct) World dynamics", () => {
+    // Only one World's module-level geography/routes (worldData.LOCATIONS,
+    // routes.ROUTES, etc. -- see CLAUDE.md's "mutable module-level world
+    // state") is ever live at a time, so each World must be fully built AND
+    // run before the next is constructed -- interleaving construction would
+    // have a later build's globals silently take over an earlier World's
+    // pathfinding/pricing mid-run.
+    const json = world([]);
+    const runPrices = (seed: number): number[] => {
+      const { world: w } = buildWorldFromJson(json, { seed });
+      w.run(5);
+      return w.combinedHistory.map((r) => r.price);
+    };
+    const a = runPrices(111);
+    const b = runPrices(111);
+    const c = runPrices(222);
+    expect(a).toEqual(b);
+    expect(a).not.toEqual(c);
+  });
 });
