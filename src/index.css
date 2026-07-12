@@ -6,7 +6,38 @@
   --border: #e5e4e7;
   --row-alt: #f7f7f9;
   --accent: #7c3aed;
+  --consumed: #1baf7a;
   --muted: #9a97a3;
+
+  /* Event-marker categorical palette (chart overlays) -- validated via
+     dataviz's scripts/validate_palette.js against this app's own panel
+     surfaces, picked to stay distinct from --accent/--consumed since
+     markers overlay directly on those lines. */
+  --event-local: #2a78d6;
+  --event-location: #eda100;
+  --event-global: #008300;
+  --event-worldwide: #e87ba4;
+  --event-closure: #e34948;
+
+  /* Faction-type categorical palette (net-worth chart) -- blue/orange, a
+     maximally CVD-safe pair (validated via dataviz's validate_palette.js
+     against these panel surfaces). */
+  --faction-company: #2a78d6;
+  --faction-solo: #eb6834;
+
+  /* PoliticalEntity categorical palette (Network view location icons) -- the
+     full 8-hue theme (same values as the event and faction palettes above,
+     which each use a subset), validated via dataviz's validate_palette.js
+     against these panel surfaces. Cycled by PoliticalEntity index if there
+     are ever more than 8. */
+  --political-entity-1: #2a78d6;
+  --political-entity-2: #1baf7a;
+  --political-entity-3: #eda100;
+  --political-entity-4: #008300;
+  --political-entity-5: #4a3aa7;
+  --political-entity-6: #e34948;
+  --political-entity-7: #e87ba4;
+  --political-entity-8: #eb6834;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
@@ -30,7 +61,26 @@
     --border: #2e303a;
     --row-alt: #21222a;
     --accent: #c084fc;
+    --consumed: #199e70;
     --muted: #74727c;
+
+    --event-local: #3987e5;
+    --event-location: #c98500;
+    --event-global: #008300;
+    --event-worldwide: #d55181;
+    --event-closure: #e66767;
+
+    --faction-company: #3987e5;
+    --faction-solo: #d95926;
+
+    --political-entity-1: #3987e5;
+    --political-entity-2: #199e70;
+    --political-entity-3: #c98500;
+    --political-entity-4: #008300;
+    --political-entity-5: #9085e9;
+    --political-entity-6: #e66767;
+    --political-entity-7: #d55181;
+    --political-entity-8: #d95926;
   }
 }
 
@@ -85,7 +135,12 @@ tbody tr:nth-child(even) {
   white-space: nowrap;
 }
 
-button {
+.pirate-note {
+  color: var(--event-closure);
+  font-size: 12px;
+}
+
+button, select {
   font: inherit;
   padding: 6px 14px;
   border-radius: 6px;
@@ -95,11 +150,11 @@ button {
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled), select:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-button:disabled {
+button:disabled, select:disabled {
   opacity: 0.5;
   cursor: default;
 }

@@ -3,141 +3,115 @@
 An agent-based simulation of commodity markets spread across many
 locations, connected by a typed route network, and traded by
 profit-seeking `Captain` agents crewing `Transport`s owned by `Faction`s
-(merchant companies, solo traders, and pirate brigades that hunt them).
+(merchant companies and solo traders; pirate/police raiding exists in the
+engine but isn't part of the default world).
 
 Each day, factions direct their fleets, captains weigh candidate trade
 routes by daily return (not raw profit), buy and sell into per-location
-markets, and the world rolls random events (price shocks, location
-closures) before snapshotting everyone's portfolio. The world can be
-generated procedurally from fixed seeds, or built entirely from CSVs.
+markets, and the world rolls random events (price shocks, per-transport
+mishaps, whole-port closures) before snapshotting everyone's portfolio.
+The world can be generated procedurally from fixed seeds, or authored
+visually in the editor and loaded from a single JSON document.
+
+It's a TypeScript project built with [Vite](https://vitejs.dev); it needs
+[Node.js](https://nodejs.org) with `npm`. There is no Python
+(`pyproject.toml` is a leftover from an earlier port).
 
 ## Getting started
 
-Create the virtual environment and install dependencies (including
-`pytest`) from `pyproject.toml`:
+Install dependencies from the repo root (where `package.json` lives):
 
 ```
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[test]"
+npm install
 ```
 
-There's no global install -- use the project's venv interpreter directly:
+Then:
 
 ```
-.venv\Scripts\python.exe -m pytest              # run the full test suite
-.venv\Scripts\python.exe main.py                 # run the default 60-day simulation
-.venv\Scripts\python.exe main.py --help          # see CSV-driven world-building flags
+npm run dev       # start the Vite dev server (simulation viewer) with hot reload
+npm run build     # type-check (tsc -b) and build for production
+npm run preview   # preview a production build locally
+npm test          # run the vitest engine suite
+npm run lint      # oxlint
+npm run sweep     # seed-averaging tuning harness (see doc/Simulation.md)
 ```
 
-Running `main.py` with no arguments builds the default procedurally
-generated 30-location world, hand-coded fleets (4 companies, 2 pirate
-brigades), and runs 60 days of trading, printing location/fleet/route
-summaries, arbitrage opportunities, daily agent logs, and end-of-run
-portfolio reports to the console.
+`npm run dev` serves the React viewer (`src/App.tsx`): it builds the
+default procedurally generated 30-location world with a synthesized fleet
+and gives you play/pause/step controls, a network map, per-location and
+per-fleet panels, an event log, and price/net-worth history charts.
 
-### Building a custom world from CSVs
+## Repository layout
 
-Any of the five world-building pieces can be swapped for a file-driven
-one by passing its CSV path to `main.py`:
+Two separate apps live in one repo (they are **separate builds and cannot
+share imports**):
 
-- `--commodities-csv` -- commodity names + base prices
-- `--locations-csv` -- locations + coordinates
-- `--routes-csv` -- routes between locations
-- `--companies-csv` -- companies + their fleets
-- `--pirate-brigades-csv` -- pirate brigades + their fleets
-- `--json-report-dir` -- write each faction's full daily history as JSON
+- **Root (`src/`)** — the simulation **engine** (`src/sim/`) plus the React
+  **viewer** (`src/App.tsx`, `src/components/`, `src/state/useSimStore.ts`).
+- **`editor/`** — a standalone Vite + React **World editor** for authoring a
+  world visually and exporting it as JSON. Run it with its own
+  `npm run dev` / `npm run build` from inside `editor/`.
 
-See `sim/csv_loaders.py` for each file's expected columns, and
-`tests/fixtures/*.csv` for worked examples. Passing none of them runs
-the default procedural world.
+The editor exports a World as a single JSON document; the engine's
+`buildWorldFromJson` (`src/sim/buildWorldFromJson.ts`) loads that JSON into
+a live, runnable `World` — and synthesizes a full fleet up to the required
+ship count so a lightly-authored world still runs a complete economy.
+
+## The World editor
+
+`editor/` is a visual authoring tool. Place Locations on a canvas, connect
+them with typed Routes (including bulk "auto-connect Sea routes"), define
+Commodities, PoliticalEntities (each with a **nationality** that seeds
+generated ship/captain names), and Companies (generated per nationality),
+then export/copy the World as JSON to feed the simulation. It also supports
+a **flat vs. globe distance mode** with an editable sphere radius, so
+distances can be measured as a plane or on a sphere. See
+`doc/Architecture.md` for how the exported JSON maps onto the engine.
 
 ## Architecture
 
-The `sim/` package is organized by concern, one module per major entity.
-The dependency chain runs roughly:
+`src/sim/` is organized one module per concern; `src/sim/index.ts`
+re-exports the public API. The dependency chain runs roughly:
 
 ```
-world_data (Location, geography) -> routes (Route/RouteType) -> markets (Market)
-  -> transport (Transport/Ship/Train/Plane) -> crew (Crew/Sailor) -> captain (Captain)
-  -> faction (Faction/Company/PirateBrigade) -> world (World, orchestrates everything)
+worldData (Location, geography) + distance -> routes (Route/RouteType) -> markets (Market)
+  -> transport (Transport/Ship/WagonTrain/Plane) -> crew (Crew/Sailor) -> captain (Captain)
+  -> faction (Faction/Company/SoloTrader/PirateBrigade/PoliceFleet) -> world (World)
 ```
 
 | Module | Responsibility |
 | --- | --- |
-| `events` | `MarketEvent`/`TransportEvent`/`LocationClosure` |
-| `location` | `Location`, `TerminalType` |
-| `world_data` | commodity roster, geography (`LOCATIONS`, `get_location`, `distance_between`, ...) |
-| `routes` | `Route`/`RouteType`, the route network |
-| `pathfinding` | Dijkstra shortest-path routing over the route network |
-| `markets` | `Market`, stockpile-deviation pricing |
-| `transport` | `Transport`/`Ship`/`Train`/`Plane`, `SHIP_CLASSES` |
-| `crew` | `Crew` (base class for anyone operating a `Transport`) and `Sailor` (a generic waged deckhand) |
-| `captain` | `Captain` (the trading agent, a `Crew` subclass) |
-| `names` | `random_name()` + per-language name pools for naming captains |
-| `faction` | `Faction`/`Company`/`SoloTrader`/`PirateBrigade`/`PoliceFleet` |
-| `csv_loaders` | optional CSV-driven world/fleet building |
-| `world` | `World` (orchestrates everything, runs the simulation) |
+| `location.ts` | `Location`, `TerminalType` — produce/consume/stockpile model; `ContractIssuer` |
+| `politicalEntity.ts` | `PoliticalEntity` — groups Locations, shares one cash balance, carries a `nationality` |
+| `commodity.ts` | `Commodity` — per-commodity pricing params and event templates; `buildCommodities()` |
+| `distance.ts` | Flat (Euclidean) vs. globe (great-circle) distance model and its `DistanceConfig` |
+| `nationality.ts` | `Nationality` and the map from each to its person/ship/company name pools |
+| `worldData.ts` | Commodity roster + procedural geography; `distanceBetween`, `setGeography`, `setDistanceConfig`, `assignPoliticalEntities` |
+| `routes.ts` | `Route`/`RouteType`; the network `ROUTES: Map<string, Route[]>` (multiple types per pair), `getRoutes`, `getRoute`, `addRouteToNetwork` |
+| `pathfinding.ts` | Dijkstra shortest-path over the route network, restricted per-Transport |
+| `events.ts` | `MarketEvent`/`TransportEvent`/`CompanyEvent`/`LocationClosure` |
+| `markets.ts` | `Market` — stockpile-deviation pricing |
+| `transport.ts` | `Transport`/`Ship`/`WagonTrain`/`Plane`, `SHIP_CLASSES` |
+| `crew.ts` | `Crew` (base) and `Sailor` (generic waged crew) |
+| `captain.ts` | `Captain` — the trading agent |
+| `names.ts` / `shipNames.ts` / `companyNames.ts` | per-nationality name pools + generators |
+| `faction.ts` | `Faction`/`Company`/`SoloTrader`/`PirateBrigade`/`PoliceFleet`; `ContractFulfiller` |
+| `contracts.ts` | `Contract`, `BulletinBoard` — Location-funded one-shot supply orders |
+| `world.ts` | `World` — orchestrates everything, runs the daily loop |
+| `buildWorld.ts` | Builds the default procedurally generated world + fleet |
+| `buildWorldFromJson.ts` | Builds a `World` from an editor-exported JSON, synthesizing the fleet |
+| `analysis.ts` / `analysis.harness.ts` | Seed-averaged tuning-sweep helpers and the `npm run sweep` entry point |
+| `rng.ts` / `simRandom.ts` | `Rng` seeded PRNG and the simulation's shared reseedable stream |
 
-`cli.py` and `main.py` sit on top, building a `World` either
-procedurally or from CSVs and running it end to end.
-
-### Key relationships
-
-- **Location / Route**: `Location` is a trading hub that produces some
-  commodities (added to its stockpile daily, sold off as surplus) and
-  consumes others (drawn from its stockpile daily, bought once it runs
-  below a minimum) -- price moves with how far the stockpile sits from
-  that reference level. It also carries a set of `TerminalType`s (Port/
-  Station/Airport/Platform). `Route` connects two locations with a typed
-  mode (Sea/Railroad/Air); a route only exists where both ends share a compatible
-  terminal type. Both are generated procedurally from fixed seeds,
-  independent of the simulation's own RNG, so the world stays
-  reproducible across runs regardless of trading randomness.
-- **Transport / Crew / Captain**: `Transport` is pure hardware --
-  cargo capacity, speed, fuel burn, crew requirement -- decoupled from
-  the agent that operates it. `Crew` is a bare identity (name +
-  transport); `Sailor` is a generic waged `Crew` member; `Captain`
-  subclasses `Crew` and adds all trading-agent behavior (strategy,
-  cash, route planning, buy/sell execution).
-- **Faction / Company / PirateBrigade**: `Faction` owns a fleet built
-  from `(Transport, Captain, home_location)` triples. `pools_cash`
-  controls whether captains share one balance (`Company`, the
-  `Faction` default) or keep individual balances (`PirateBrigade`).
-  `Company.direct_fleet()` actively assigns idle ships to their
-  best-scoring trade; `PirateBrigade.direct_fleet()` instead chases
-  wherever watched `Company` fleets are concentrated.
-- **World**: orchestrates the daily loop -- resolves location closures,
-  asks each faction to direct its fleet, calls `Captain.act()` for
-  every trader, rolls market events, clears every market, and
-  snapshots portfolios. Also owns all reporting (print/CSV/JSON
-  summaries).
-
-### Route economics
-
-A `Captain` scores each candidate route (`_route_economics`) on cargo
-cost, fuel cost at the origin's live price, the transport's fixed
-shipment fee, and crew wages owed for every day the trip takes.
-Candidates are ranked by *daily return* against `min_daily_return_pct`,
-so a captain can fairly compare a short cheap route against a long
-expensive one. Transports that track fuel will route through an
-intermediate stop to refuel if needed; a faction that can't afford a
-transport's wages mid-transit flips it to `Inactive` until it can; and
-captains will reposition an empty ship toward a distant opportunity if
-nothing local clears the bar, but only past a stiffer threshold since
-it's a speculative bet.
-
-## Experimental UI
-
-`exp-ui/` is an [imgui-bundle](https://github.com/pthom/imgui_bundle)
-desktop viewer (`python exp-ui/main.py`) for watching a running
-simulation -- network map, per-location and per-fleet panels, event
-log, and commodity/net-worth history charts. It has its own
-`requirements.txt` (`imgui-bundle`, `numpy`) separate from the core
-simulation's dependencies.
+See **`doc/Architecture.md`** for the full design (economics, events,
+factions, contracts, distance modes, JSON loading and fleet synthesis),
+**`doc/World.md`** for a task→file map, and **`doc/Simulation.md`** for the
+empirical tuning record behind the calibrated defaults.
 
 ## Tests
 
-`tests/conftest.py` loads `tests/fixtures/*.csv` into real
-`Location`/`Route`/`Company` objects (not mocks) via a `fixture_world`
-fixture, plus a `fixture_pirate_crew` fixture for `PirateBrigade`-
-specific tests. There is no lint/build step configured.
+`src/sim/__tests__/*.test.ts` (vitest) exercise the engine directly — the
+default procedural world, hand-built worlds via `buildWorldFromJson`, and
+per-concern unit tests (distance modes, multiple routes, fleet synthesis,
+contracts, faction cash pooling, PoliticalEntity affiliation, spaceship
+routing, …). The editor has no automated suite; verify it in a browser.

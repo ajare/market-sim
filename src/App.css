@@ -38,6 +38,12 @@
   border-radius: 999px;
 }
 
+.paste-error {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: #b00020;
+}
+
 .panels {
   display: flex;
   flex-direction: column;
@@ -55,4 +61,242 @@
   overflow-x: auto;
   max-height: 60vh;
   overflow-y: auto;
+}
+
+.political-entity-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.political-entity-entry dt {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.political-entity-entry dd {
+  margin: 6px 0 0;
+}
+
+.political-entity-location-table {
+  width: auto;
+  min-width: 260px;
+}
+
+.political-entity-location-table th {
+  position: static;
+}
+
+.network-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0 4px;
+}
+
+.network-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.legend-underline {
+  width: 10px;
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-bottom: 1.5px solid var(--muted);
+}
+
+.legend-ring {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: none;
+  border: 1.5px solid var(--muted);
+}
+
+.network-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.network-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  cursor: default;
+}
+
+.network-tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%) translateY(-10px);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.network-tooltip-title {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.network-tooltip-events {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--warning, #c98500);
+}
+
+/* Popup opened by clicking empty canvas in NetworkView to add a new Location -- mirrors the editor's WorldCanvas placement menu. */
+.placement-menu {
+  position: absolute;
+  z-index: 20;
+  min-width: 10rem;
+  max-height: 70%;
+  overflow-y: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.placement-menu-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 3px 6px;
+}
+
+.placement-menu-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 6px;
+  color: var(--text-h);
+}
+
+.placement-menu-field input {
+  width: 4.5rem;
+}
+
+.placement-menu-item {
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-h);
+}
+
+.placement-menu-item:hover {
+  background: var(--border);
+}
+
+.placement-menu-empty {
+  padding: 5px 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.placement-menu-cancel {
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  color: #b91c1c;
+  border-radius: 0 0 4px 4px;
+}
+
+.chart-filters {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.chart-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  border-bottom: 2px solid var(--accent);
+}
+
+.legend-line-dashed {
+  border-bottom-style: dashed;
+  border-bottom-color: var(--muted);
+}
+
+.legend-bar {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.chart-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}
+
+.chart-tooltip {
+  transform: translateX(-50%);
+  top: 8px;
 }

@@ -12,37 +12,81 @@
  */
 import { create } from "zustand";
 import { buildWorld } from "../sim/buildWorld";
+import { buildWorldFromJson } from "../sim/buildWorldFromJson";
 import type { World } from "../sim/world";
-import type { Faction } from "../sim/faction";
+import type { Location } from "../sim/location";
+import type { PoliticalEntity } from "../sim/politicalEntity";
+import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 
 interface SimStore {
   world: World | null;
   factions: Faction[];
+  politicalEntities: PoliticalEntity[];
   day: number;
   playing: boolean;
-  daysPerSecond: number;
+  secondsPerDay: number;
+  contractStrategy: ContractStrategy;
   version: number;
   reset: () => void;
+  /** Builds a fresh World from an editor JSON export (see buildWorldFromJson) and installs it, replacing the current one. Throws if the JSON can't be turned into a valid World -- the caller surfaces the message. */
+  loadWorldFromJson: (text: string) => void;
   step: () => void;
   tick: (deltaTimeSeconds: number) => void;
   setPlaying: (playing: boolean) => void;
-  setDaysPerSecond: (daysPerSecond: number) => void;
+  setSecondsPerDay: (secondsPerDay: number) => void;
+  setContractStrategy: (contractStrategy: ContractStrategy) => void;
+  addPirateShip: () => void;
+  removePirateShip: () => void;
+  addPoliceShip: () => void;
+  removePoliceShip: () => void;
+  /**
+   * Adds a brand-new Location at (x, y) (world-unit coordinates) affiliated
+   * with `politicalEntity` -- see World.addLocation. Returns null (no-op) if
+   * there is no live World.
+   */
+  addLocation: (
+    x: number,
+    y: number,
+    politicalEntity: PoliticalEntity,
+    detourDistance: number,
+    maxDistance: number,
+  ) => Location | null;
 }
 
 let accumulator = 0;
 
+/** Push a strategy onto every Company in a fleet -- read live by Company.directFleet, so this takes effect on the next simulated day. */
+function applyContractStrategy(factions: Faction[], strategy: ContractStrategy): void {
+  for (const faction of factions) {
+    if (faction instanceof Company) faction.contractStrategy = strategy;
+  }
+}
+
 export const useSimStore = create<SimStore>((set, get) => ({
   world: null,
   factions: [],
+  politicalEntities: [],
   day: 0,
   playing: false,
-  daysPerSecond: 1.0,
+  secondsPerDay: 1.0,
+  contractStrategy: "compare",
   version: 0,
 
   reset: () => {
-    const { world, factions } = buildWorld(1000);
+    const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
+    applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
-    set((s) => ({ world, factions, day: 0, playing: false, version: s.version + 1 }));
+    set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));
+  },
+
+  loadWorldFromJson: (text: string) => {
+    // buildWorldFromJson throws on any failure (bad JSON, empty world, or a
+    // domain-constructor validation error) -- let it propagate to the caller,
+    // which shows the message; leave the current world untouched on failure.
+    const { world, factions, politicalEntities } = buildWorldFromJson(text);
+    applyContractStrategy(factions, get().contractStrategy);
+    accumulator = 0;
+    set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));
   },
 
   step: () => {
@@ -53,17 +97,54 @@ export const useSimStore = create<SimStore>((set, get) => ({
   },
 
   tick: (deltaTimeSeconds: number) => {
-    const { playing, daysPerSecond, step } = get();
+    const { playing, secondsPerDay, step } = get();
     if (!playing) return;
-    accumulator += deltaTimeSeconds * daysPerSecond;
-    while (accumulator >= 1.0) {
+    accumulator += deltaTimeSeconds;
+    while (accumulator >= secondsPerDay) {
       step();
-      accumulator -= 1.0;
+      accumulator -= secondsPerDay;
     }
   },
 
   setPlaying: (playing: boolean) => set({ playing }),
-  setDaysPerSecond: (daysPerSecond: number) => set({ daysPerSecond }),
+  setSecondsPerDay: (secondsPerDay: number) => set({ secondsPerDay }),
+  setContractStrategy: (contractStrategy: ContractStrategy) => {
+    applyContractStrategy(get().factions, contractStrategy);
+    set((s) => ({ contractStrategy, version: s.version + 1 }));
+  },
+
+  addPirateShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.addPirateShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+  removePirateShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.removePirateShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+  addPoliceShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.addPoliceShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+  removePoliceShip: () => {
+    const { world } = get();
+    if (world === null) return;
+    world.removePoliceShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+
+  addLocation: (x, y, politicalEntity, detourDistance, maxDistance) => {
+    const { world } = get();
+    if (world === null) return null;
+    const location = world.addLocation(x, y, politicalEntity, detourDistance, maxDistance);
+    set((s) => ({ version: s.version + 1 }));
+    return location;
+  },
 }));
 
 // Build the initial world immediately, mirroring SimState.__init__ calling reset().

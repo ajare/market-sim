@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildWorld } from "../buildWorld";
 import { Location } from "../location";
+import { World } from "../world";
 import { Company, SoloTrader, PirateBrigade } from "../faction";
 import { Captain } from "../captain";
-import { Ship, Train, SHIP_CLASSES } from "../transport";
+import { Ship, WagonTrain, SHIP_CLASSES } from "../transport";
+import { buildCommodities } from "../commodity";
+import { generateLocations, COMMODITIES } from "../worldData";
 
 describe("buildWorld", () => {
   it("builds the default procedural world and runs 60 days without throwing", () => {
@@ -12,7 +15,7 @@ describe("buildWorld", () => {
     expect(factions.length).toBeGreaterThan(0);
     expect(() => world.run(60)).not.toThrow();
     expect(world.combinedHistory.length).toBeGreaterThan(0);
-  });
+  }, 20000); // the default world's fleet is large (locations x TARGET_SHIPS_PER_LOCATION) -- exceeds vitest's 5s default
 
   it("produces identical day-60 net worth across two runs built from the same seeds", () => {
     const run1 = buildWorld();
@@ -27,7 +30,7 @@ describe("buildWorld", () => {
     const day60Prices1 = run1.world.combinedHistory.filter((r) => r.day === 60).map((r) => r.price);
     const day60Prices2 = run2.world.combinedHistory.filter((r) => r.day === 60).map((r) => r.price);
     expect(day60Prices1).toEqual(day60Prices2);
-  });
+  }, 40000); // the default world's fleet is large (96 companies x 5 ships) -- two 60-day runs exceed vitest's 5s default
 
   it("steps one day at a time and matches run(1)'s effect on the day counter", () => {
     const { world } = buildWorld();
@@ -47,7 +50,7 @@ describe("Location", () => {
           consumedCommodities: { Wheat: 5 },
           stockpiles: {},
           minStockpiles: {},
-          basePrices: {},
+          basePriceModifiers: {},
           fuelPrice: 1.0,
           terminalTypes: new Set(["Port"]),
         }),
@@ -63,11 +66,77 @@ describe("Location", () => {
           consumedCommodities: {},
           stockpiles: {},
           minStockpiles: {},
-          basePrices: {},
+          basePriceModifiers: {},
           fuelPrice: 1.0,
           terminalTypes: new Set(["Platform", "Port"]),
         }),
     ).toThrow();
+  });
+});
+
+describe("World location-count validation", () => {
+  function makeLocations(count: number): Location[] {
+    return Array.from(
+      { length: count },
+      (_, i) =>
+        new Location({
+          name: `Loc ${i}`,
+          producedCommodities: {},
+          consumedCommodities: {},
+          stockpiles: {},
+          minStockpiles: {},
+          basePriceModifiers: {},
+          fuelPrice: 1.0,
+          terminalTypes: new Set(["Port"]),
+        }),
+    );
+  }
+
+  it("throws when there are fewer than 20 locations", () => {
+    expect(() => new World({ locations: makeLocations(19) })).toThrow();
+  });
+
+  it("throws when there are more than 50 locations", () => {
+    expect(() => new World({ locations: makeLocations(51) })).toThrow();
+  });
+
+  it("does not throw at the 20 and 50 boundaries", () => {
+    expect(() => new World({ locations: makeLocations(20) })).not.toThrow();
+    expect(() => new World({ locations: makeLocations(50) })).not.toThrow();
+  });
+});
+
+describe("commodity roster / per-location spread validation", () => {
+  function names(count: number): string[] {
+    return Array.from({ length: count }, (_, i) => `Commodity ${i}`);
+  }
+  function prices(count: number): Record<string, number> {
+    const result: Record<string, number> = {};
+    for (const n of names(count)) result[n] = 10.0;
+    return result;
+  }
+
+  it("throws when there are fewer than 5 commodities", () => {
+    expect(() => buildCommodities(names(4), prices(4))).toThrow();
+  });
+
+  it("throws when there are more than 25 commodities", () => {
+    expect(() => buildCommodities(names(26), prices(26))).toThrow();
+  });
+
+  it("does not throw at the 5 and 25 commodity-count boundaries", () => {
+    expect(() => buildCommodities(names(5), prices(5))).not.toThrow();
+    expect(() => buildCommodities(names(25), prices(25))).not.toThrow();
+  });
+
+  it("throws when the per-location commodity range falls outside [2, 6]", () => {
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 1, 4)).toThrow();
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 2, 7)).toThrow();
+  });
+
+  it("does not throw at the [2, 6] per-location commodity-range boundaries", () => {
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 2, 4)).not.toThrow();
+    expect(() => generateLocations(["Loc A"], COMMODITIES, undefined, undefined, 2, 6)).not.toThrow();
   });
 });
 
@@ -98,17 +167,25 @@ describe("Faction cash pooling", () => {
     expect(captain2.cash).toBe(900);
   });
 
-  it("SoloTrader keeps independent balances", () => {
+  it("SoloTrader keeps independent balances across separate instances", () => {
     const { crew, captain1, captain2 } = makeCrew();
-    const solo = new SoloTrader("Loose Assoc", [...crew], 1000);
-    expect(solo.poolsCash).toBe(false);
+    const solo1 = new SoloTrader("Loose Assoc 1", [crew[0]], 1000);
+    new SoloTrader("Loose Assoc 2", [crew[1]], 1000);
+    expect(solo1.poolsCash).toBe(false);
     const before2 = captain2.cash;
     captain1.cash -= 100;
     expect(captain2.cash).toBe(before2);
   });
 
+  it("SoloTrader requires exactly one Transport/Captain", () => {
+    const { crew } = makeCrew();
+    expect(() => new SoloTrader("Too Many", [...crew], 1000)).toThrow();
+    expect(() => new SoloTrader("None", [], 1000)).toThrow();
+    expect(() => new SoloTrader("Just Right", [crew[0]], 1000)).not.toThrow();
+  });
+
   it("PirateBrigade rejects a non-Ship transport", () => {
-    const train = new Train({ name: "Landlocked" });
+    const train = new WagonTrain({ name: "Landlocked" });
     const captain = new Captain("Rejected", homeLocation);
     expect(
       () => new PirateBrigade("Doomed Brigade", [[train, captain, homeLocation]], []),

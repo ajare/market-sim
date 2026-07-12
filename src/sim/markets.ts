@@ -3,12 +3,22 @@
  * day-to-day price update. Ported from sim/markets.py.
  */
 import { COMMODITIES } from "./worldData";
-import { DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST } from "./commodity";
+import { DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST, DEFAULT_EXCESS_PRICE_BOOST } from "./commodity";
 import { MarketEvent } from "./events";
 import type { Location } from "./location";
-import { randRandom, randChoice, randGauss } from "./simRandom";
+import { randGauss } from "./simRandom";
 
 export type MarketSide = "buy" | "sell";
+
+/**
+ * Per-pirate-ship price effect at a Location: each pirate ship currently
+ * AtLocation nudges buy prices down and sell prices up by this fraction,
+ * capped at MAX_PIRATE_PRICE_EFFECT -- a busier pirate anchorage scares off
+ * competing buyers (cheaper to buy) and competing sellers (more profitable
+ * to sell), same direction a real risk premium would push local trade.
+ */
+export const PIRATE_PRICE_EFFECT_PER_SHIP = 0.03;
+export const MAX_PIRATE_PRICE_EFFECT = 0.5;
 
 /** Composite key standing in for Python's `(location, commodity)` tuple dict key. */
 export function marketKey(location: string, commodity: string): string {
@@ -26,6 +36,8 @@ export interface MarketRecord {
   volumeTraded: number;
   demandMultiplier: number;
   supplyMultiplier: number;
+  pirateCount: number;
+  pirateMultiplier: number;
   activeEvents: string;
   newEvent: string;
   closed: boolean;
@@ -52,7 +64,7 @@ export class Market {
     startingPrice: number,
     basePrice: number,
     side: MarketSide,
-    eventProbability: number = 0.1,
+    eventProbability: number = 0.01,
     fixedPrice: boolean = false,
   ) {
     this.commodityName = commodityName;
@@ -93,6 +105,13 @@ export class Market {
     this.volumeTradedToday += quantity;
   }
 
+  /** 1 - effect on the buy side (cheaper), 1 + effect on the sell side (more profitable) -- see PIRATE_PRICE_EFFECT_PER_SHIP. */
+  private pirateMultiplier(pirateCount: number): number {
+    if (pirateCount <= 0) return 1;
+    const effect = Math.min(MAX_PIRATE_PRICE_EFFECT, pirateCount * PIRATE_PRICE_EFFECT_PER_SHIP);
+    return this.side === "buy" ? 1 - effect : 1 + effect;
+  }
+
   private currentMultipliers(): [number, number] {
     let demandMult = 1.0;
     let supplyMult = 1.0;
@@ -108,16 +127,6 @@ export class Market {
     this.activeEvents.push(event);
   }
 
-  private maybeTriggerLocalEvent(): MarketEvent | null {
-    if (randRandom() >= this.eventProbability) return null;
-    const commodity = COMMODITIES[this.commodityName];
-    if (commodity === undefined || commodity.eventTemplates.length === 0) return null;
-    const template = randChoice(commodity.eventTemplates);
-    const event = new MarketEvent({ ...template, location: this.locationName, commodity: this.commodityName });
-    this.applyEvent(event);
-    return event;
-  }
-
   private updateEvents(): void {
     this.activeEvents = this.activeEvents.filter((e) => e.tick());
   }
@@ -129,14 +138,38 @@ export class Market {
     const deviation = Math.max(-2.0, Math.min(2.0, (reference - current) / reference));
     const commodity = COMMODITIES[this.commodityName];
     let sensitivity = commodity !== undefined ? commodity.priceSensitivity : DEFAULT_PRICE_SENSITIVITY;
-    if (deviation > 0 && this.side === "sell") {
+    // Consumer deficit boost (sell markets): the boost kicks in early, once
+    // stock falls below 1.3x the reference level, not just once it's a true
+    // deficit (below 1x). boostProgress is 0 right at that 1.3x threshold and
+    // rises to 1 as the stockpile is drawn down to zero, so raising the boost
+    // to that power ramps sensitivity up an exponential curve -- flat (no
+    // boost) at 1.3x the reference, full deficitPriceBoost only once truly out
+    // of stock. Deviation is positive here, so a higher sensitivity means a
+    // higher buy-price -- luring traders to deliver into the shortage.
+    const deficitThreshold = 1.3 * reference;
+    if (current < deficitThreshold && this.side === "sell") {
+      const boostProgress = Math.max(0, Math.min(1, (deficitThreshold - current) / deficitThreshold));
       const boost = commodity !== undefined ? commodity.deficitPriceBoost : DEFAULT_DEFICIT_PRICE_BOOST;
-      sensitivity *= boost;
+      sensitivity *= Math.pow(boost, boostProgress);
+    }
+
+    // Producer excess boost (buy markets): the mirror of the deficit boost.
+    // As a producer's stock climbs ABOVE its reference (normal) level, drop
+    // the sell-price along an exponential curve so traders are drawn to buy up
+    // the surplus. excessProgress is 0 right at the reference and rises to 1 as
+    // stock reaches 3x the reference -- the point the deviation itself
+    // saturates at -2. Deviation is negative here, so a higher sensitivity
+    // means a lower (steeper-discounted) buy-price.
+    const excessCeiling = 3 * reference;
+    if (current > reference && this.side === "buy") {
+      const excessProgress = Math.min(1, (current - reference) / (excessCeiling - reference));
+      const boost = commodity !== undefined ? commodity.excessPriceBoost : DEFAULT_EXCESS_PRICE_BOOST;
+      sensitivity *= Math.pow(boost, excessProgress);
     }
     return Math.max(0.5, this.basePrice * (1 + sensitivity * deviation));
   }
 
-  simulateDay(day: number, isOpen: boolean = true): MarketRecord {
+  simulateDay(day: number, isOpen: boolean = true, pirateCount: number = 0): MarketRecord {
     this.lastTriggeredEvent = null;
 
     if (this.fixedPrice) {
@@ -151,6 +184,8 @@ export class Market {
         volumeTraded: round2(this.volumeTradedToday),
         demandMultiplier: 0.0,
         supplyMultiplier: 0.0,
+        pirateCount: 0,
+        pirateMultiplier: 1.0,
         activeEvents: "",
         newEvent: "",
         closed: !isOpen,
@@ -172,6 +207,8 @@ export class Market {
         volumeTraded: round2(this.volumeTradedToday),
         demandMultiplier: 0.0,
         supplyMultiplier: 0.0,
+        pirateCount: 0,
+        pirateMultiplier: 1.0,
         activeEvents: this.activeEvents.map((e) => e.name).join(", "),
         newEvent: "",
         closed: true,
@@ -182,14 +219,14 @@ export class Market {
       return record;
     }
 
-    const triggeredEvent = this.maybeTriggerLocalEvent();
-    if (triggeredEvent !== null) {
-      triggeredEvent.day = day;
-      this.lastTriggeredEvent = triggeredEvent;
-    }
+    // No new local MarketEvent is ever randomly rolled here -- events are
+    // disabled -- but any already-active event (from a loaded scenario)
+    // still applies its multiplier and ticks down below (so lastTriggeredEvent
+    // stays null and newEvent stays "").
     const [demandMult, supplyMult] = this.currentMultipliers();
+    const pirateMult = this.pirateMultiplier(pirateCount);
 
-    let newPrice = this.stockpilePrice() * (demandMult / supplyMult);
+    let newPrice = this.stockpilePrice() * (demandMult / supplyMult) * pirateMult;
     const noise = randGauss(0, 0.01);
     newPrice *= 1 + noise;
     newPrice = Math.max(0.5, newPrice);
@@ -205,8 +242,10 @@ export class Market {
       volumeTraded: round2(this.volumeTradedToday),
       demandMultiplier: round2(demandMult),
       supplyMultiplier: round2(supplyMult),
+      pirateCount,
+      pirateMultiplier: round2(pirateMult),
       activeEvents: this.activeEvents.map((e) => e.name).join(", "),
-      newEvent: triggeredEvent !== null ? triggeredEvent.name : "",
+      newEvent: "",
       closed: false,
     };
     this.history.push(record);

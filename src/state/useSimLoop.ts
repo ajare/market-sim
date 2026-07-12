@@ -1,4 +1,4 @@
-/** Drives useSimStore.tick(dt) off requestAnimationFrame -- replicates SimState.tick's day-per-second accumulator. */
+/** Drives useSimStore.tick(dt) off requestAnimationFrame -- replicates SimState.tick's seconds-per-day accumulator. */
 import { useEffect, useRef } from "react";
 import { useSimStore } from "./useSimStore";
 

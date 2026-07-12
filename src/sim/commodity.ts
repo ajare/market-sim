@@ -7,6 +7,23 @@
 
 export const DEFAULT_PRICE_SENSITIVITY = 0.45;
 export const DEFAULT_DEFICIT_PRICE_BOOST = 1.4;
+/** Mirror of DEFAULT_DEFICIT_PRICE_BOOST for the producer/excess side (see Market.stockpilePrice). */
+export const DEFAULT_EXCESS_PRICE_BOOST = 1.4;
+
+/** Fallback base production/consumption rate (units/day, at a Location whose rate modifier is the default 1.0 -- see Location.productionRate/consumptionRate). */
+export const DEFAULT_BASE_PRODUCTION_RATE = 8.0;
+export const DEFAULT_BASE_CONSUMPTION_RATE = 8.0;
+
+/** Fallback reference price for a Location.basePrice() lookup whose commodity has no registry entry at all. */
+export const DEFAULT_BASE_PRICE = 1.0;
+
+// The total commodity roster must fall within this range. Calibrated via
+// seed-averaged stockpile-ratio sweeps (see Simulation.md): too few
+// commodities (~4) causes severe production/consumption collision effects
+// across locations; too many (~20+) dilutes the fixed fleet's coverage per
+// commodity. The default 10-commodity roster sits comfortably inside.
+export const MIN_COMMODITIES = 5;
+export const MAX_COMMODITIES = 25;
 
 export interface EventTemplate {
   name: string;
@@ -19,21 +36,38 @@ export class Commodity {
   name: string;
   basePrice: number;
   priceSensitivity: number;
+  /** How steeply the consumer buy-price climbs as stock runs BELOW its reference (deficit). */
   deficitPriceBoost: number;
+  /** How steeply the producer sell-price falls as stock builds ABOVE its reference (excess). */
+  excessPriceBoost: number;
   eventTemplates: EventTemplate[];
+  /**
+   * This commodity's units/day rate at a Location with the default 1.0 rate
+   * modifier -- a Location's actual per-day rate is this times its own
+   * modifier (see Location.productionRate/consumptionRate), so two
+   * locations producing the same commodity can still differ.
+   */
+  baseProductionRate: number;
+  baseConsumptionRate: number;
 
   constructor(
     name: string,
     basePrice: number,
     priceSensitivity: number = DEFAULT_PRICE_SENSITIVITY,
     deficitPriceBoost: number = DEFAULT_DEFICIT_PRICE_BOOST,
+    excessPriceBoost: number = DEFAULT_EXCESS_PRICE_BOOST,
     eventTemplates: EventTemplate[] = [],
+    baseProductionRate: number = DEFAULT_BASE_PRODUCTION_RATE,
+    baseConsumptionRate: number = DEFAULT_BASE_CONSUMPTION_RATE,
   ) {
     this.name = name;
     this.basePrice = basePrice;
     this.priceSensitivity = priceSensitivity;
     this.deficitPriceBoost = deficitPriceBoost;
+    this.excessPriceBoost = excessPriceBoost;
     this.eventTemplates = eventTemplates;
+    this.baseProductionRate = baseProductionRate;
+    this.baseConsumptionRate = baseConsumptionRate;
   }
 }
 
@@ -121,6 +155,26 @@ const DEFICIT_PRICE_BOOST: Record<string, number> = {
   Aluminum: 1.3,
 };
 
+// Per-commodity producer-side excess boost. Empty by default: each commodity
+// falls back to its own deficit boost (symmetric elasticity). Add entries
+// here to make a commodity's surplus price react more or less sharply than
+// its shortage price.
+const EXCESS_PRICE_BOOST: Record<string, number> = {};
+
+// Hand-tuned base production/consumption rates (units/day) for the ten
+// default commodities -- bulkier/cheaper goods (Crude Oil, Natural Gas, Iron
+// Ore) move at a higher daily volume than scarce/expensive ones (Gold,
+// Silver). Anything not listed here (a custom commodity) falls back to
+// DEFAULT_BASE_PRODUCTION_RATE/DEFAULT_BASE_CONSUMPTION_RATE.
+const BASE_PRODUCTION_RATE: Record<string, number> = {
+  "Crude Oil": 14.0, Copper: 8.0, Wheat: 10.0, Gold: 2.0, Silver: 4.0,
+  "Natural Gas": 12.0, Coffee: 6.0, Cotton: 7.0, "Iron Ore": 11.0, Aluminum: 8.0,
+};
+const BASE_CONSUMPTION_RATE: Record<string, number> = {
+  "Crude Oil": 13.0, Copper: 7.0, Wheat: 9.0, Gold: 2.0, Silver: 4.0,
+  "Natural Gas": 11.0, Coffee: 6.0, Cotton: 6.0, "Iron Ore": 10.0, Aluminum: 7.0,
+};
+
 function eventTemplatesFor(name: string): EventTemplate[] {
   if (name in BESPOKE_EVENT_TEMPLATES) return BESPOKE_EVENT_TEMPLATES[name];
   const drivers = GENERATED_EVENT_DRIVERS[name] ?? GENERIC_EVENT_DRIVERS;
@@ -130,20 +184,34 @@ function eventTemplatesFor(name: string): EventTemplate[] {
 /**
  * Build one Commodity per name, pulling hand-tuned price sensitivity/
  * deficit boost/event templates where they exist and falling back to the
- * DEFAULT_* / generic-driver values otherwise.
+ * DEFAULT_* / generic-driver values otherwise. The producer-side excess
+ * boost defaults to the commodity's own deficit boost, so each commodity is
+ * as price-elastic to surplus as it is to shortage -- override per commodity
+ * later if you want the two sides tuned independently.
  */
 export function buildCommodities(
   names: string[],
   basePrices: Record<string, number>,
+  productionRates: Record<string, number> = {},
+  consumptionRates: Record<string, number> = {},
 ): Record<string, Commodity> {
+  if (names.length < MIN_COMMODITIES || names.length > MAX_COMMODITIES) {
+    throw new Error(
+      `buildCommodities: names.length must be between ${MIN_COMMODITIES} and ${MAX_COMMODITIES} (got ${names.length}).`,
+    );
+  }
   const result: Record<string, Commodity> = {};
   for (const name of names) {
+    const deficitBoost = DEFICIT_PRICE_BOOST[name] ?? DEFAULT_DEFICIT_PRICE_BOOST;
     result[name] = new Commodity(
       name,
       basePrices[name],
       PRICE_SENSITIVITY[name] ?? DEFAULT_PRICE_SENSITIVITY,
-      DEFICIT_PRICE_BOOST[name] ?? DEFAULT_DEFICIT_PRICE_BOOST,
+      deficitBoost,
+      EXCESS_PRICE_BOOST[name] ?? deficitBoost,
       eventTemplatesFor(name),
+      productionRates[name] ?? BASE_PRODUCTION_RATE[name] ?? DEFAULT_BASE_PRODUCTION_RATE,
+      consumptionRates[name] ?? BASE_CONSUMPTION_RATE[name] ?? DEFAULT_BASE_CONSUMPTION_RATE,
     );
   }
   return result;

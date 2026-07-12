@@ -1,6 +1,8 @@
 /** Public API re-export, mirroring sim/__init__.py's role for the Python package. */
 export * from "./location";
+export * from "./politicalEntity";
 export * from "./commodity";
+export * from "./distance";
 export * from "./worldData";
 export * from "./routes";
 export * from "./pathfinding";
@@ -9,6 +11,9 @@ export * from "./markets";
 export * from "./transport";
 export * from "./crew";
 export * from "./names";
+export * from "./nationality";
+export * from "./shipNames";
+export * from "./companyNames";
 export * from "./captain";
 export * from "./faction";
 export * from "./world";

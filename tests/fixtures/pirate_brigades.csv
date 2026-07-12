@@ -1,5 +1,0 @@
-brigade_name,captain_name,ship_name,home_location,ship_class,min_daily_return_pct,brigade_starting_cash
-Fixture Pirates,Captain Drake,Raider-01,Testport Gamma,Speedster,0.02,20000
-Fixture Pirates,Captain Reed,Raider-02,Testport Beta,Handysize,0.02,20000
-Rogue Pirates,Captain Kidd,Raider-03,Testport Gamma,Speedster,0.02,20000
-Rogue Pirates,Captain Morgan,Landlubber-01,Testport Delta,Train,0.02,20000

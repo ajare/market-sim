@@ -16,23 +16,73 @@
 import { Captain, type Directive, type TradeDirective } from "./captain";
 import { Sailor } from "./crew";
 import { Ship, type Transport } from "./transport";
-import { getRoute } from "./routes";
-import { getLocation } from "./worldData";
+import { getRoutes } from "./routes";
+import { getLocation, distanceBetween } from "./worldData";
+import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
-import { randChoice } from "./simRandom";
+import { randChoice, randUniform } from "./simRandom";
+import type { BulletinBoard, Contract, ContractType } from "./contracts";
+import type { PoliticalEntity } from "./politicalEntity";
+import { locationSupportsTransport } from "./companyHome";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
+
+/** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see Faction.dedupeCaptainName. */
+function alphaSequence(index: number): string {
+  let n = index + 1;
+  let s = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+/** Range (inclusive, as a fraction of seized quantity) a raid destroys outright before fencing -- rolled fresh per attack. See PirateBrigade.attack. */
+export const MIN_CARGO_DESTRUCTION_FRACTION = 0.25;
+export const MAX_CARGO_DESTRUCTION_FRACTION = 0.75;
+
+/**
+ * How a Company decides between servicing contracts and arbitraging
+ * (default: "compare" -- see Company.contractStrategy):
+ * - "compare": weigh each contract against the ship's own best arbitrage
+ *   route (by expected profit per ship-day) and take whichever pays more --
+ *   claiming a contract only at the moment a ship commits to it.
+ * - "prioritise": claim and service due contracts first, then arbitrage with
+ *   whatever ships are left (the original behaviour, before this toggle
+ *   existed).
+ */
+export type ContractStrategy = "prioritise" | "compare";
+
+export interface FactionNetWorthSnapshot {
+  day: number;
+  cash: number;
+  netWorth: number;
+}
 
 export class Faction {
   get poolsCash(): boolean {
     return true;
   }
 
+  /** Whether this Faction's Captains can attempt to smuggle cargo through a closed port's black market instead of waiting for it to reopen -- see Captain.maybeSmuggle. False by default; only SoloTrader overrides it. */
+  get canSmuggle(): boolean {
+    return false;
+  }
+
   name: string;
   captains: Captain[] = [];
+  /** The PoliticalEntity this Faction is affiliated with, or null for an independent operator (the default). Purely informational -- affiliation doesn't influence trading behaviour. Set by buildWorldFromJson from the authored World; a procedurally-built Faction stays independent. */
+  politicalEntity: PoliticalEntity | null = null;
   startingCash: number;
   /** The single shared pool every captain's `cash` reads/writes through -- only meaningful when poolsCash. */
   cash: number = 0;
+  netWorthHistory: FactionNetWorthSnapshot[] = [];
+  /** Names already in use by this Faction's fleet, so a duplicate (whether from a name generator's small pool or hand-authored JSON) gets disambiguated -- see dedupeTransportName. */
+  private readonly transportNames = new Set<string>();
+  /** Names already in use by this Faction's Captains -- see dedupeCaptainName. */
+  private readonly captainNames = new Set<string>();
 
   constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
     this.name = name;
@@ -40,12 +90,9 @@ export class Faction {
       captain.transport = transport;
       captain.location = homeLocation;
       this.captains.push(captain);
-
-      transport.crew = [captain];
-      const extraSeats = Math.max(0, transport.crewRequirement - 1);
-      for (let i = 0; i < extraSeats; i++) {
-        transport.crew.push(new Sailor(`${transport.name} Sailor ${i + 2}`, transport));
-      }
+      this.dedupeTransportName(transport);
+      this.dedupeCaptainName(captain);
+      this.crewTransport(transport, captain);
     }
     this.startingCash = startingCash;
     if (this.poolsCash) {
@@ -68,6 +115,91 @@ export class Faction {
     }
   }
 
+  /**
+   * Renames `transport` if its name collides with one already in this
+   * Faction's fleet, appending " 2", " 3", etc. until unique -- so no two
+   * Ships in the same Company (or SoloTrader/PirateBrigade/PoliceFleet) ever
+   * share a display name, whether the collision came from a name
+   * generator's pool being smaller than the fleet or from hand-authored JSON.
+   */
+  private dedupeTransportName(transport: Transport): void {
+    if (this.transportNames.has(transport.name)) {
+      const base = transport.name;
+      let suffix = 2;
+      while (this.transportNames.has(`${base} ${suffix}`)) suffix += 1;
+      transport.name = `${base} ${suffix}`;
+    }
+    this.transportNames.add(transport.name);
+  }
+
+  /**
+   * Renames `captain` if their name collides with one already in this
+   * Faction, inserting a middle initial before the last name -- "A." for the
+   * first collision, "B." for the next, and so on (falling back to "AA.",
+   * "AB.", ... past "Z." for a long run of same-named captains), replacing
+   * any middle initial a prior dedupe pass already inserted. A name with no
+   * space (no separate last name) just gets the initial appended.
+   */
+  private dedupeCaptainName(captain: Captain): void {
+    if (this.captainNames.has(captain.name)) {
+      const parts = captain.name.trim().split(/\s+/);
+      const firstName = parts[0];
+      const lastName = parts.length > 1 ? parts[parts.length - 1] : null;
+      let index = 0;
+      let candidate: string;
+      do {
+        const initial = alphaSequence(index);
+        candidate = lastName !== null ? `${firstName} ${initial}. ${lastName}` : `${firstName} ${initial}.`;
+        index += 1;
+      } while (this.captainNames.has(candidate));
+      captain.name = candidate;
+    }
+    this.captainNames.add(captain.name);
+  }
+
+  /** Fills a Transport's `.crew` (the captain plus Sailors for any extra crewRequirement seats) -- shared by the constructor's initial fleet and addTransport's single-recruit path. */
+  private crewTransport(transport: Transport, captain: Captain): void {
+    transport.crew = [captain];
+    const extraSeats = Math.max(0, transport.crewRequirement - 1);
+    for (let i = 0; i < extraSeats; i++) {
+      transport.crew.push(new Sailor(`${transport.name} Sailor ${i + 2}`, transport));
+    }
+  }
+
+  /**
+   * Adds a single new Transport/Captain to this fleet at runtime -- the
+   * single-recruit equivalent of what the constructor does for the whole
+   * initial crew array. `startingCash` folds in the same way the
+   * constructor's `startingCash` does: added to the shared pool if this
+   * Faction pools cash, or credited directly to the new captain's own
+   * balance otherwise. Returns `captain` for convenience.
+   */
+  addTransport(transport: Transport, captain: Captain, homeLocation: string, startingCash: number = 0.0): Captain {
+    captain.transport = transport;
+    captain.location = homeLocation;
+    this.captains.push(captain);
+    this.dedupeTransportName(transport);
+    this.dedupeCaptainName(captain);
+    this.crewTransport(transport, captain);
+
+    if (this.poolsCash) {
+      this.cash += startingCash + captain.ownCash;
+      captain.ownCash = 0.0;
+    } else {
+      captain.ownCash += startingCash;
+    }
+    captain.company = this;
+    return captain;
+  }
+
+  /** Removes `captain` (and its Transport) from this fleet. Returns true if it was actually part of this fleet, false otherwise (no-op). */
+  removeTransport(captain: Captain): boolean {
+    const idx = this.captains.indexOf(captain);
+    if (idx === -1) return false;
+    this.captains.splice(idx, 1);
+    return true;
+  }
+
   totalCash(): number {
     if (this.poolsCash) return this.cash;
     return this.captains.reduce((sum, c) => sum + c.cash, 0);
@@ -76,7 +208,10 @@ export class Faction {
   netWorth(sellMarkets: Map<string, Market>): number {
     let total = this.totalCash();
     for (const t of this.captains) {
-      if (t.cargo !== null) {
+      // Contract cargo is bought and paid for by the issuing Location, not
+      // the Company (see Captain.executeContractDelivery) -- the Company only
+      // fronts fuel -- so it's not a Company asset and is excluded here.
+      if (t.cargo !== null && t.cargo.contract === null) {
         const markLocation = t.status === "AtLocation" ? t.location : t.cargo.destination;
         const market = sellMarkets.get(marketKey(markLocation, t.cargo.commodity));
         const unitValue = market !== undefined ? market.price : t.cargo.unitCost;
@@ -84,6 +219,10 @@ export class Faction {
       }
     }
     return total;
+  }
+
+  recordNetWorthSnapshot(day: number, sellMarkets: Map<string, Market>): void {
+    this.netWorthHistory.push({ day, cash: this.totalCash(), netWorth: this.netWorth(sellMarkets) });
   }
 
   /**
@@ -97,9 +236,42 @@ export class Faction {
     _buyMarkets: Map<string, Market>,
     _sellMarkets: Map<string, Market>,
     _commodities: string[],
-    _closedLocations: ReadonlySet<string> = new Set(),
+    _closedLocations: ReadonlySet<string>,
+    _board: BulletinBoard,
+    _pirateCounts: ReadonlyMap<string, number> = new Map(),
   ): Map<Captain, Directive> {
     return new Map();
+  }
+}
+
+/**
+ * A Faction that accepts Contracts from a BulletinBoard, filtered to the
+ * ContractTypes it declares it can handle (`contractTypes` -- empty means it
+ * never accepts anything, e.g. SoloTrader). `contracts` holds every Contract
+ * this fulfiller has accepted but not yet had fulfilled.
+ */
+export class ContractFulfiller extends Faction {
+  /** Contract types this fulfiller can accept. Empty by default -- a plain ContractFulfiller (like SoloTrader) accepts nothing. */
+  contractTypes: readonly ContractType[] = [];
+
+  /** Contracts accepted by this fulfiller -- see availableContracts/acceptContract. */
+  contracts: Contract[] = [];
+
+  /** Postings on `board` this fulfiller is able to accept, per `contractTypes`. Never includes an already-accepted posting -- a board only ever holds unaccepted ones. */
+  protected availableContracts(board: BulletinBoard): Contract[] {
+    return board.open.filter((c) => this.contractTypes.includes(c.type));
+  }
+
+  /** Accept `contract`: remove it from `board`, stamp this fulfiller as its owner, and add it to `contracts`. */
+  protected acceptContract(board: BulletinBoard, contract: Contract): void {
+    board.remove(contract);
+    contract.fulfiller = this;
+    this.contracts.push(contract);
+  }
+
+  /** Drop contracts this fulfiller has already had fulfilled OR cancelled (its cargo was seized by pirates -- see PirateBrigade.attack) -- called at the top of a servicing pass. */
+  protected pruneFulfilled(): void {
+    this.contracts = this.contracts.filter((c) => !c.fulfilled && !c.cancelled);
   }
 }
 
@@ -107,56 +279,403 @@ export class Faction {
  * A Faction that actively directs its fleet: coordinated routing (every
  * idle transport's best local route is scored and assigned in descending
  * daily-return order, spreading coverage rather than piling onto one
- * route) plus shared capital (inherited from Faction).
+ * route) plus shared capital (inherited from Faction). Also the only kind
+ * of ContractFulfiller that can accept anything by default (`contractTypes`,
+ * emptied on SoloTrader) -- how an accepted contract is weighed against
+ * arbitrage is per-Company, via `contractStrategy` (see ContractStrategy and
+ * directFleet).
  */
-export class Company extends Faction {
+export class Company extends ContractFulfiller {
+  override contractTypes: readonly ContractType[] = ["Commodity"];
+
+  /**
+   * Whether THIS Company prioritises contracts over arbitrage, or weighs the
+   * two by expected profit -- see ContractStrategy and directFleet. A plain
+   * instance field (not shared state), so each Company could in principle run
+   * a different strategy; buildWorld currently starts every Company at the
+   * same default ("compare"), and the UI's toggle pushes a single choice onto
+   * all of them at once, but nothing stops per-Company variation.
+   */
+  contractStrategy: ContractStrategy = "compare";
+
+  /** Backing field for the homeLocation getter -- see it for why this is a getter, not a plain field. */
+  private readonly _homeLocation: string | null;
+
+  /**
+   * The Location this Company's whole fleet is based out of -- every Transport
+   * in it must be compatible with this Location's TerminalTypes (see
+   * validateHomeLocationCompatibility). A getter (like poolsCash/canSmuggle)
+   * so SoloTrader can override it to always report null ("SoloTraders do not
+   * have a home port") regardless of what was passed to the constructor.
+   */
+  get homeLocation(): string | null {
+    return this._homeLocation;
+  }
+
+  constructor(name: string, crew: FleetCrew, startingCash: number = 0.0, homeLocation: string | null = null) {
+    if (homeLocation !== null) {
+      const location = getLocation(homeLocation);
+      if (location === undefined) {
+        throw new Error(`Company '${name}': home Location '${homeLocation}' does not exist.`);
+      }
+      for (const [transport] of crew) {
+        if (!locationSupportsTransport(location, transport)) {
+          throw new Error(
+            `Company '${name}': home Location '${homeLocation}' does not have a TerminalType required by '${transport.name}'.`,
+          );
+        }
+      }
+    }
+    super(name, crew, startingCash);
+    this._homeLocation = homeLocation;
+  }
+
+  /** Throws if `transport` isn't compatible with this Company's home Location -- shared by the constructor (initial fleet) and addTransport (later additions). No-op when homeLocation is null (a SoloTrader, which has none). */
+  private validateHomeLocationCompatibility(transport: Transport): void {
+    if (this._homeLocation === null) return;
+    const location = getLocation(this._homeLocation);
+    if (location === undefined || !locationSupportsTransport(location, transport)) {
+      throw new Error(
+        `Company '${this.name}': home Location '${this._homeLocation}' does not have a TerminalType required by '${transport.name}'.`,
+      );
+    }
+  }
+
+  /**
+   * Same as Faction.addTransport, except: (1) a new Transport incompatible
+   * with this Company's home Location throws, matching the constructor's
+   * check; (2) the new Captain always starts at the Company's home Location
+   * -- the caller-supplied `homeLocation` param is only honored when this
+   * Company has none (a SoloTrader, which overrides homeLocation to null).
+   */
+  override addTransport(transport: Transport, captain: Captain, homeLocation: string, startingCash: number = 0.0): Captain {
+    this.validateHomeLocationCompatibility(transport);
+    return super.addTransport(transport, captain, this._homeLocation ?? homeLocation, startingCash);
+  }
+
   directFleet(
     _day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     commodities: string[],
-    closedLocations: ReadonlySet<string> = new Set(),
+    closedLocations: ReadonlySet<string>,
+    board: BulletinBoard,
+    _pirateCounts: ReadonlyMap<string, number> = new Map(),
   ): Map<Captain, Directive> {
     const idle = this.captains.filter((t) => t.isIdleInPort(closedLocations));
     if (idle.length === 0) return new Map();
 
+    const directives = new Map<Captain, Directive>();
+    const assigned = new Set<Captain>();
+
+    if (this.contractStrategy === "compare") {
+      this.serviceContractsByProfit(
+        idle, assigned, directives, buyMarkets, sellMarkets, commodities, closedLocations, board,
+      );
+    } else {
+      this.claimOpenContracts(board);
+      this.serviceContracts(idle, assigned, directives, buyMarkets, closedLocations);
+    }
+
+    const arbitrageIdle = idle.filter((t) => !assigned.has(t));
+    if (arbitrageIdle.length === 0) return directives;
+
     const candidates: Array<[Captain, TradeDirective]> = [];
-    for (const trader of idle) {
+    for (const trader of arbitrageIdle) {
       const best = trader.findBestLocalRoute(buyMarkets, sellMarkets, commodities, closedLocations);
       if (best !== null) candidates.push([trader, best]);
     }
-    if (candidates.length === 0) return new Map();
+    if (candidates.length === 0) return directives;
 
     candidates.sort((a, b) => b[1].dailyReturnPct - a[1].dailyReturnPct);
 
-    const directives = new Map<Captain, Directive>();
-    const claimedRoutes = new Set<string>();
+    // Multiple ships may share a (commodity, destination) route -- capped by
+    // how much of the destination's deficit is still uncovered, so fleet
+    // coordination scales shipping with actual demand instead of capping
+    // every route at a single ship. The first ship onto a route is always
+    // let through regardless of deficit size, matching the old one-per-day
+    // fallback for routes with no measurable deficit (e.g. fuel depots).
+    const claimedQuantity = new Map<string, number>();
+    const fullRoutes = new Set<string>();
     for (let [trader, best] of candidates) {
       if (directives.has(trader)) continue;
       let routeKey = `${best.commodity}||${best.destination}`;
-      if (claimedRoutes.has(routeKey)) {
+      if (fullRoutes.has(routeKey)) {
         const alt = trader.findBestLocalRoute(
-          buyMarkets, sellMarkets, commodities, closedLocations, new Set(claimedRoutes),
+          buyMarkets, sellMarkets, commodities, closedLocations, new Set(fullRoutes),
         );
         if (alt === null) continue;
         best = alt;
         routeKey = `${best.commodity}||${best.destination}`;
+        if (fullRoutes.has(routeKey)) continue;
       }
+
       directives.set(trader, best);
-      claimedRoutes.add(routeKey);
+      const claimed = (claimedQuantity.get(routeKey) ?? 0) + best.quantity;
+      claimedQuantity.set(routeKey, claimed);
+      if (claimed >= this.remainingDemand(best.commodity, best.destination)) {
+        fullRoutes.add(routeKey);
+      }
     }
     return directives;
+  }
+
+  /**
+   * Accept any still-available Contract off `board`, capped at roughly one
+   * contract's worth of dedicated capacity per ship (`contracts.length <
+   * captains.length`) so a single Company (especially whichever happens to
+   * act first each day) can't monopolize every contract in the world --
+   * leaving the rest for other Companies to pick up.
+   *
+   * No affordability check: the issuing Location pays for the goods
+   * directly (see Captain.executeContractDelivery), so a Company only ever
+   * needs to afford fuel for a delivery it's already accepted -- checked at
+   * departure time, not at accept time.
+   */
+  private claimOpenContracts(board: BulletinBoard): void {
+    this.pruneFulfilled();
+    for (const contract of this.availableContracts(board)) {
+      if (this.contracts.length >= this.captains.length) break;
+      this.acceptContract(board, contract);
+    }
+  }
+
+  /**
+   * Assign idle captains to due, not-already-in-flight contracts before any
+   * arbitrage routing runs. Prefers a captain already sitting at a valid
+   * producer (immediate CONTRACT_DELIVER); otherwise repositions the nearest
+   * available idle captain toward the nearest valid producer, to be handed
+   * the delivery once it arrives (a future day's directFleet call will find
+   * it idle-at-producer and take the first branch).
+   */
+  private serviceContracts(
+    idle: Captain[],
+    assigned: Set<Captain>,
+    directives: Map<Captain, Directive>,
+    buyMarkets: Map<string, Market>,
+    closedLocations: ReadonlySet<string>,
+  ): void {
+    for (const contract of this.contracts) {
+      if (assigned.size >= idle.length) break;
+      if (contract.inFlightCaptain !== null) {
+        // An Inactive transport never recovers (Captain.act's InTransit
+        // branch flips it once and there's no path back) -- so a captain
+        // frozen mid-delivery would otherwise deadlock this contract
+        // forever, since inFlightCaptain !== null blocks any replacement.
+        // Release it so another idle captain can pick up the delivery.
+        if (contract.inFlightCaptain.transport?.status === "Inactive") {
+          contract.inFlightCaptain = null;
+        } else {
+          continue;
+        }
+      }
+      const readyCaptain = idle.find((c) => {
+        if (assigned.has(c)) return false;
+        const market = buyMarkets.get(marketKey(c.location, contract.commodity));
+        return market !== undefined && market.isAvailable;
+      });
+      if (readyCaptain !== undefined) {
+        directives.set(readyCaptain, { action: "CONTRACT_DELIVER", contract });
+        assigned.add(readyCaptain);
+        continue;
+      }
+
+      // Reachability must allow a multi-hop path, not just a direct edge --
+      // otherwise a captain idle somewhere with no DIRECT route to any
+      // producer never gets repositioned at all, and (never moving) never
+      // discovers a route from anywhere else either, permanently starving
+      // the contract. departEmptyTo already executes multi-hop repositions
+      // (its distance/time math is coordinate-based, not edge-based), so
+      // this search just needs to match what it can actually carry out.
+      //
+      // Candidates are ranked by how much of the contract a trip there could
+      // actually deliver (capped at contract.quantity -- once a producer can
+      // fully supply it, more stock on top doesn't matter), THEN by
+      // distance. Pure nearest-first previously let a commodity with few,
+      // geographically scattered producers get stuck repeatedly routing to
+      // the same nearby-but-thin producer instead of a farther one with
+      // ample stock -- every delivery would land far short of
+      // contract.quantity, never letting the destination's stockpile
+      // recover (see Simulation.md's Gold/Silver stockout finding).
+      let best: { captain: Captain; destination: string; deliverable: number; distance: number } | null = null;
+      for (const captain of idle) {
+        if (assigned.has(captain)) continue;
+        for (const market of buyMarkets.values()) {
+          if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
+          if (closedLocations.has(market.locationName)) continue;
+          const path = findShortestPath(captain.location, market.locationName, (r) => captain.transport!.canUseRoute(r));
+          if (path === null) continue;
+          const deliverable = Math.min(captain.transport!.cargoCapacity, contract.quantity, market.availableQuantity);
+          const dist = distanceBetween(captain.location, market.locationName);
+          const better =
+            best === null ||
+            deliverable > best.deliverable ||
+            (deliverable === best.deliverable && dist < best.distance);
+          if (better) {
+            best = { captain, destination: market.locationName, deliverable, distance: dist };
+          }
+        }
+      }
+      if (best !== null) {
+        directives.set(best.captain, { action: "REPOSITION", destination: best.destination });
+        assigned.add(best.captain);
+      }
+    }
+  }
+
+  /**
+   * "compare"-mode servicing: instead of claiming and prioritising contracts,
+   * weigh each contract against the ship's own best arbitrage route and take
+   * whichever earns more per ship-day. Candidate contracts are this Company's
+   * already-claimed unfulfilled ones plus still-open (unclaimed) ones -- but a
+   * still-open contract is only actually claimed at the moment a ship commits
+   * to it, so contracts we never find profitable stay open for other Companies
+   * (and expire / re-tender normally) rather than being hoarded unserviced.
+   */
+  private serviceContractsByProfit(
+    idle: Captain[],
+    assigned: Set<Captain>,
+    directives: Map<Captain, Directive>,
+    buyMarkets: Map<string, Market>,
+    sellMarkets: Map<string, Market>,
+    commodities: string[],
+    closedLocations: ReadonlySet<string>,
+    board: BulletinBoard,
+  ): void {
+    this.pruneFulfilled();
+    const candidateContracts = [...this.contracts, ...this.availableContracts(board)];
+    if (candidateContracts.length === 0) return;
+
+    // The bar each contract must clear: the captain's best arbitrage $/day
+    // (expected net profit over the trip, per day of ship-time). -Infinity
+    // means the captain has no viable arbitrage right now, so any profitable
+    // contract wins.
+    const arbPerDay = new Map<Captain, number>();
+    for (const captain of idle) {
+      const best = captain.findBestLocalRoute(buyMarkets, sellMarkets, commodities, closedLocations);
+      arbPerDay.set(captain, best !== null && best.travelDays > 0 ? best.expectedProfit / best.travelDays : -Infinity);
+    }
+
+    interface Option { captain: Captain; contract: Contract; producer: string; ready: boolean; perDay: number; }
+    const options: Option[] = [];
+    for (const contract of candidateContracts) {
+      if (contract.inFlightCaptain !== null) {
+        // Same Inactive-transport release valve as serviceContracts.
+        if (contract.inFlightCaptain.transport?.status === "Inactive") contract.inFlightCaptain = null;
+        else continue;
+      }
+      for (const captain of idle) {
+        if (assigned.has(captain)) continue;
+        const readyMarket = buyMarkets.get(marketKey(captain.location, contract.commodity));
+        let producer: string | null;
+        let ready = false;
+        if (readyMarket !== undefined && readyMarket.isAvailable && !closedLocations.has(captain.location)) {
+          producer = captain.location;
+          ready = true;
+        } else {
+          producer = this.bestProducer(captain, contract, buyMarkets, closedLocations);
+        }
+        if (producer === null) continue;
+        const perDay = captain.estimateContractProfitPerDay(contract, producer, buyMarkets);
+        if (perDay === null) continue;
+        if (perDay < (arbPerDay.get(captain) ?? -Infinity)) continue; // arbitrage is the better use of this ship
+        options.push({ captain, contract, producer, ready, perDay });
+      }
+    }
+
+    // Assign the most profitable options first, one ship per contract and one
+    // contract per ship.
+    options.sort((a, b) => b.perDay - a.perDay);
+    const usedContracts = new Set<Contract>();
+    for (const opt of options) {
+      if (assigned.has(opt.captain) || usedContracts.has(opt.contract)) continue;
+      if (opt.contract.fulfiller === null) {
+        // Accept now, at commit time -- capped like claimOpenContracts so one
+        // Company can't monopolise every contract.
+        if (this.contracts.length >= this.captains.length) continue;
+        this.acceptContract(board, opt.contract);
+      }
+      directives.set(
+        opt.captain,
+        opt.ready
+          ? { action: "CONTRACT_DELIVER", contract: opt.contract }
+          : { action: "REPOSITION", destination: opt.producer },
+      );
+      assigned.add(opt.captain);
+      usedContracts.add(opt.contract);
+    }
+  }
+
+  /**
+   * Best producer for `captain` to source `contract.commodity` from: reachable,
+   * ranked by how much of the contract a trip there could deliver (capped at
+   * the contract quantity) then by distance -- the same ranking serviceContracts
+   * uses, but resolved per-captain for serviceContractsByProfit.
+   */
+  private bestProducer(
+    captain: Captain,
+    contract: Contract,
+    buyMarkets: Map<string, Market>,
+    closedLocations: ReadonlySet<string>,
+  ): string | null {
+    let best: { destination: string; deliverable: number; distance: number } | null = null;
+    for (const market of buyMarkets.values()) {
+      if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
+      if (closedLocations.has(market.locationName)) continue;
+      const path = findShortestPath(captain.location, market.locationName, (r) => captain.transport!.canUseRoute(r));
+      if (path === null) continue;
+      const deliverable = Math.min(captain.transport!.cargoCapacity, contract.quantity, market.availableQuantity);
+      const dist = distanceBetween(captain.location, market.locationName);
+      const better =
+        best === null ||
+        deliverable > best.deliverable ||
+        (deliverable === best.deliverable && dist < best.distance);
+      if (better) best = { destination: market.locationName, deliverable, distance: dist };
+    }
+    return best === null ? null : best.destination;
+  }
+
+  /** Deficit still open at a destination for a commodity -- floors at 0 so a destination already at/above its minimum doesn't block the first ship either. */
+  private remainingDemand(commodity: string, destination: string): number {
+    const location = getLocation(destination);
+    if (location === undefined) return 0;
+    const deficit = (location.minStockpiles[commodity] ?? 0) - (location.stockpiles[commodity] ?? 0);
+    return Math.max(deficit, 0);
   }
 }
 
 /**
  * A Company that still gets coordinated routing but does NOT pool its
  * fleet's cash into one shared balance -- each captain keeps their own
- * private balance.
+ * private balance. Also opts out of the Contract system entirely, via an
+ * empty `contractTypes` -- `availableContracts` then always returns nothing,
+ * so a SoloTrader never accepts a posting regardless of what's on the board.
+ * In exchange for being locked out of Contracts, it's the only Faction that
+ * can smuggle (`canSmuggle`) -- an independent operator with no corporate
+ * oversight is willing to run a blockade a Company wouldn't touch.
  */
 export class SoloTrader extends Company {
+  constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
+    if (crew.length !== 1) {
+      throw new Error(`SoloTrader '${name}' must have exactly one Transport/Captain, got ${crew.length}`);
+    }
+    super(name, crew, startingCash, null);
+  }
+
   override get poolsCash(): boolean {
     return false;
+  }
+
+  /** SoloTraders do not have a home port, regardless of what Company's constructor stored -- always null. */
+  override get homeLocation(): string | null {
+    return null;
+  }
+
+  override contractTypes: readonly ContractType[] = [];
+
+  /** SoloTrader's one distinctive edge over a plain Company: it'll run a closed port's blockade instead of just waiting -- see Captain.maybeSmuggle. */
+  override get canSmuggle(): boolean {
+    return true;
   }
 }
 
@@ -173,8 +692,19 @@ export class PirateBrigade extends Faction {
   carousingIncreaseByDay: number;
   maxCarousing: number;
   policeFleets: PoliceFleet[];
-  private cachedRankedLocations: string[] | null = null;
+  /** Fraction of tracked Company/SoloTrader ship-presence at each Location, as of the last scan -- see directFleet's density-matching reposition logic. */
+  private cachedTargetDensity: Map<string, number> | null = null;
   private lastScanDay: number | null = null;
+  /**
+   * Per-day attack bookkeeping, reset at the top of every directFleet call
+   * (which always runs before any captain's own act() -- see World.runDay).
+   * Shared between directFleet's own scan-based attack loop and
+   * maybeAttackOnArrival's same-day arrival-triggered attack, so a given
+   * pirate/victim pair only ever attacks/gets attacked once per day
+   * regardless of which of the two paths triggers it.
+   */
+  private attackersUsedToday = new Set<Captain>();
+  private victimsHitToday = new Set<Captain>();
 
   constructor(
     name: string,
@@ -183,7 +713,7 @@ export class PirateBrigade extends Faction {
     startingCash: number = 0.0,
     laziness: number = 1,
     raidFraction: number = 0.1,
-    maxCarousingToAttack: number = 50.0,
+    maxCarousingToAttack: number = 100.0,
     carousingCostPerCrew: number = 10.0,
     carousingIncreaseByDay: number = 10.0,
     maxCarousing: number = 100.0,
@@ -206,6 +736,14 @@ export class PirateBrigade extends Faction {
     this.policeFleets = policeFleets ?? [];
   }
 
+  /** Same Ship-only restriction as the constructor -- see its check above. */
+  override addTransport(transport: Transport, captain: Captain, homeLocation: string, startingCash: number = 0.0): Captain {
+    if (!(transport instanceof Ship)) {
+      throw new Error(`PirateBrigade '${this.name}' can only crew Ships -- got a non-Ship Transport for captain '${captain.name}'`);
+    }
+    return super.addTransport(transport, captain, homeLocation, startingCash);
+  }
+
   private targetShipCountsByLocation(): Map<string, number> {
     const counts = new Map<string, number>();
     for (const company of this.targets) {
@@ -214,6 +752,17 @@ export class PirateBrigade extends Faction {
         if (loc === null) continue;
         counts.set(loc, (counts.get(loc) ?? 0) + 1);
       }
+    }
+    return counts;
+  }
+
+  /** This brigade's own current distribution across Locations, in the same AtLocation-or-heading-toward convention as targetShipCountsByLocation -- what directFleet compares against the target density to find under-covered spots. */
+  private pirateShipCountsByLocation(): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const captain of this.captains) {
+      const loc = captain.status === "AtLocation" ? captain.location : captain.destination;
+      if (loc === null) continue;
+      counts.set(loc, (counts.get(loc) ?? 0) + 1);
     }
     return counts;
   }
@@ -227,16 +776,59 @@ export class PirateBrigade extends Faction {
     return false;
   }
 
-  private coLocatedTarget(pirateCaptain: Captain, alreadyAttacked: ReadonlySet<Captain>): Captain | null {
-    if (pirateCaptain.carousing > this.maxCarousingToAttack) return null;
-    if (this.policePresentAt(pirateCaptain.location)) return null;
+  /** Whether `pirateCaptain` is fit to raid right now -- independent of its own InTransit/AtLocation status (see coLocatedTarget / maybeAttackOnArrival). */
+  private isEligibleAttacker(pirateCaptain: Captain): boolean {
+    return (
+      pirateCaptain.groundedDaysRemaining === 0 &&
+      pirateCaptain.carousing <= this.maxCarousingToAttack &&
+      !this.policePresentAt(pirateCaptain.location)
+    );
+  }
+
+  /**
+   * A still-available target Company/SoloTrader captain sharing `pirateCaptain`'s
+   * Location -- matched purely on the `location` field, regardless of either
+   * side's InTransit/AtLocation status. A ship mid-multi-leg-refuel sits at an
+   * intermediate node with `location` updated but status still "InTransit"
+   * (see Captain.arrive), and a ship that departed/arrived earlier today keeps
+   * its pre-move `location` until its next arrival -- both are exposed here on
+   * purpose, matching a raider that can strike anyone currently sitting at its
+   * anchorage, moving or not.
+   */
+  private coLocatedTarget(pirateCaptain: Captain): Captain | null {
+    if (!this.isEligibleAttacker(pirateCaptain)) return null;
     for (const company of this.targets) {
       for (const captain of company.captains) {
-        if (alreadyAttacked.has(captain)) continue;
-        if (captain.status === "AtLocation" && captain.location === pirateCaptain.location) return captain;
+        if (this.victimsHitToday.has(captain)) continue;
+        if (captain.location === pirateCaptain.location) return captain;
       }
     }
     return null;
+  }
+
+  /**
+   * Called by Captain.act() the instant a tracked Company/SoloTrader captain
+   * arrives somewhere, BEFORE it sells/delivers its cargo that same act()
+   * call -- directFleet's own scan runs once per day, before any captain's
+   * act(), so it can never catch a ship that arrives and immediately sells
+   * within that same day. This gives a co-located, still-available pirate a
+   * shot at it right then instead. Shares attackersUsedToday/victimsHitToday
+   * with directFleet's scan so a pair never attacks/gets attacked twice in
+   * one day regardless of which path fires.
+   */
+  maybeAttackOnArrival(day: number, victimCaptain: Captain, sellMarkets: Map<string, Market>): void {
+    if (!(victimCaptain.company instanceof Company) || !this.targets.includes(victimCaptain.company)) return;
+    if (this.victimsHitToday.has(victimCaptain)) return;
+    for (const pirateCaptain of this.captains) {
+      if (this.attackersUsedToday.has(pirateCaptain)) continue;
+      if (pirateCaptain.location !== victimCaptain.location) continue;
+      if (!this.isEligibleAttacker(pirateCaptain)) continue;
+      this.attack(day, pirateCaptain, victimCaptain, sellMarkets);
+      this.attackersUsedToday.add(pirateCaptain);
+      this.victimsHitToday.add(victimCaptain);
+      pirateCaptain.groundedDaysRemaining = Math.max(pirateCaptain.groundedDaysRemaining, 1);
+      return;
+    }
   }
 
   private applyDailyCarousing(captain: Captain): void {
@@ -256,6 +848,7 @@ export class PirateBrigade extends Faction {
 
     let seizedCommodity: string | null = null;
     let seizedQuantity = 0.0;
+    let destroyedQuantity = 0.0;
     let fencePrice: number | null = null;
     let fencedProceeds = 0.0;
     if (victimCaptain.cargo !== null) {
@@ -266,9 +859,37 @@ export class PirateBrigade extends Faction {
       const fenceFraction = location !== undefined ? location.fenceFraction : 0.5;
       seizedCommodity = cargo.commodity;
       seizedQuantity = cargo.quantity;
+
+      // A raid is messy -- some of the haul gets damaged, dumped, or lost in
+      // the scuffle before it ever reaches the fence, rolled fresh per
+      // attack (see MIN/MAX_CARGO_DESTRUCTION_FRACTION). Only what survives
+      // gets fenced; the rest is gone regardless of fenceFraction.
+      const destructionFraction = randUniform(MIN_CARGO_DESTRUCTION_FRACTION, MAX_CARGO_DESTRUCTION_FRACTION);
+      destroyedQuantity = round2(cargo.quantity * destructionFraction);
+      const fenceableQuantity = cargo.quantity - destroyedQuantity;
+
       fencePrice = round2(unitValue * fenceFraction);
-      fencedProceeds = round2(fencePrice * seizedQuantity);
+      fencedProceeds = round2(fencePrice * fenceableQuantity);
       victimCaptain.cargo = null;
+
+      // The fence doesn't just pay cash for the surviving goods -- it takes
+      // physical possession, so they re-enter circulation at wherever the
+      // pirate happens to be docked, rather than vanishing from the economy
+      // (the destroyed portion above, unlike this, is gone for good).
+      if (location !== undefined && fenceableQuantity > 0) {
+        location.stockpiles[cargo.commodity] = (location.stockpiles[cargo.commodity] ?? 0) + fenceableQuantity;
+      }
+
+      // Contract-bound cargo never reaches its destination either way (fenced
+      // or destroyed), so the delivery is cancelled outright -- the fulfiller
+      // is never paid (fulfillContract only pays out on actual arrival, which
+      // can no longer happen now that cargo is null) and the pair becomes
+      // eligible for a fresh tender again (see World's activeContractKeys /
+      // ContractFulfiller.pruneFulfilled).
+      if (cargo.contract !== null) {
+        cargo.contract.cancelled = true;
+        cargo.contract.inFlightCaptain = null;
+      }
     }
 
     const totalGain = round2(stolenCash + fencedProceeds);
@@ -295,7 +916,7 @@ export class PirateBrigade extends Faction {
     });
     let detail = stolenCash > 0 ? `-$${stolenCash.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cash` : "cash pooled -- untouchable";
     if (seizedCommodity !== null) {
-      detail += `, ${seizedQuantity.toFixed(1)} ${seizedCommodity} seized and fenced for ${fencedProceeds.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      detail += `, ${seizedQuantity.toFixed(1)} ${seizedCommodity} seized (${destroyedQuantity.toFixed(1)} destroyed) and fenced for ${fencedProceeds.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     victimCaptain.agentEventLog.push({
       day,
@@ -311,8 +932,13 @@ export class PirateBrigade extends Faction {
     _buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     _commodities: string[],
-    closedLocations: ReadonlySet<string> = new Set(),
+    closedLocations: ReadonlySet<string>,
+    _board: BulletinBoard,
+    _pirateCounts: ReadonlyMap<string, number> = new Map(),
   ): Map<Captain, Directive> {
+    this.attackersUsedToday = new Set();
+    this.victimsHitToday = new Set();
+
     for (const captain of this.captains) {
       if (captain.status === "AtLocation") this.applyDailyCarousing(captain);
     }
@@ -320,32 +946,57 @@ export class PirateBrigade extends Faction {
     const needsScan = this.lastScanDay === null || day - this.lastScanDay >= this.laziness;
     if (needsScan) {
       const targetCounts = this.targetShipCountsByLocation();
-      this.cachedRankedLocations = [...targetCounts.keys()].sort(
-        (a, b) => (targetCounts.get(b) ?? 0) - (targetCounts.get(a) ?? 0),
-      );
+      const totalTargets = [...targetCounts.values()].reduce((a, b) => a + b, 0);
+      this.cachedTargetDensity = totalTargets > 0
+        ? new Map([...targetCounts.entries()].map(([loc, count]) => [loc, count / totalTargets]))
+        : new Map();
       this.lastScanDay = day;
     }
 
-    const rankedLocations = this.cachedRankedLocations;
-    if (rankedLocations === null || rankedLocations.length === 0) return new Map();
+    const targetDensity = this.cachedTargetDensity;
+    if (targetDensity === null || targetDensity.size === 0) return new Map();
+
+    // Tracks this brigade's own distribution as directives are handed out
+    // below, so multiple idle ships assigned within the same day's pass see
+    // each other's moves and spread out, rather than every one of them
+    // independently piling onto whichever single spot looked most
+    // under-covered at the start of the day.
+    const pirateCounts = this.pirateShipCountsByLocation();
+    const totalPirates = this.captains.length;
 
     const directives = new Map<Captain, Directive>();
-    const alreadyAttacked = new Set<Captain>();
     for (const captain of this.captains) {
-      if (!captain.isIdleInPort(closedLocations)) continue;
-
-      const victim = this.coLocatedTarget(captain, alreadyAttacked);
+      // Attack eligibility no longer requires AtLocation (see
+      // isEligibleAttacker/coLocatedTarget) -- checked for every captain,
+      // not just idle ones, so a ship mid-multi-leg-refuel sitting at an
+      // intermediate node can still ambush someone there. Only the
+      // reposition assignment below stays gated to idle-in-port captains.
+      const victim = this.coLocatedTarget(captain);
       if (victim !== null) {
         this.attack(day, captain, victim, sellMarkets);
-        alreadyAttacked.add(victim);
+        this.attackersUsedToday.add(captain);
+        this.victimsHitToday.add(victim);
         captain.groundedDaysRemaining = Math.max(captain.groundedDaysRemaining, 1);
         continue;
       }
 
-      for (const loc of rankedLocations) {
+      if (!captain.isIdleInPort(closedLocations)) continue;
+
+      // Rank every Location with Company/SoloTrader presence by how far
+      // short of its target-density share this brigade's OWN ship count
+      // there currently falls (desired - current), most-deficient first --
+      // matching pirate density to target density instead of the old
+      // winner-take-all chase of a single busiest hotspot.
+      const ranked = [...targetDensity.entries()]
+        .map(([loc, density]) => ({ loc, deficit: density * totalPirates - (pirateCounts.get(loc) ?? 0) }))
+        .sort((a, b) => b.deficit - a.deficit);
+
+      for (const { loc } of ranked) {
         if (loc === captain.location || closedLocations.has(loc)) continue;
-        if (!captain.transport!.canUseRoute(getRoute(captain.location, loc))) continue;
+        if (!getRoutes(captain.location, loc).some((r) => captain.transport!.canUseRoute(r))) continue;
         directives.set(captain, { action: "REPOSITION", destination: loc });
+        pirateCounts.set(loc, (pirateCounts.get(loc) ?? 0) + 1);
+        pirateCounts.set(captain.location, Math.max(0, (pirateCounts.get(captain.location) ?? 0) - 1));
         break;
       }
     }
@@ -386,7 +1037,7 @@ export class PoliceFleet extends Faction {
       (loc) =>
         loc !== captain.location &&
         !closedLocations.has(loc) &&
-        captain.transport!.canUseRoute(getRoute(captain.location, loc)),
+        getRoutes(captain.location, loc).some((r) => captain.transport!.canUseRoute(r)),
     );
     if (candidates.length === 0) return null;
     return randChoice(candidates);
@@ -397,7 +1048,9 @@ export class PoliceFleet extends Faction {
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     _commodities: string[],
-    closedLocations: ReadonlySet<string> = new Set(),
+    closedLocations: ReadonlySet<string>,
+    _board: BulletinBoard,
+    _pirateCounts: ReadonlyMap<string, number> = new Map(),
   ): Map<Captain, Directive> {
     const allLocations = new Set<string>();
     for (const m of buyMarkets.values()) allLocations.add(m.locationName);
