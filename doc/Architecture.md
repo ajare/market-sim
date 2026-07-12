@@ -63,10 +63,12 @@ and the `src/state/` + `src/components/` UI layer sit on top of everything.
 | Module | Responsibility |
 | --- | --- |
 | `location.ts` | `Location`, `TerminalType` -- a trading hub's produce/consume/stockpile model, plus its `cash` pool and Contract-tendering threshold; `ContractIssuer`, the base class `Location` posts Contracts through |
-| `politicalEntity.ts` | `PoliticalEntity` -- groups Locations and shares one cash balance among them (§3.6) |
+| `politicalEntity.ts` | `PoliticalEntity` -- groups Locations, shares one cash balance among them (§3.6), and carries a `nationality` (§8.4) |
 | `commodity.ts` | `Commodity` -- per-commodity base price/sensitivity/deficit-and-excess-boost/event-templates, and `buildCommodities()` |
-| `worldData.ts` | The commodity roster (`COMMODITIES`) and procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `getLocation`, `distanceBetween`, `travelDaysBetween`, `generateLocations`, `generateCoordinates`, `assignPoliticalEntities`) |
-| `routes.ts` | `Route`/`RouteType`, the procedurally generated route network (`ROUTES`, `generateRoutes`, `getRoute`) |
+| `distance.ts` | The flat (Euclidean) vs. globe (great-circle) distance model and its `DistanceConfig` (§4.2) |
+| `nationality.ts` | `Nationality` and `NATIONALITY_POOLS` -- the map from each nationality to its person/ship/company name pools (§8.4) |
+| `worldData.ts` | The commodity roster (`COMMODITIES`), procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `getLocation`, `distanceBetween`, `travelDaysBetween`, `generateLocations`, `generateCoordinates`, `assignPoliticalEntities`), and the active `DISTANCE_CONFIG` (`setDistanceConfig`, §4.2) |
+| `routes.ts` | `Route`/`RouteType`, the route network `ROUTES: Map<string, Route[]>` (multiple routes of different types per pair, §4.1), `generateRoutes`, `getRoutes`, `getRoute`, `addRouteToNetwork` |
 | `pathfinding.ts` | Dijkstra shortest-path routing over the Route network, restricted per-Transport |
 | `events.ts` | `Event` base class and its four kinds: `MarketEvent`, `TransportEvent`, `CompanyEvent`, `LocationClosure`, plus every template list |
 | `markets.ts` | `Market` -- stockpile-deviation pricing and the day-to-day price update |
@@ -82,10 +84,18 @@ and the `src/state/` + `src/components/` UI layer sit on top of everything.
 | `eventOverlay.ts` | Maps `World.eventLog` entries onto a `(location, commodity)` market, for chart overlay markers |
 | `rng.ts` / `simRandom.ts` | `Rng`, a seeded PRNG, and the simulation's own shared reseedable stream |
 
-`buildWorld()` (called once by `useSimStore`'s `reset()`) assembles a `World`
-procedurally -- there is no CSV- or file-driven world-building path in this
-implementation; every knob is a plain function option (`BuildWorldOptions`,
-see §11).
+There are two world-building entry points on top of the engine:
+
+- `buildWorld()` (`buildWorld.ts`, called once by `useSimStore`'s `reset()`)
+  assembles the default `World` procedurally; every knob is a plain function
+  option (`BuildWorldOptions`, see §11).
+- `buildWorldFromJson()` (`buildWorldFromJson.ts`) builds a `World` from the
+  single JSON document the **World editor** (`editor/`, a separate Vite app)
+  exports, and synthesizes a fleet up to the required ship count so a
+  lightly-authored world still runs a full economy (§11.2).
+
+There is no CSV-driven world-building path; a world is either the procedural
+default or an editor-authored JSON.
 
 ### Mutable module-level world state
 
@@ -390,9 +400,11 @@ Geography (`generateCoordinates`) scatters every location across a
 synthetic 3000x3000 plane using a *different* independent `Rng` stream
 (`seed + 1`), rejecting candidates within 200 units of an already-placed
 point (up to 1000 attempts) so no two locations collapse to the same spot.
-`distanceBetween` is Euclidean distance over these coordinates;
-`travelDaysBetween` converts that to whole days at a given speed
-(`ceil(distance / speed)`, minimum 1 day even for the same location).
+`distanceBetween` measures distance over these coordinates under the active
+distance mode (§4.2) -- Euclidean by default (the procedural world is always
+flat), great-circle in a globe-mode authored world; `travelDaysBetween`
+converts that to whole days at a given speed (`ceil(distance / speed)`,
+minimum 1 day even for the same location).
 
 ### 3.6 `PoliticalEntity`: proximity-grouped Locations sharing one cash balance
 
@@ -407,6 +419,12 @@ involved. From then on, every member Location's `cash` getter/setter
 starting balance stops mattering the moment it joins. Existing code that
 reads/writes `location.cash` (trade execution in `captain.ts`,
 `needsContractRestock`'s broke check, ...) needed no changes at all.
+
+A `PoliticalEntity` also carries a **`nationality`** (one of English/French/
+Spanish/Dutch/Portuguese, default English) -- purely a naming input: it seeds
+the ship/captain names generated for its affiliated Companies when a fleet is
+synthesized on JSON load (§8.4, §11.2). The procedural world's entities keep the
+default; an editor-authored world sets it per entity.
 
 `worldData.ts`'s
 `assignPoliticalEntities(locations, seed, targetLocationsPerPoliticalEntity)`
@@ -428,21 +446,58 @@ the resulting `PoliticalEntity[]` as `BuiltWorld.politicalEntities`.
 ### 4.1 Routes (`routes.ts`)
 
 A `Route` is an undirected, typed connection between two locations
-(`RouteType`: `Sea` / `Land` / `Air`), with `distance` derived once at
-construction from `distanceBetween` -- it never invents a second source of
-geographic truth. `ROUTE_TERMINAL_COMPATIBILITY` maps each `RouteType` to
-the `TerminalType`(s) both endpoints must share at least one of (`Sea`
-needs `Port` or `Platform`; `Land` needs `Wagon yard`; `Air` needs
-`Airport`). `generateRoutes` builds one `Route` for every location pair
-sharing a compatible terminal type, picking randomly among the compatible
-types when more than one applies (a third independent `Rng` stream,
+(`RouteType`: `Sea` / `Land` / `Air` / `Space` / `Road` / `Railroad`), with
+`distance` measured once at construction under the active distance mode
+(§4.2) as the arc length along its (possibly Bezier-curved) path -- it never
+invents a second source of geographic truth. `ROUTE_TERMINAL_COMPATIBILITY`
+maps each `RouteType` to the `TerminalType`(s) both endpoints must share at
+least one of (`Sea` needs `Port` or `Platform`; `Land` needs `Wagon yard`;
+`Air` needs `Airport`; `Space` a `Spaceport`; `Road` a `TransitDepot`;
+`Railroad` a `Station`).
+
+**A location pair can hold more than one Route, of different types.** The
+network is a `Map<string, Route[]>` keyed by `routeKey(a, b)` -- a canonical,
+order-independent string (`[a, b].sort().join("||")`) -- whose value is the
+list of routes connecting that pair, at most one per `RouteType`.
+`addRouteToNetwork` groups a Route by its pair and drops a duplicate type.
+`getRoutes(a, b)` returns every route between the pair (in either argument
+order); `getRoute(a, b)` returns the single shortest one, for display. So a
+Sea route and an Air route between the same two ports coexist, and
+pathfinding (§4.3) treats each as its own edge -- weighing them per whichever
+Transport is planning. `generateRoutes` still builds just one Route per pair
+(randomly picking among compatible types, a third independent `Rng` stream,
 `seed + 2`), optionally trimming pairs farther apart than `maxDistance *
 ROUTE_TYPE_DISTANCE_SCALE[routeType]` (Air gets the full cap, Sea 80%,
-Land 50%). Routes are stored in a `Map<string, Route>` keyed by
-`routeKey(a, b)` -- a canonical, order-independent string (`[a, b].sort().join("||")`).
-`getRoute(a, b)` looks up the direct Route regardless of argument order.
+Land 50%); multiple routes per pair arise from editor-authored worlds.
 
-### 4.2 Pathfinding (`pathfinding.ts`)
+### 4.2 Distance modes: flat plane vs. globe (`distance.ts`)
+
+Every distance in the simulation -- `distanceBetween`, each `Route.distance`,
+and route-generation pruning -- is measured under a single module-level
+`DistanceConfig` held in `worldData.ts` (`setDistanceConfig`/
+`getDistanceConfig`). Two modes:
+
+- **`flat`** (the default): the world is a plane and distance is the plain
+  Euclidean (Cartesian) distance between world coordinates. With the default
+  `worldScale = 1`, `distanceBetween` is exactly `Math.hypot` -- byte-for-byte
+  the pre-existing behavior, so the procedural world is unchanged.
+- **`globe`**: the world is the surface of a sphere. Each position's
+  normalized `[0,1]` fraction of the map is read as a longitude/latitude
+  (over a configurable `lonSpan`, the same degrees-per-fraction on both axes
+  so a square world stays undistorted, clamped to valid lon/lat), and
+  distance is the great-circle distance `radius × centralAngle` (haversine) --
+  in the same world-size units as the flat distance, since `radius` is in
+  world units. A curved Route's length sums the great-circle distance between
+  its sampled curve points, the spherical analog of the flat arc length.
+
+`buildWorld` resets the config to `flat` at the start (so a prior JSON build
+can't leak globe mode into the procedural world); `buildWorldFromJson`
+installs the mode/radius/lonSpan/worldScale the authored world specifies
+(§11.2) before building any Routes, since a Route measures its length under
+the active mode at construction. The editor mirrors this math in
+`editor/src/distance.ts` so authored distances match what the sim runs.
+
+### 4.3 Pathfinding (`pathfinding.ts`)
 
 A hand-rolled Dijkstra (with its own binary min-heap, not a library),
 weighted by `Route.distance`, restricted to whichever edges a `canUseRoute`
@@ -891,6 +946,22 @@ shipped default world has no pirates and no police at all. Both classes
 remain fully implemented and exercised directly by unit tests (see §12),
 available for a future world-building path that wants raiding.
 
+### 8.4 Nationalities and name generation (`nationality.ts`, `names.ts`, `shipNames.ts`, `companyNames.ts`)
+
+Five nationalities -- English, French, Spanish, Dutch, Portuguese -- each
+carry three name pools: captain names (`names.ts`, `randomName` drawing a male
+first name `MALE_FIRST_NAME_FRACTION = 75%` of the time), ship names
+(`shipNames.ts`), and chartered-company names (`companyNames.ts`, a
+form-x-subject template like *"Real Compañía de Comercio de {subject}"*).
+`nationality.ts`'s `NATIONALITY_POOLS: Record<Nationality, …>` maps each
+nationality to its trio of pools, and `randomNationality(rng)` draws one at
+random. A `PoliticalEntity` carries a `nationality` (§3.6); when a fleet is
+synthesized for a loaded JSON world (§11.2), each generated ship/captain in a
+Company draws from that Company's PoliticalEntity's nationality, and an
+Independent faction from a seeded-random one. The procedural `buildWorld`
+names its ships/captains from a single fixed pool and doesn't consult this
+per-entity machinery.
+
 ## 9. Contracts: location-funded supply orders, the BulletinBoard, and issuer/fulfiller roles
 
 `contracts.ts` implements a **Contract**: a one-shot supply order -- "deliver
@@ -983,7 +1054,7 @@ MAX_LOCATIONS] = [20, 50]` (throws otherwise -- calibrated in
 `Simulation.md`, since fewer locations make the stockpile-ratio target
 structurally unreachable regardless of fleet size), builds one `Market` per
 `(location, commodity, side)` combination plus the unconditional Fuel
-market (§3.3-3.4), primes the pathfinding cache (§4.2), auto-creates the
+market (§3.3-3.4), primes the pathfinding cache (§4.3), auto-creates the
 `PoliceFleet` (§8.3) if `numPoliceShips > 0`, and flattens every Captain
 (independent traders plus every Faction's fleet) into `captains`.
 
@@ -1052,7 +1123,12 @@ and a computed `contracts` getter (every board posting plus every
 structured data straight off `World`/`Captain`/`Location`/`Market`/
 `Contract` objects rather than a pre-built report shape.
 
-## 11. Building a world (`buildWorld.ts`)
+## 11. Building a world
+
+A world is built one of two ways: the procedural default (§11.1) or an
+editor-authored JSON document loaded and fleshed out at load time (§11.2).
+
+### 11.1 Procedural default (`buildWorld.ts`)
 
 `buildWorld(maxRouteDistance = 3000, options: BuildWorldOptions = {})`
 assembles a full `World` plus its Factions, procedurally, without running
@@ -1076,8 +1152,8 @@ buildWorld(3000, {
 ```
 
 Omitting `options` entirely reproduces the default world byte-for-byte.
-There is no CSV- or file-driven alternative -- every knob above is the whole
-customization surface.
+Every knob above is the whole procedural customization surface; the only
+non-procedural way to build a world is an editor-authored JSON (§11.2).
 
 For the default world: 33 locations (30 hubs + 3 fuel depots) at 5
 ships/location targets a 165-ship fleet; `shipsPerCompany` (5) plus the 20%
@@ -1097,6 +1173,53 @@ calibrated via seed-averaged sweeps against the stockpile-vs-minimum ratio
 target -- see `Simulation.md` for the full tuning history, and never retune
 off a single run (the metric carries meaningful Monte-Carlo noise; `npm run
 sweep` exists specifically to average it out over many seeds).
+
+### 11.2 From editor JSON (`buildWorldFromJson.ts`)
+
+The **World editor** (`editor/`, a separate Vite + React app -- see §17)
+lets you author a world visually and export it as a single JSON document:
+world scale, distance mode/radius/lon-span, PoliticalEntities (each with a
+`nationality`), Locations (world coordinates, terminals, produce/consume
+maps), Commodities, Companies (name, starting funds, affiliation, and a fleet
+of transport/captain pairs), and Routes (with control points). `parseWorldJson`
+on the editor side and `buildWorldFromJson` on the sim side are the two ends
+of that pipe. `buildWorldFromJson`:
+
+1. Registers the authored commodity roster, builds the Locations and their
+   coordinate map (`setGeography`), then installs the world's distance mode
+   (`setDistanceConfig`, §4.2) **before** building Routes -- since each Route
+   measures its length under the active mode at construction.
+2. Builds the Route network with `addRouteToNetwork`, so a pair authored with
+   several routes of different types keeps them all (§4.1).
+3. Groups Locations into PoliticalEntities (carrying each entity's
+   `nationality`), and builds the authored Companies/SoloTraders, wiring each
+   faction's `politicalEntity` affiliation.
+4. **Synthesizes a fleet** up to the required ship count (below).
+5. Assembles the `World` (with `numPirateShips: 0`, `numPoliceShips: 0`).
+
+**Fleet synthesis.** An authored world usually defines only a handful of
+ships, far short of a healthy economy. So after building the authored
+factions, the loader sizes the fleet up to `required = round(locations.length
+* DEFAULT_TARGET_SHIPS_PER_LOCATION)` (the same calibrated 5-ships/location
+minimum §11.1 targets). If the world already has at least `required` ships,
+nothing is added. Otherwise, with `remainder = required - existingShips`:
+
+- `newSolo = min(remainder, round(0.2 * required))` new **Independent
+  SoloTraders** (1 ship each) are created -- so about 20% of the required
+  fleet is SoloTraders.
+- The rest (`remainder - newSolo`) is distributed **round-robin across the
+  companies defined in the JSON** (bulking up even a 1-ship company into a
+  multi-ship `Company`, topping up its cash by `$10,000` per ship). Only if
+  the JSON defines *no* companies at all do those ships become SoloTraders
+  too.
+
+Generated ships and captains draw their names from the owning Company's
+PoliticalEntity **nationality** (§8.4) -- or, for an Independent faction, a
+seeded-random nationality drawn once per faction. All synthesis runs off a
+fixed seed (`Rng(4242)`), so a given World JSON always yields the same
+made-up fleet. Synthesized ships are sea `Ship`s (matching §11.1's merchant
+default); in a non-sea authored world they can't use any route and simply
+idle.
 
 ## 12. Tests
 
@@ -1473,3 +1596,39 @@ The *magnitude* of each shock lives in its template list:
   still get a direct Route of a given type. A smaller cap (or a smaller
   Land scale) prunes the network to a denser web of shorter hops,
   forcing more multi-hop Dijkstra routing.
+
+## 17. The World editor (`editor/`)
+
+`editor/` is a standalone Vite + React + Zustand app (package `editor`,
+build/run with its own `npm run dev` / `npm run build` from inside the
+folder) for authoring a world visually rather than procedurally. It is a
+**separate build from the simulation** and cannot import from `src/`, so any
+sim-side logic it needs is kept as a standalone copy under `editor/src/`
+(e.g. `nameGenerators.ts` mirrors `names.ts`/`shipNames.ts`/`companyNames.ts`;
+`distance.ts` mirrors `src/sim/distance.ts`). Keep the two copies in step.
+
+What it authors:
+
+- **Locations**: click the canvas to place one (a popup picks its owning
+  PoliticalEntity, or cancels), drag to move, edit name (with a nationality-
+  themed random-name generator), coordinates, fuel price, terminal types, and
+  produce/consume commodity maps.
+- **Routes**: shift-drag pin-to-pin to connect two Locations; shift-drag on a
+  route to add Bezier control points. A header **auto-connect Sea routes**
+  action bulk-connects sea-capable ports within an editable max distance,
+  skipping a pair whose direct line passes near a third port ("detour
+  distance") -- and will add a Sea route even where a route of another type
+  already exists (the sim keeps one route per type per pair, §4.1).
+- **Commodities / Companies / PoliticalEntities**: define the roster; generate
+  a Company (name, captains, ships) per nationality; set each PoliticalEntity's
+  **nationality** (§8.4) and type.
+- **World-level**: world scale, and a **flat / globe distance mode** with an
+  editable sphere radius and longitude span (§4.2), whose numbers drive the
+  route-length readouts and the auto-connect thresholds live.
+
+**Export / import.** The whole world round-trips as one JSON document
+(`editor/src/worldJson.ts`, `WORLD_JSON_VERSION`): editor coordinates are
+normalized `[0,1]` and stored as world positions (`× worldScale`) on the way
+out, divided back on the way in; older files load with sensible defaults for
+newer fields (distance mode, entity nationality). That exported JSON is
+exactly what the simulation's `buildWorldFromJson` (§11.2) consumes.

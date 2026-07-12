@@ -21,11 +21,26 @@ Everything below is the TypeScript implementation under `src/sim/`.
 | Change how many locations the world requires overall | `world.ts`'s `MIN_LOCATIONS`/`MAX_LOCATIONS` (`[20, 50]`, throws outside this) |
 | Change the network layout / how far apart locations sit | `worldData.ts`'s `generateCoordinates()` (`minDistance`, `WORLD_GEN_SEED`) |
 | Change how Locations are grouped into PoliticalEntities, or how many per PoliticalEntity | `worldData.ts`'s `assignPoliticalEntities()` (proximity-based grouping, `DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY = 5`) and `buildWorld.ts`'s `BuildWorldOptions.locationsPerPoliticalEntity` |
-| Change what a PoliticalEntity does (it currently only pools its members' cash) | `politicalEntity.ts`'s `PoliticalEntity` class |
-| Build a hand-authored world instead of the procedural one | Construct `Location` objects directly (see `contracts.test.ts`'s `makeLocation` helper) and pass them into `new World({ locations: [...] })` yourself, bypassing `buildWorld()` entirely -- there's no CSV/file-driven loader in this implementation |
+| Change what a PoliticalEntity does (it pools its members' cash and carries a `nationality`) | `politicalEntity.ts`'s `PoliticalEntity` class (`cash`, `nationality`) |
+| Change a PoliticalEntity's nationality (seeds synthesized ship/captain names) | Set it in the editor per entity, or pass it to the `PoliticalEntity` constructor; the five options live in `nationality.ts` (`NATIONALITIES`) |
+| Build a hand-authored world instead of the procedural one | Either construct `Location` objects directly (see `contracts.test.ts`'s `makeLocation` helper) and pass them into `new World({ locations: [...] })`, or author a world in the editor (`editor/`) and load its exported JSON via `buildWorldFromJson()` (`buildWorldFromJson.ts`) -- there is no CSV loader |
+| Change how a loaded JSON world's fleet is synthesized up to the required ship count | `buildWorldFromJson.ts`'s synthesis block (`DEFAULT_TARGET_SHIPS_PER_LOCATION`, the 20% SoloTrader share, `SYNTH_CASH_PER_SHIP`, `SYNTH_FLEET_SEED`) -- Architecture.md §11.2 |
 
 Architecture.md §3.1 (Location model), §3.5 (procedural generation), §3.6
-(`PoliticalEntity`), §10 (World's location-count validation).
+(`PoliticalEntity`), §8.4 (nationalities), §10 (World's location-count
+validation), §11.2 (building from editor JSON + fleet synthesis).
+
+## Routes and distance
+
+| I want to... | Touch this |
+| --- | --- |
+| Change which `TerminalType`s a `RouteType` needs at both ends | `routes.ts`'s `ROUTE_TERMINAL_COMPATIBILITY` |
+| Change how far apart two locations can be and still get a direct route | `routes.ts`'s `ROUTE_TYPE_DISTANCE_SCALE` + `maxRouteDistance` (passed to `generateRoutes`/`buildWorld`) |
+| Allow / inspect multiple routes of different types between one pair | `routes.ts` -- the network is `Map<string, Route[]>`; use `getRoutes(a, b)` (all) or `getRoute(a, b)` (shortest); add with `addRouteToNetwork` (one per type per pair) |
+| Switch a world between flat (Euclidean) and globe (great-circle) distance | `distance.ts` (the model) + `worldData.ts`'s `setDistanceConfig`; set it in the editor, or from JSON via `buildWorldFromJson`. `buildWorld` is always flat |
+
+Architecture.md §4.1 (Routes, multiple-per-pair), §4.2 (distance modes),
+§4.3 (pathfinding).
 
 ## Commodities
 

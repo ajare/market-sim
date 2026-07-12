@@ -4,53 +4,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Use the project's venv interpreter directly (there's no global install):
+This is a TypeScript project built with Vite; use npm from the repo root:
 
 ```
-.venv\Scripts\python.exe -m pytest              # run the full test suite
-.venv\Scripts\python.exe -m pytest -v            # verbose
-.venv\Scripts\python.exe -m pytest tests/test_sim.py::TestFixtureLoading::test_companies_load_with_expected_fleets  # single test
-.venv\Scripts\python.exe main.py                 # run the default 60-day simulation
-.venv\Scripts\python.exe main.py --help          # see CSV-driven world-building flags
+npm test                         # run the full vitest suite (src/sim/__tests__)
+npm test -- distance             # run tests whose file/name matches "distance"
+npm run dev                      # start the Vite dev server for the simulation viewer
+npm run build                    # type-check (tsc -b) and build for production
+npm run lint                     # oxlint
+npm run sweep                    # seed-averaging tuning harness (vitest.sweep.config.ts -> src/sim/analysis.harness.ts)
 ```
 
-`pyproject.toml` sets `testpaths = ["."]`, so pytest auto-discovers `tests/`. There is no lint/build step configured.
+There is no Python in this codebase (the original Python port was deleted; `pyproject.toml` is a leftover). `npm test` auto-discovers `*.test.ts` under `src/`.
 
-### Running a custom world from CSVs
+### Two separate apps in one repo
 
-`main.py` accepts `--commodities-csv`, `--locations-csv`, `--routes-csv`, `--companies-csv`, `--pirate-brigades-csv`, and `--json-report-dir`, each swapping one piece of the default procedurally-generated world for a file-driven one (see `sim/csv_loaders.py` for expected columns, and `tests/fixtures/*.csv` for worked examples). Passing none of them runs the default 30-location procedural world with hand-coded fleets.
+- **Root (`src/`)** — package `web`: the simulation **engine** (`src/sim/`) plus a React + TypeScript **viewer** (`src/App.tsx`, `src/components/`, `src/state/useSimStore.ts`) that wraps a `World` with play/pause/step controls. Build root is the repo root.
+- **`editor/`** — package `editor`: a standalone Vite + React **World editor** for authoring a world visually (place Locations, draw Routes, define Commodities/Companies/PoliticalEntities) and exporting it as a single JSON document. Run with `npm run dev`/`npm run build` **inside `editor/`**.
+
+**The two builds cannot share imports.** Any sim-side logic the editor needs is kept as a standalone copy under `editor/src/` (e.g. `editor/src/nameGenerators.ts` mirrors `src/sim/names.ts`/`shipNames.ts`/`companyNames.ts`; `editor/src/distance.ts` mirrors `src/sim/distance.ts`). When you change one side's copy, keep the other in step — the editor's exported JSON is consumed by the sim's `buildWorldFromJson`.
+
+### Building a world
+
+- **`buildWorld()`** (`src/sim/buildWorld.ts`) — the default procedurally generated 30-location world plus a hand-sized fleet, from fixed seeds. Called once by the viewer's `useSimStore.reset()`. Every knob is a plain function option (`BuildWorldOptions`); there is no CSV/file path.
+- **`buildWorldFromJson()`** (`src/sim/buildWorldFromJson.ts`) — builds a live `World` from the JSON the editor exports. It also **synthesizes a fleet** up to the required ship count (see below), so an authored world with a few companies still runs a full economy.
 
 ## Architecture
 
-This is an agent-based simulation of commodity markets across many locations, connected by a typed route network, traded by profit-seeking `Captain` agents running `Transport`s owned by `Faction`s. The `sim/` package is organized by concern, one module per major entity — read `sim/__init__.py`'s docstring for the module map. The dependency chain runs roughly:
+An agent-based simulation of commodity markets across many `Location`s, connected by a typed `Route` network, traded by profit-seeking `Captain` agents crewing `Transport`s owned by `Faction`s. `src/sim/` is organized one module per concern — `src/sim/index.ts` re-exports the public API and `doc/Architecture.md` is the full design writeup (`doc/World.md` is a task→file map, `doc/Simulation.md` the tuning record). The dependency chain runs roughly:
 
 ```
-world_data (Location, geography) -> routes (Route/RouteType) -> markets (Market)
-  -> transport (Transport/Ship/Train/Plane) -> crew (Crew/Sailor) -> captain (Captain)
-  -> faction (Faction/Company/PirateBrigade) -> world (World, orchestrates everything)
+worldData (Location, geography) + distance -> routes (Route/RouteType) -> markets (Market)
+  -> transport (Transport/Ship/WagonTrain/Plane) -> crew (Crew/Sailor) -> captain (Captain)
+  -> faction (Faction/Company/SoloTrader/PirateBrigade/PoliceFleet) -> world (World)
 ```
 
-`csv_loaders.py` and the root-level `cli.py`/`main.py` sit on top, building a `World` either procedurally or from CSVs.
+`contracts.ts` sits beside `faction.ts`/`captain.ts`; `buildWorld.ts`/`buildWorldFromJson.ts` and the `src/state/` + `src/components/` viewer sit on top.
 
 ### Key relationships
 
-- **Location / Route**: `Location` is a trading hub with per-commodity buy/sell prices and a set of `TerminalType`s (Port/Station/Airport/Platform). `Route` connects two locations with a typed mode (Sea/Railroad/Air); a route is only generated where both ends share a compatible `TerminalType` (`ROUTE_TERMINAL_COMPATIBILITY`). Both are generated procedurally from fixed seeds in `world_data.py`/`routes.py`, using dedicated `random.Random` streams independent of the simulation's own RNG — this keeps the world reproducible across runs regardless of trading randomness.
-- **Transport / Crew / Captain**: `Transport` (see `transport.py`) is pure hardware — cargo capacity, speed, fuel burn, `crew_requirement`, `current_fuel` — decoupled from the agent that operates it. `Crew` (see `crew.py`) is a bare identity (name + transport); `Sailor` is a generic waged `Crew` member; `Captain` subclasses `Crew` and adds all trading-agent behavior (strategy, cash, route planning, buy/sell execution). A `Transport`'s `.crew` list is filled by `Faction.__init__`, not by `Transport` itself.
-- **Faction / Company / PirateBrigade**: `Faction` owns a fleet built from `(Transport, Captain, home_location)` triples — callers construct each `Captain` themselves (full control over strategy params); `Faction` just wires `captain.transport`/`captain.location` and fills out the `Transport.crew` roster. `pools_cash` (class attribute) controls whether captains share one balance (`Company`, `Faction` default) or keep individual balances (`PirateBrigade`). `Company.direct_fleet()` actively assigns idle ships to their best-scoring trade; `PirateBrigade.direct_fleet()` instead chases wherever watched `Company` fleets are concentrated. A plain `Faction.direct_fleet()` raises `NotImplementedError`, which `World.run()` catches to mean "let this fleet act autonomously."
-- **World**: orchestrates the daily loop — resolves location closures, asks each `Faction.direct_fleet()` for directives, calls `Captain.act()` for every trader, rolls global/local/location-wide/worldwide `MarketEvent`s, clears every `Market`, and snapshots portfolios. Also owns all reporting (print/CSV/JSON summaries).
+- **Location / Route**: `Location` produces some commodities (sold as surplus) and consumes others (bought below a minimum stockpile); price moves with stockpile deviation from a reference level. Each `Location` carries a set of `TerminalType`s (Port/Wagon yard/Airport/Platform/Spaceport/…). A `Route` connects two locations with a typed mode (`RouteType`: Sea/Land/Air/Space/Road/Railroad), valid only where both ends share a compatible terminal (`ROUTE_TERMINAL_COMPATIBILITY`).
+- **Multiple routes per pair**: `routes.ROUTES` is a `Map<string, Route[]>` keyed by location pair (`routeKey(a,b)`) — a pair may be connected by several routes of **different types** (at most one per type). `getRoutes(a,b)` returns them all; `getRoute(a,b)` returns the shortest. Pathfinding treats every route as its own edge, so a Ship and a Plane between the same two ports are parallel edges chosen per the transport. `addRouteToNetwork` groups routes by pair and drops a duplicate type.
+- **Distance modes** (`src/sim/distance.ts`): a world measures distance either **flat** (Euclidean, the default — `distanceBetween` is plain `Math.hypot` on world coordinates) or **globe** (great-circle: each position's normalized fraction of the map is read as a lon/lat, distance = `radius × centralAngle`). The active `DistanceConfig` is module-level in `worldData.ts` (`setDistanceConfig`), set from the JSON on load; `buildWorld` resets it to flat. `Route.distance` and pathfinding both honor it.
+- **Transport / Crew / Captain**: `Transport` is pure hardware — cargo, speed, fuel burn, `crewRequirement`, `currentFuel`. `Crew` is a bare identity; `Sailor` a generic waged member; `Captain` subclasses `Crew` and adds all trading-agent behavior. A `Transport`'s `.crew` list is filled by `Faction`'s constructor.
+- **Faction / Company / …**: `Faction` owns a fleet of `(Transport, Captain, homeLocation)` triples; `poolsCash` (a getter) controls shared vs. individual balances. `Company.directFleet()` assigns idle ships to their best-scoring trade and dispatches location-funded `Contract`s; `SoloTrader` is a 1-ship `Company` with `poolsCash=false`; `PirateBrigade`/`PoliceFleet` exist in the engine but aren't built by `buildWorld` (which passes `numPoliceShips: 0` and no pirates).
+- **PoliticalEntity**: groups Locations sharing one cash pool, and carries a **`nationality`** (English/French/Spanish/Dutch/Portuguese) used to name ships/captains synthesized for its affiliated Companies.
+- **World**: the daily loop — resolves closures, asks each `Faction.directFleet()` for directives, calls `Captain.act()`, rolls market/transport/company/closure events, clears every `Market`, snapshots portfolios.
 
-### Economics a Captain weighs when picking a route (`captain.py`)
+### Fleet synthesis on JSON load (`buildWorldFromJson`)
 
-Route scoring (`_route_economics`) bakes in, per candidate route: cargo cost, fuel cost (at the origin's live price), the transport's fixed shipment fee, and crew wages (`Crew.daily_wages`, owed only while `TransportStatus.InTransit`) for every day the trip takes. Candidates are ranked by *daily return* (profit per day of capital tied up) against `min_daily_return_pct`, not raw profit — this is what lets a Captain fairly compare a short cheap route against a long expensive one.
+After building the authored factions, the loader sizes the fleet up to `required = round(locations.length × 5)` (the calibrated minimum, `DEFAULT_TARGET_SHIPS_PER_LOCATION`). If the world already has ≥ `required` ships, nothing is added. Otherwise `round(0.2 × required)` **Independent SoloTraders** are created, and the remaining ships are distributed round-robin across **the companies defined in the JSON** (bulking up even 1-ship companies) — or, if the JSON defines no companies at all, added as further SoloTraders. Generated ships/captains draw names from the owning Company's PoliticalEntity nationality (a seeded-random nationality for Independent factions). All synthesis is from a fixed seed, so a given JSON always yields the same fleet.
 
-- **Refueling**: if a `Transport` tracks fuel (`current_fuel` is not `None`) and doesn't have enough on board for a leg (`Transport.needs_refuel`), the route planner looks for a single intermediate stop that makes both legs fit, and prices the trip as two legs. A `Transport` with `current_fuel = None` (the default) never needs refueling regardless of trip length.
-- **Inactive transports**: if a Faction can't afford a transport's crew wages on a given day while it's `InTransit`, the transport's `status` flips to `TransportStatus.Inactive` (no fuel burn, no travel progress) and is automatically excluded from `direct_fleet()` coordination (`Captain.is_idle_in_port` only returns `True` for `AtLocation`).
-- **Repositioning**: if nothing at the current location clears the return bar, a Captain will scan the whole network and sail empty toward a distant opportunity, but only if the return clears a stiffer bar (`min_daily_return_pct * reposition_return_multiplier`), since it's a speculative bet on an opportunity that might not survive the extra transit time.
+### Economics a Captain weighs when picking a route (`captain.ts`)
+
+`routeEconomics` bakes in, per candidate: cargo cost, fuel cost (each leg at its origin's live price), the transport's fixed shipment fee, and crew wages (owed only while `InTransit`) for every day the trip takes. Candidates are ranked by **daily return** (profit per day of capital tied up) against `minDailyReturnPct`, not raw profit — so a short cheap route is fairly compared against a long expensive one. Contracts are scored on the same per-ship-day basis (`"compare"` strategy).
+
+- **Refueling**: a `Transport` that tracks fuel (`currentFuel` not `null`) refuels automatically at intermediate stops on a multi-hop path; a route is infeasible if any single leg exceeds tank capacity.
+- **Inactive transports**: if a Faction can't afford a transport's crew wages while `InTransit`, its `status` flips to `Inactive` (no fuel/progress) and it's excluded from fleet coordination until it can pay.
+- **Repositioning**: with nothing local clearing the bar, a Captain scans the whole network and sails empty toward a distant opportunity, but only past a stiffer bar (`minDailyReturnPct × repositionReturnMultiplier`).
 
 ### Mutable module-level world state
 
-`world_data.LOCATIONS`/`LOCATION_COORDINATES`/`COMMODITIES`/`BASE_PRICES` and `routes.ROUTES` are reassigned wholesale when `main()` builds a world from CSVs, or when tests monkeypatch coordinates for a fixture world. Any code that needs to observe such a reassignment must read the attribute off the *owning* submodule (`sim.world_data.LOCATIONS`, `sim.routes.ROUTES`) — not a copy re-exported on `sim` itself or captured via `from .world_data import LOCATIONS` at another module's import time — since every function that reads this state (`distance_between`, `get_route`, ...) looks it up via its own defining module's globals at call time.
+`worldData`'s `LOCATIONS`/`LOCATION_COORDINATES`/`COMMODITIES`, its `DISTANCE_CONFIG`, and `routes`'s `ROUTES` are exported `let` bindings reassigned wholesale (`setGeography`/`setCommodities`/`setDistanceConfig`/`setRoutes`) by `buildWorld`/`buildWorldFromJson`, or directly by a test building a small world. Every reader looks the state up off its own defining module's live binding at call time — ES module named imports are live references, so a wholesale swap propagates everywhere. `pathfinding.ts`'s adjacency cache is a `WeakMap` keyed by the `ROUTES` Map instance, so a `setRoutes` reassignment gets a fresh cache entry automatically.
 
 ### Tests
 
-`tests/conftest.py` loads `tests/fixtures/*.csv` into real `Location`/`Route`/`Company` objects (not mocks) via a `fixture_world` fixture, and a `fixture_pirate_crew` fixture for `PirateBrigade`-specific tests. `fixture_world` monkeypatches `sim.world_data.LOCATION_COORDINATES` (not `sim.LOCATION_COORDINATES`) so `Route.__post_init__`'s distance calculation sees the fixture coordinates.
+`src/sim/__tests__/*.test.ts` (vitest) exercise the engine directly: the default procedural world, hand-built worlds via `buildWorldFromJson`, and unit tests per concern (distance modes, multiple routes, fleet synthesis, contracts, faction cash pooling, PoliticalEntity affiliation, spaceship routing, …). Tests that build a small world call `setGeography`/`setRoutes` directly (see `contracts.test.ts`). The editor has no automated test suite — verify it by running its dev server and driving it in a browser.

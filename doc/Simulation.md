@@ -334,7 +334,7 @@ ceiling reflecting that the sweeps only validated up to 60 hubs (63 total
 locations) -- comfortably above 50, but 50 was picked as a known-good bound
 rather than extrapolating further untested territory.
 
-If the location roster ever changes (e.g. a future CSV-driven world), a
+If the location roster ever changes (e.g. an editor-authored JSON world), a
 world outside `[20, 50]` needs its own re-calibration sweep (fleet ratio,
 `quantityMultiplier`, and this range itself) rather than assuming the
 current defaults hold -- see Finding 3.
