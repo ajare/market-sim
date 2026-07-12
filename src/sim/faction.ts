@@ -22,6 +22,7 @@ import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randChoice, randUniform } from "./simRandom";
 import type { BulletinBoard, Contract, ContractType } from "./contracts";
+import type { PoliticalEntity } from "./politicalEntity";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
@@ -59,6 +60,8 @@ export class Faction {
 
   name: string;
   captains: Captain[] = [];
+  /** The PoliticalEntity this Faction is affiliated with, or null for an independent operator (the default). Purely informational -- affiliation doesn't influence trading behaviour. Set by buildWorldFromJson from the authored World; a procedurally-built Faction stays independent. */
+  politicalEntity: PoliticalEntity | null = null;
   startingCash: number;
   /** The single shared pool every captain's `cash` reads/writes through -- only meaningful when poolsCash. */
   cash: number = 0;

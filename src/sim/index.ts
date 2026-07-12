@@ -10,6 +10,8 @@ export * from "./markets";
 export * from "./transport";
 export * from "./crew";
 export * from "./names";
+export * from "./shipNames";
+export * from "./companyNames";
 export * from "./captain";
 export * from "./faction";
 export * from "./world";

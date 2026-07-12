@@ -68,6 +68,8 @@ interface JsonCompany {
   name: string;
   startingFunds: number;
   fleet: JsonFleetMember[];
+  /** The PoliticalEntity this Company is affiliated with, or null/absent for an independent operator. */
+  politicalEntityId?: string | null;
 }
 
 interface JsonRoute {
@@ -200,11 +202,14 @@ export function buildWorldFromJson(text: string): BuiltWorld {
     list.push(built);
     membersByEntityId.set(loc.politicalEntityId, list);
   }
+  const entityByJsonId = new Map<string, PoliticalEntity>();
   const politicalEntities: PoliticalEntity[] = jsonPoliticalEntities.map((pe) => {
     const type = VALID_POLITICAL_ENTITY_TYPES.has(pe.type as PoliticalEntityType)
       ? (pe.type as PoliticalEntityType)
       : "Universal";
-    return new PoliticalEntity(pe.name, membersByEntityId.get(pe.id) ?? [], undefined, type);
+    const entity = new PoliticalEntity(pe.name, membersByEntityId.get(pe.id) ?? [], undefined, type);
+    entityByJsonId.set(pe.id, entity);
+    return entity;
   });
 
   // 5. Build the merchant fleet. The editor doesn't model a captain's home
@@ -222,11 +227,15 @@ export function buildWorldFromJson(text: string): BuiltWorld {
       const captain = new Captain(member.captainName, homePort);
       return [transport, captain, homePort];
     });
-    if (crew.length === 1) {
-      factions.push(new SoloTrader(company.name, crew, company.startingFunds));
-    } else {
-      factions.push(new Company(company.name, crew, company.startingFunds));
+    const faction = crew.length === 1
+      ? new SoloTrader(company.name, crew, company.startingFunds)
+      : new Company(company.name, crew, company.startingFunds);
+    // null/absent politicalEntityId, or one that doesn't resolve, leaves the
+    // faction independent (politicalEntity stays null).
+    if (company.politicalEntityId != null) {
+      faction.politicalEntity = entityByJsonId.get(company.politicalEntityId) ?? null;
     }
+    factions.push(faction);
   }
 
   // 6. Assemble the World. No pirates/police (the editor doesn't model them);

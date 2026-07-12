@@ -15,7 +15,9 @@ import type { PoliticalEntity } from "./politicalEntity";
 import { generateRoutes, setRoutes, ROUTES } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
-import { DUTCH_FIRST_NAMES, DUTCH_LAST_NAMES, randomName } from "./names";
+import { DUTCH_NAMES, randomName } from "./names";
+import { DUTCH_SHIP_NAMES, randomShipName } from "./shipNames";
+import { DUTCH_COMPANY_NAMES, randomCompanyName } from "./companyNames";
 import { Faction, Company, SoloTrader } from "./faction";
 import { World } from "./world";
 import type { TenderContractsOptions } from "./contracts";
@@ -161,14 +163,6 @@ export const DEFAULT_PIRATE_CASH_PER_SHIP = 5_000.0;
  */
 export const DEFAULT_NUM_POLICE_SHIPS = 80;
 
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function pad3(n: number): string {
-  return String(n).padStart(3, "0");
-}
-
 /**
  * Builds a full World plus its Factions, procedurally, without running any
  * days. `maxRouteDistance` prunes the generated route network down to
@@ -271,9 +265,9 @@ export function buildWorld(
 
   const fleetCrew: Array<[Transport, Captain, string]> = homePorts.map((homePort, i) => {
     const shipClass = SHIP_CLASSES[shipClassNames[i % shipClassNames.length]];
-    const transport = shipClass.clone({ name: `Ship-${pad2(i + 1)}`, crewRequirement: fleetRng.randint(1, 5) });
+    const transport = shipClass.clone({ name: randomShipName(fleetRng, DUTCH_SHIP_NAMES), crewRequirement: fleetRng.randint(1, 5) });
     const captain = new Captain(
-      randomName(fleetRng, DUTCH_FIRST_NAMES, DUTCH_LAST_NAMES),
+      randomName(fleetRng, DUTCH_NAMES),
       homePort,
       null,
       1.25,
@@ -293,7 +287,7 @@ export function buildWorld(
     const crew = fleetCrew.slice(cursor, cursor + shipsThisCompany);
     cursor += shipsThisCompany;
     if (crew.length === 0) continue;
-    companies.push(new Company(`Company ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
+    companies.push(new Company(randomCompanyName(fleetRng, DUTCH_COMPANY_NAMES), crew, cashPerShip * crew.length));
   }
   // Each SoloTrader crews exactly one ship (see SoloTrader's constructor
   // validation) -- the org count below is scaled up accordingly so the
@@ -303,7 +297,7 @@ export function buildWorld(
     const crew = fleetCrew.slice(cursor, cursor + 1);
     cursor += 1;
     if (crew.length === 0) continue;
-    companies.push(new SoloTrader(`Solo ${pad3(i + 1)}`, crew, cashPerShip * crew.length));
+    companies.push(new SoloTrader(randomCompanyName(fleetRng, DUTCH_COMPANY_NAMES), crew, cashPerShip * crew.length));
   }
 
   const factions: Faction[] = [...companies];

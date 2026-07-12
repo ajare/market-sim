@@ -29,6 +29,8 @@ const TYPE_FALLBACK: Record<FactionType, string> = { company: "#2a78d6", solo: "
 interface CompanySeries {
   name: string;
   type: FactionType;
+  /** Affiliated PoliticalEntity name, or "Independent" when unaffiliated. */
+  politicalEntity: string;
   history: { day: number; netWorth: number }[];
 }
 
@@ -62,6 +64,7 @@ export function NetWorthHistoryPanel() {
             .map((c) => ({
               name: c.name,
               type: (c instanceof SoloTrader ? "solo" : "company") as FactionType,
+              politicalEntity: c.politicalEntity?.name ?? "Independent",
               history: c.netWorthHistory.map((r) => ({ day: r.day, netWorth: r.netWorth })),
             })),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `world` is mutated in place; `version` is what actually signals new history.
@@ -290,7 +293,11 @@ export function NetWorthHistoryPanel() {
   };
   const presentTypes = FACTION_TYPES.filter((t) => series.some((s) => s.type === t));
   const tableRows = nonEmpty
-    .flatMap((s) => s.history.map((r) => ({ company: s.name, type: s.type, day: r.day, netWorth: r.netWorth })))
+    .flatMap((s) =>
+      s.history.map((r) => ({
+        company: s.name, type: s.type, politicalEntity: s.politicalEntity, day: r.day, netWorth: r.netWorth,
+      })),
+    )
     .sort((a, b) => b.day - a.day || a.company.localeCompare(b.company));
 
   return (
@@ -324,6 +331,7 @@ export function NetWorthHistoryPanel() {
               <tr>
                 <th>Day</th>
                 <th>Faction</th>
+                <th>Political entity</th>
                 <th>Type</th>
                 <th>Net worth</th>
               </tr>
@@ -333,6 +341,7 @@ export function NetWorthHistoryPanel() {
                 <tr key={`${r.day}-${r.company}`}>
                   <td>{r.day}</td>
                   <td>{r.company}</td>
+                  <td>{r.politicalEntity}</td>
                   <td>{TYPE_LABEL[r.type]}</td>
                   <td>${r.netWorth.toFixed(2)}</td>
                 </tr>

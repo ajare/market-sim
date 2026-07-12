@@ -17,7 +17,7 @@ import { DEFAULT_BASE_CONSUMPTION_RATE, DEFAULT_BASE_PRICE, DEFAULT_BASE_PRODUCT
 import * as worldData from "./worldData";
 
 export type TerminalType =
-  | "Port" | "Wagon yard" | "Airport" | "Platform" | "Spaceport" | "Transit depot" | "Station";
+  | "Port" | "Wagon yard" | "Airport" | "Platform" | "Spaceport" | "TransitDepot" | "Station";
 
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;

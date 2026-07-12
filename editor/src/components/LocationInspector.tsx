@@ -1,8 +1,12 @@
 /** Edit form for the currently selected Location -- name, position, terminal types, and commodity maps. */
 import { useEditorStore } from "../state/useEditorStore";
-import { TERMINAL_TYPES } from "../types";
+import { FAMOUS_HISTORICAL_PORTS, TERMINAL_TYPES } from "../types";
 import { CommodityMapEditor } from "./CommodityMapEditor";
 import { LocationRoutesTable } from "./LocationRoutesTable";
+
+function randomPortName(): string {
+  return FAMOUS_HISTORICAL_PORTS[Math.floor(Math.random() * FAMOUS_HISTORICAL_PORTS.length)];
+}
 
 export function LocationInspector() {
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -29,6 +33,14 @@ export function LocationInspector() {
           value={location.name}
           onChange={(e) => updateLocation(location.id, { name: e.target.value })}
         />
+        <button
+          type="button"
+          className="random-name-button"
+          title="Generate a random name from famous historical ports"
+          onClick={() => updateLocation(location.id, { name: randomPortName() })}
+        >
+          🎲
+        </button>
         <button type="button" className="delete-button" onClick={() => removeLocation(location.id)}>
           Delete
         </button>

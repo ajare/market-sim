@@ -11,6 +11,9 @@ import {
   DEFAULT_COMPANY_STARTING_FUNDS, FAMOUS_HISTORICAL_NAMES, factionType, TRANSPORT_TYPES, TRANSPORT_TYPE_LABELS,
   type TransportType,
 } from "../types";
+import {
+  NATIONALITIES, generateCaptainName, generateCompanyName, generateShipName, type Nationality,
+} from "../nameGenerators";
 
 function randomFamousName(): string {
   return FAMOUS_HISTORICAL_NAMES[Math.floor(Math.random() * FAMOUS_HISTORICAL_NAMES.length)];
@@ -63,18 +66,28 @@ function FleetMemberForm({ companyId }: { companyId: string }) {
 
 export function CompaniesPanel() {
   const companies = useEditorStore((s) => s.companies);
-  const addCompany = useEditorStore((s) => s.addCompany);
+  const politicalEntities = useEditorStore((s) => s.politicalEntities);
+  const addGeneratedCompany = useEditorStore((s) => s.addGeneratedCompany);
   const updateCompanyName = useEditorStore((s) => s.updateCompanyName);
   const updateCompanyStartingFunds = useEditorStore((s) => s.updateCompanyStartingFunds);
+  const updateCompanyPoliticalEntity = useEditorStore((s) => s.updateCompanyPoliticalEntity);
   const removeCompany = useEditorStore((s) => s.removeCompany);
   const removeFleetMember = useEditorStore((s) => s.removeFleetMember);
-  const [newName, setNewName] = useState("");
+  const [nationality, setNationality] = useState<Nationality>("English");
+  const [numCaptains, setNumCaptains] = useState(3);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  function handleAdd() {
-    if (newName.trim() === "") return;
-    addCompany(newName, DEFAULT_COMPANY_STARTING_FUNDS);
-    setNewName("");
+  // Builds a whole Company at once from the chosen nationality: a generated
+  // company name plus `numCaptains` fleet members, each with a generated
+  // captain name and (Ship) ship name (see nameGenerators).
+  function handleGenerate() {
+    const count = Math.max(0, Math.floor(numCaptains));
+    const members = Array.from({ length: count }, () => ({
+      transportType: "Ship" as TransportType,
+      transportName: generateShipName(nationality),
+      captainName: generateCaptainName(nationality),
+    }));
+    addGeneratedCompany(generateCompanyName(nationality), members, DEFAULT_COMPANY_STARTING_FUNDS);
   }
 
   function toggleExpanded(id: string) {
@@ -94,6 +107,8 @@ export function CompaniesPanel() {
         {companies.map((company) => {
           const expanded = expandedIds.has(company.id);
           const faction = factionType(company.fleet);
+          const affiliation =
+            politicalEntities.find((p) => p.id === company.politicalEntityId)?.name ?? "Independent";
           return (
             <div className="company-card" key={company.id}>
               <div className="company-card-header">
@@ -112,7 +127,7 @@ export function CompaniesPanel() {
                 />
                 {!expanded && (
                   <span className="rollup-summary">
-                    {faction} · ${company.startingFunds.toLocaleString()} · {company.fleet.length} ship{company.fleet.length === 1 ? "" : "s"}
+                    {affiliation} · {faction} · ${company.startingFunds.toLocaleString()} · {company.fleet.length} ship{company.fleet.length === 1 ? "" : "s"}
                   </span>
                 )}
                 <button type="button" onClick={() => removeCompany(company.id)}>
@@ -131,6 +146,23 @@ export function CompaniesPanel() {
                       value={company.startingFunds}
                       onChange={(e) => updateCompanyStartingFunds(company.id, Number(e.target.value))}
                     />
+                  </label>
+
+                  <label className="company-field">
+                    Political entity
+                    <select
+                      value={company.politicalEntityId ?? ""}
+                      onChange={(e) =>
+                        updateCompanyPoliticalEntity(company.id, e.target.value === "" ? null : e.target.value)
+                      }
+                    >
+                      <option value="">Independent</option>
+                      {politicalEntities.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
                   </label>
 
                   <div className="fleet-section">
@@ -159,16 +191,32 @@ export function CompaniesPanel() {
           );
         })}
       </div>
-      <div className="commodity-row commodity-row-new">
-        <input
-          className="commodity-name"
-          placeholder="new company"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-        />
-        <button type="button" onClick={handleAdd}>
-          + add
+      <div className="company-generator">
+        <div className="field-label">New company</div>
+        <div className="company-generator-fields">
+          <label className="company-generator-field">
+            Nationality
+            <select value={nationality} onChange={(e) => setNationality(e.target.value as Nationality)}>
+              {NATIONALITIES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="company-generator-field">
+            Captains
+            <input
+              type="number"
+              min={0}
+              max={50}
+              value={numCaptains}
+              onChange={(e) => setNumCaptains(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <button type="button" className="company-generator-button" onClick={handleGenerate}>
+          🎲 Generate company
         </button>
       </div>
     </div>

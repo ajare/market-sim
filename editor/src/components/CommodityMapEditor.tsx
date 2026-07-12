@@ -46,9 +46,36 @@ export function CommodityMapEditor({
     setPendingCommodity("");
   }
 
+  // Picks 1-3 random commodities from those not yet used at this Location and
+  // adds them with their default (1.0) rate modifier -- a quick way to seed a
+  // Location's commodities. `available` already excludes the sibling field's
+  // commodities (otherRoleValues), so a randomly-consumed commodity can never
+  // collide with a produced one and vice versa.
+  function handleRandomize() {
+    if (available.length === 0) return;
+    const count = Math.min(available.length, 1 + Math.floor(Math.random() * 3));
+    const pool = [...available];
+    for (let i = 0; i < count; i++) {
+      const pick = Math.floor(Math.random() * pool.length);
+      addCommodity(locationId, pool[pick].name);
+      pool.splice(pick, 1);
+    }
+  }
+
   return (
     <div className="commodity-table-section">
-      <div className="field-label">{label}</div>
+      <div className="field-label-row">
+        <div className="field-label">{label}</div>
+        <button
+          type="button"
+          className="random-name-button"
+          title={`Generate 1-3 random ${field === "producedCommodities" ? "produced" : "consumed"} commodities with default values`}
+          onClick={handleRandomize}
+          disabled={available.length === 0}
+        >
+          🎲
+        </button>
+      </div>
       {entries.length > 0 && (
         <table className="commodity-table">
           <thead>

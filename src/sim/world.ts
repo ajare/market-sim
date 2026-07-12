@@ -12,10 +12,14 @@ import type { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
 import { Ship } from "./transport";
 import { Captain, type Directive } from "./captain";
-import { ENGLISH_FIRST_NAMES, ENGLISH_LAST_NAMES, SPANISH_FIRST_NAMES, SPANISH_LAST_NAMES } from "./names";
+import { ENGLISH_NAMES, SPANISH_NAMES, randomName, type NameRng } from "./names";
+import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
 import { primeRouteGraphCache } from "./pathfinding";
-import { randChoice, randInt, randShuffle, seedSimRandom } from "./simRandom";
+import { randChoice, randInt, randRandom, randShuffle, seedSimRandom } from "./simRandom";
+
+/** Adapts the global sim RNG to the NameRng surface randomName needs, so pirate/police captains draw names off the same live stream as the rest of the simulation. */
+const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
 
 // Locations must fall within this range. Calibrated via seed-averaged
@@ -165,8 +169,8 @@ export class World {
       const pirateCrew: Array<[Ship, Captain, string]> = [];
       for (let i = 0; i < numPirateShips; i++) {
         const homeLocation = randChoice(init.locations).name;
-        const ship = new Ship({ name: `Pirate Ship ${i + 1}`, crewRequirement: randInt(1, 5) });
-        const captainName = `${randChoice(SPANISH_FIRST_NAMES)} ${randChoice(SPANISH_LAST_NAMES)}`;
+        const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
+        const captainName = randomName(globalNameRng, SPANISH_NAMES);
         const captain = new Captain(captainName, homeLocation);
         pirateCrew.push([ship, captain, homeLocation]);
       }
@@ -186,8 +190,8 @@ export class World {
       const policeCrew: Array<[Ship, Captain, string]> = [];
       for (let i = 0; i < numPoliceShips; i++) {
         const homeLocation = randChoice(init.locations).name;
-        const ship = new Ship({ name: `Police Ship ${i + 1}`, crewRequirement: randInt(1, 5) });
-        const captainName = `${randChoice(ENGLISH_FIRST_NAMES)} ${randChoice(ENGLISH_LAST_NAMES)}`;
+        const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
+        const captainName = randomName(globalNameRng, ENGLISH_NAMES);
         const captain = new Captain(captainName, homeLocation);
         policeCrew.push([ship, captain, homeLocation]);
       }
@@ -244,8 +248,8 @@ export class World {
       if (this.policeFleet !== null) this.policeFleet.targets.push(this.pirateBrigade);
     }
     const homeLocation = randChoice(this.locations).name;
-    const ship = new Ship({ name: `Pirate Ship ${this.pirateBrigade.captains.length + 1}`, crewRequirement: randInt(1, 5) });
-    const captain = new Captain(`${randChoice(SPANISH_FIRST_NAMES)} ${randChoice(SPANISH_LAST_NAMES)}`, homeLocation);
+    const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
+    const captain = new Captain(randomName(globalNameRng, SPANISH_NAMES), homeLocation);
     this.pirateBrigade.addTransport(ship, captain, homeLocation, this.pirateShipStartingCash);
     this.captains.push(captain);
     return captain;
@@ -275,8 +279,8 @@ export class World {
       }
     }
     const homeLocation = randChoice(this.locations).name;
-    const ship = new Ship({ name: `Police Ship ${this.policeFleet.captains.length + 1}`, crewRequirement: randInt(1, 5) });
-    const captain = new Captain(`${randChoice(ENGLISH_FIRST_NAMES)} ${randChoice(ENGLISH_LAST_NAMES)}`, homeLocation);
+    const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
+    const captain = new Captain(randomName(globalNameRng, ENGLISH_NAMES), homeLocation);
     this.policeFleet.addTransport(ship, captain, homeLocation);
     this.captains.push(captain);
     return captain;

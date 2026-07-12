@@ -124,7 +124,7 @@ interface EditorStore {
 
   /** Global commodity registry, shared by every Location's dropdown-driven commodity fields. */
   commodities: Commodity[];
-  addCommodity: (name: string) => void;
+  addCommodity: (name: string, basePrice?: number) => void;
   updateCommodityBasePrice: (name: string, basePrice: number) => void;
   updateCommodityProductionRate: (name: string, productionRate: number) => void;
   updateCommodityConsumptionRate: (name: string, consumptionRate: number) => void;
@@ -133,8 +133,16 @@ interface EditorStore {
   /** Companies defined for this World -- captain strategy params and home location aren't modeled in the editor, just name, starting funds, and a fleet of (Transport type/name, Captain name) pairs. */
   companies: EditorCompany[];
   addCompany: (name: string, startingFunds?: number) => void;
+  /** Creates a Company with a pre-generated name and fleet in one shot (see CompaniesPanel's nationality generator) -- ids for the company and each fleet member are assigned here. */
+  addGeneratedCompany: (
+    name: string,
+    members: Array<{ transportType: TransportType; transportName: string; captainName: string }>,
+    startingFunds?: number,
+  ) => void;
   updateCompanyName: (id: string, name: string) => void;
   updateCompanyStartingFunds: (id: string, startingFunds: number) => void;
+  /** Sets a Company's PoliticalEntity affiliation, or null for Independent. */
+  updateCompanyPoliticalEntity: (id: string, politicalEntityId: string | null) => void;
   removeCompany: (id: string) => void;
   /** Adds a Captain/Transport pair to a Company's fleet -- no-op if the Company doesn't exist. */
   addFleetMember: (companyId: string, transportType: TransportType, transportName: string, captainName: string) => void;
@@ -181,6 +189,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         politicalEntities: s.politicalEntities.filter((c) => c.id !== id),
         locations: remainingLocations,
         routes,
+        // A Company affiliated with the removed PoliticalEntity falls back to
+        // Independent rather than dangling.
+        companies: s.companies.map((c) => (c.politicalEntityId === id ? { ...c, politicalEntityId: null } : c)),
         selectedId: remainingLocations.some((loc) => loc.id === s.selectedId) ? s.selectedId : null,
         selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
         pendingPoliticalEntityId: s.pendingPoliticalEntityId === id ? null : s.pendingPoliticalEntityId,
@@ -231,12 +242,22 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     nextCompanyId = nextIdAfter(world.companies.map((c) => c.id), "company-");
     nextFleetMemberId = nextIdAfter(world.companies.flatMap((c) => c.fleet.map((m) => m.id)), "fleet-");
 
+    // Normalize company affiliation: default a missing politicalEntityId (older
+    // files predating this field) to null, and drop any affiliation pointing at
+    // a PoliticalEntity that isn't in the imported World -- either way the
+    // Company reads as Independent rather than dangling.
+    const entityIds = new Set(world.politicalEntities.map((p) => p.id));
+    const companies = world.companies.map((c) => ({
+      ...c,
+      politicalEntityId: c.politicalEntityId != null && entityIds.has(c.politicalEntityId) ? c.politicalEntityId : null,
+    }));
+
     set({
       worldScale,
       locations,
       politicalEntities: world.politicalEntities,
       commodities: world.commodities,
-      companies: world.companies,
+      companies,
       routes: world.routes,
       selectedId: null,
       selectedRouteId: null,
@@ -480,13 +501,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   commodities: [],
   companies: [],
 
-  addCommodity: (name: string) =>
+  addCommodity: (name: string, basePrice = 0) =>
     set((s) => {
       const trimmed = name.trim();
       if (trimmed === "" || s.commodities.some((c) => c.name === trimmed)) return s;
       return {
         commodities: [...s.commodities, {
-          name: trimmed, basePrice: 0,
+          name: trimmed, basePrice,
           productionRate: DEFAULT_COMMODITY_RATE, consumptionRate: DEFAULT_COMMODITY_RATE,
         }],
       };
@@ -549,12 +570,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   addCompany: (name, startingFunds = DEFAULT_COMPANY_STARTING_FUNDS) =>
     set((s) => ({
-      companies: [...s.companies, { id: `company-${nextCompanyId++}`, name, startingFunds, fleet: [] }],
+      companies: [...s.companies, { id: `company-${nextCompanyId++}`, name, startingFunds, fleet: [], politicalEntityId: null }],
     })),
+  addGeneratedCompany: (name, members, startingFunds = DEFAULT_COMPANY_STARTING_FUNDS) =>
+    set((s) => {
+      const fleet: EditorFleetMember[] = members.map((m) => ({ id: `fleet-${nextFleetMemberId++}`, ...m }));
+      return {
+        companies: [...s.companies, { id: `company-${nextCompanyId++}`, name, startingFunds, fleet, politicalEntityId: null }],
+      };
+    }),
   updateCompanyName: (id, name) =>
     set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, name } : c)) })),
   updateCompanyStartingFunds: (id, startingFunds) =>
     set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, startingFunds } : c)) })),
+  updateCompanyPoliticalEntity: (id, politicalEntityId) =>
+    set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, politicalEntityId } : c)) })),
   removeCompany: (id) => set((s) => ({ companies: s.companies.filter((c) => c.id !== id) })),
 
   addFleetMember: (companyId, transportType, transportName, captainName) =>

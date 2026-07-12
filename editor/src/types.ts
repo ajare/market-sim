@@ -88,12 +88,58 @@ export const FAMOUS_HISTORICAL_NAMES: string[] = [
   "Marie Curie", "Charles Darwin", "Galileo Galilei", "Johannes Kepler",
 ];
 
+/** Names of famous historical ports/trading hubs, used to randomly name a Location in the editor (see LocationInspector). */
+export const FAMOUS_HISTORICAL_PORTS: string[] = [
+  "Alexandria", "Carthage", "Constantinople", "Venice", "Genoa",
+  "Amsterdam", "Lisbon", "Marseille", "Rotterdam", "Antwerp",
+  "Bruges", "Hamburg", "Lubeck", "Danzig", "Bergen",
+  "Cadiz", "Malacca", "Canton", "Nagasaki", "Calicut",
+  "Aden", "Muscat", "Hormuz", "Zanzibar", "Mombasa",
+  "Tyre", "Sidon", "Piraeus", "Ostia", "Ephesus",
+  "Ragusa", "Palermo", "Naples", "Barcelona", "Valencia",
+  "Bristol", "Liverpool", "Portsmouth", "Plymouth", "Dover",
+  "Macau", "Batavia", "Goa", "Colombo", "Aleppo",
+  "Smyrna", "Trebizond", "Novgorod", "Riga", "Tallinn",
+];
+
+/**
+ * Goods traded in the Caribbean during the Golden Age of Piracy (c. 1650-1730),
+ * with a suitable base price each (cheap staples through high-value luxuries).
+ * Used by the "add trade good" button in the Commodities panel to seed a
+ * new Commodity with a plausible name and price.
+ */
+export const CARIBBEAN_COMMODITIES: { name: string; basePrice: number }[] = [
+  { name: "Salt", basePrice: 8 },
+  { name: "Rice", basePrice: 14 },
+  { name: "Molasses", basePrice: 18 },
+  { name: "Hides", basePrice: 24 },
+  { name: "Sugar", basePrice: 30 },
+  { name: "Ginger", basePrice: 34 },
+  { name: "Cotton", basePrice: 38 },
+  { name: "Pimento", basePrice: 42 },
+  { name: "Rum", basePrice: 46 },
+  { name: "Tobacco", basePrice: 52 },
+  { name: "Coffee", basePrice: 56 },
+  { name: "Cacao", basePrice: 60 },
+  { name: "Logwood", basePrice: 66 },
+  { name: "Mahogany", basePrice: 72 },
+  { name: "Indigo", basePrice: 82 },
+  { name: "Gunpowder", basePrice: 90 },
+  { name: "Cochineal", basePrice: 110 },
+  { name: "Tortoiseshell", basePrice: 125 },
+  { name: "Silver", basePrice: 210 },
+  { name: "Pearls", basePrice: 300 },
+  { name: "Gold", basePrice: 520 },
+];
+
 /** A trading Faction -- mirrors src/sim/faction.ts's Company (TS-only, no Python original). The editor only needs name/starting funds/fleet; captain strategy params and home location are a simulation-runtime concern. */
 export interface EditorCompany {
   id: string;
   name: string;
   startingFunds: number;
   fleet: EditorFleetMember[];
+  /** The PoliticalEntity this Company is affiliated with, or null for Independent (the default). Unlike a Location's required membership, a Company's affiliation is optional. */
+  politicalEntityId: string | null;
 }
 
 /** Mirrors which Faction subclass src/sim/faction.ts would actually construct for this fleet: SoloTrader requires exactly one Transport/Captain (its constructor throws otherwise), so a fleet of any other size -- including zero -- has to be a plain Company. */

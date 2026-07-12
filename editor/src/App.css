@@ -619,6 +619,19 @@ body {
   cursor: pointer;
 }
 
+.random-name-button {
+  background: #edf2f7;
+  border: 1px solid #cbd5e0;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.random-name-button:hover {
+  background: #e2e8f0;
+}
+
 /* --- RouteInspector panel --- */
 .route-inspector-title {
   flex: 1;
@@ -726,6 +739,17 @@ body {
   font-weight: 600;
   color: #444;
   margin: 0.75rem 0 0.35rem;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.field-label-row .field-label {
+  margin-bottom: 0;
 }
 
 .terminal-types {
@@ -848,4 +872,61 @@ body {
 
 .commodity-row-new input {
   border-style: dashed;
+}
+
+.add-trade-good-button {
+  margin-top: 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  background: #edf2f7;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.company-generator {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #eee;
+}
+
+.company-generator-fields {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.company-generator-field {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  gap: 0.15rem;
+  flex: 1;
+}
+
+.company-generator-field input,
+.company-generator-field select {
+  width: 100%;
+}
+
+.company-generator-button {
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  background: #edf2f7;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.company-generator-button:hover {
+  background: #e2e8f0;
+}
+
+.add-trade-good-button:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.add-trade-good-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
