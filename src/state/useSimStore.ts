@@ -14,6 +14,7 @@ import { create } from "zustand";
 import { buildWorld } from "../sim/buildWorld";
 import { buildWorldFromJson } from "../sim/buildWorldFromJson";
 import type { World } from "../sim/world";
+import type { Location } from "../sim/location";
 import type { PoliticalEntity } from "../sim/politicalEntity";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 
@@ -38,6 +39,18 @@ interface SimStore {
   removePirateShip: () => void;
   addPoliceShip: () => void;
   removePoliceShip: () => void;
+  /**
+   * Adds a brand-new Location at (x, y) (world-unit coordinates) affiliated
+   * with `politicalEntity` -- see World.addLocation. Returns null (no-op) if
+   * there is no live World.
+   */
+  addLocation: (
+    x: number,
+    y: number,
+    politicalEntity: PoliticalEntity,
+    detourDistance: number,
+    maxDistance: number,
+  ) => Location | null;
 }
 
 let accumulator = 0;
@@ -123,6 +136,14 @@ export const useSimStore = create<SimStore>((set, get) => ({
     if (world === null) return;
     world.removePoliceShip();
     set((s) => ({ version: s.version + 1 }));
+  },
+
+  addLocation: (x, y, politicalEntity, detourDistance, maxDistance) => {
+    const { world } = get();
+    if (world === null) return null;
+    const location = world.addLocation(x, y, politicalEntity, detourDistance, maxDistance);
+    set((s) => ({ version: s.version + 1 }));
+    return location;
   },
 }));
 

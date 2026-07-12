@@ -8,8 +8,44 @@ import { PirateBrigade, PoliceFleet, SoloTrader, Company } from "../sim/faction"
 import type { Location, TerminalType } from "../sim/location";
 import type { PoliticalEntity } from "../sim/politicalEntity";
 import type { MarketEvent } from "../sim/events";
-import type { World } from "../sim/world";
+import { MAX_LOCATIONS, type World } from "../sim/world";
 import { findShortestPath, pathNodeSequence } from "../sim/pathfinding";
+
+/**
+ * Sensible default max-distance/detour-distance thresholds for the new-Location
+ * route planner (see World.addLocation), derived from the CURRENTLY loaded
+ * world's own route lengths rather than a fixed constant -- the procedural
+ * world's coordinate scale and a custom JSON-imported world's can differ
+ * wildly (see CLAUDE.md's distance modes), so a single hardcoded number would
+ * either connect nothing or connect everything depending on which world is
+ * loaded. maxDistance is the median Sea route length (falling back to the
+ * median of every route, then to a fraction of the world's bounding-box
+ * diagonal if there are no routes at all yet); detourDistance is 20% of that,
+ * echoing the editor's own 10:50 detour:max default ratio.
+ */
+function deriveDefaultThresholds(): { maxDistance: number; detourDistance: number } {
+  const seaLengths: number[] = [];
+  const allLengths: number[] = [];
+  for (const routeList of ROUTES.values()) {
+    for (const route of routeList) {
+      allLengths.push(route.distance);
+      if (route.routeType === "Sea") seaLengths.push(route.distance);
+    }
+  }
+  const sample = seaLengths.length > 0 ? seaLengths : allLengths;
+  let maxDistance: number;
+  if (sample.length > 0) {
+    const sorted = [...sample].sort((a, b) => a - b);
+    maxDistance = sorted[Math.floor(sorted.length / 2)];
+  } else {
+    const coords = Object.values(LOCATION_COORDINATES);
+    const xs = coords.map(([x]) => x);
+    const ys = coords.map(([, y]) => y);
+    const diagonal = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    maxDistance = diagonal / 3;
+  }
+  return { maxDistance: Math.round(maxDistance), detourDistance: Math.round(maxDistance * 0.2) };
+}
 
 /**
  * Every node a Captain's current voyage still passes through, from where it
@@ -245,13 +281,35 @@ function locationActiveEvents(world: World, location: string): MarketEvent[] {
   return events;
 }
 
+/** State for the click-to-place popup -- mirrors the editor's WorldCanvas placeMenu. Pixel coords position the popup; world coords (already inverse-projected) are what gets passed to World.addLocation. */
+interface PlaceMenuState {
+  pixelX: number;
+  pixelY: number;
+  worldX: number;
+  worldY: number;
+  detourDistance: number;
+  maxDistance: number;
+}
+
 export function NetworkView() {
   const world = useSimStore((s) => s.world);
   const version = useSimStore((s) => s.version);
   const politicalEntities = useSimStore((s) => s.politicalEntities);
+  const addLocationAction = useSimStore((s) => s.addLocation);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [placeMenu, setPlaceMenu] = useState<PlaceMenuState | null>(null);
+
+  // Closing the popup on Escape, same as the editor's placement menu.
+  useEffect(() => {
+    if (placeMenu === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPlaceMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [placeMenu]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -273,6 +331,10 @@ export function NetworkView() {
     let markers: Marker[] = [];
     let locationMarkers: LocationMarker[] = [];
     let highlightedCaptain: Captain | null = null;
+    // Set at the top of every draw() call -- lets handleClick invert a
+    // click's pixel position back to world coordinates for placing a new
+    // Location (see deriveDefaultThresholds/PlaceMenuState).
+    let projection: { minX: number; minY: number; scaleX: number; scaleY: number; pad: number } | null = null;
 
     function draw(): void {
       const dpr = window.devicePixelRatio || 1;
@@ -298,6 +360,7 @@ export function NetworkView() {
       const pad = 52;
       const scaleX = (width - pad * 2) / (maxX - minX || 1);
       const scaleY = (height - pad * 2) / (maxY - minY || 1);
+      projection = { minX, minY, scaleX, scaleY, pad };
       const projectPoint = (point: Point): [number, number] => {
         const [x, y] = point;
         return [pad + (x - minX) * scaleX, pad + (y - minY) * scaleY];
@@ -572,13 +635,31 @@ export function NetworkView() {
       }
       setHover(null);
     }
+    // Clicking empty canvas (not an existing ship/location marker) opens the
+    // placement popup at the click, mirroring the editor's WorldCanvas -- the
+    // chosen PoliticalEntity (or Cancel) drives actually creating the Location.
+    function handleClick(e: MouseEvent): void {
+      if (projection === null) return;
+      const rect = canvas!.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const hitShip = markers.some((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      const hitLocation = locationMarkers.some((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      if (hitShip || hitLocation) return;
+      const worldX = (mx - projection.pad) / projection.scaleX + projection.minX;
+      const worldY = (my - projection.pad) / projection.scaleY + projection.minY;
+      const { maxDistance, detourDistance } = deriveDefaultThresholds();
+      setPlaceMenu({ pixelX: mx, pixelY: my, worldX, worldY, detourDistance, maxDistance });
+    }
     canvas.addEventListener("mousemove", handleMouseMove);
     canvas.addEventListener("mouseleave", handleMouseLeave);
+    canvas.addEventListener("click", handleClick);
 
     return () => {
       resizeObserver.disconnect();
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
+      canvas.removeEventListener("click", handleClick);
     };
   }, [world, version, politicalEntities]);
 
@@ -600,9 +681,61 @@ export function NetworkView() {
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.soloTrader }} />Solo trader</span>
         <span><i className="legend-ring" />Docked (not in transit)</span>
         <span><i className="legend-line" style={{ borderBottomColor: "var(--warning, #f59e0b)" }} />Hover a ship to see its route</span>
+        <span>Click empty water to add a Location</span>
       </div>
       <div className="network-canvas-wrap" ref={containerRef}>
         <canvas ref={canvasRef} />
+        {placeMenu !== null && (
+          <div className="placement-menu" style={{ left: placeMenu.pixelX, top: placeMenu.pixelY }} role="menu">
+            {world.locations.length >= MAX_LOCATIONS ? (
+              <div className="placement-menu-empty">World already has the maximum of {MAX_LOCATIONS} Locations.</div>
+            ) : (
+              <>
+                <label className="placement-menu-field">
+                  detour
+                  <input
+                    type="number"
+                    min={0}
+                    value={placeMenu.detourDistance}
+                    onChange={(e) => setPlaceMenu({ ...placeMenu, detourDistance: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="placement-menu-field">
+                  max
+                  <input
+                    type="number"
+                    min={0}
+                    value={placeMenu.maxDistance}
+                    onChange={(e) => setPlaceMenu({ ...placeMenu, maxDistance: Number(e.target.value) })}
+                  />
+                </label>
+                <div className="placement-menu-header">Political Entity</div>
+                {politicalEntities.map((entity) => (
+                  <button
+                    key={entity.name}
+                    type="button"
+                    className="placement-menu-item"
+                    onClick={() => {
+                      addLocationAction(
+                        placeMenu.worldX, placeMenu.worldY, entity,
+                        Math.max(0, placeMenu.detourDistance), placeMenu.maxDistance,
+                      );
+                      setPlaceMenu(null);
+                    }}
+                  >
+                    {entity.name}
+                  </button>
+                ))}
+                {politicalEntities.length === 0 && (
+                  <div className="placement-menu-empty">No Political Entities defined</div>
+                )}
+              </>
+            )}
+            <button type="button" className="placement-menu-item placement-menu-cancel" onClick={() => setPlaceMenu(null)}>
+              Cancel
+            </button>
+          </div>
+        )}
         {hover !== null && hover.kind === "captain" && (
           <div className="network-tooltip" style={{ left: hover.x, top: hover.y }}>
             <div className="network-tooltip-title">{hover.captain.name}</div>

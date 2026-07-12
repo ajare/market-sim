@@ -292,10 +292,21 @@ export function buildWorld(
   // (integer division alone would leave a remainder unallocated).
   for (let i = 0; i < numCompanies; i++) {
     const shipsThisCompany = baseShipsPerCompany + (i < extraShipCompanyCount ? 1 : 0);
-    const crew = fleetCrew.slice(cursor, cursor + shipsThisCompany);
+    const crewSlice = fleetCrew.slice(cursor, cursor + shipsThisCompany);
     cursor += shipsThisCompany;
-    if (crew.length === 0) continue;
-    companies.push(new Company(randomCompanyName(fleetRng, DUTCH_COMPANY_NAMES), crew, cashPerShip * crew.length));
+    if (crewSlice.length === 0) continue;
+    // Every procedural Company stays Independent (no PoliticalEntity), so
+    // there's no nationality to default a home Location against -- each one
+    // instead gets a random home Location (from the same pool ship-level home
+    // ports draw from), matching how SoloTraders are already placed below.
+    // Every ship here is a Ship subclass (SHIP_CLASSES), all needing Port or
+    // Platform, and generateLocations always gives every Location one or the
+    // other, so any pick is guaranteed compatible.
+    const homeLocation = fleetRng.choice(availableHomePorts);
+    const crew: Array<[Transport, Captain, string]> = crewSlice.map(([transport, captain]) => [transport, captain, homeLocation]);
+    companies.push(
+      new Company(randomCompanyName(fleetRng, DUTCH_COMPANY_NAMES), crew, cashPerShip * crew.length, homeLocation),
+    );
   }
   // Each SoloTrader crews exactly one ship (see SoloTrader's constructor
   // validation) -- the org count below is scaled up accordingly so the

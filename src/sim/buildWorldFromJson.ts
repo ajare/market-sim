@@ -19,7 +19,8 @@ import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, SHIP_CLASSES, 
 import { Captain } from "./captain";
 import { Company, SoloTrader, type Faction, type FleetCrew } from "./faction";
 import { World } from "./world";
-import { setCommodities, setGeography, setDistanceConfig } from "./worldData";
+import { setCommodities, setGeography, setDistanceConfig, getLocation } from "./worldData";
+import { locationSupportsFleet, locationSupportsTransport, defaultCompanyHomeLocation } from "./companyHome";
 import { setRoutes } from "./routes";
 import { DEFAULT_GLOBE_LON_SPAN, type DistanceMode } from "./distance";
 import { Rng } from "./rng";
@@ -80,6 +81,13 @@ interface JsonCompany {
   fleet: JsonFleetMember[];
   /** The PoliticalEntity this Company is affiliated with, or null/absent for an independent operator. */
   politicalEntityId?: string | null;
+  /**
+   * The Location (by editor id) this Company is home-ported at -- absent/invalid/
+   * incompatible with its fleet falls back to defaultCompanyHomeLocation.
+   * Ignored for a 1-ship company, which is treated as a SoloTrader (no home
+   * port at all) -- see the fleet-building step below.
+   */
+  homeLocationId?: string | null;
 }
 
 interface JsonRoute {
@@ -255,113 +263,155 @@ export function buildWorldFromJson(text: string): BuiltWorld {
     return entity;
   });
 
-  // 5. Build the merchant fleet. The editor doesn't model a captain's home
-  // port, so home ports are handed out round-robin across the locations.
-  const homePorts = locations.map((l) => l.name);
-  let homePortCursor = 0;
-  const nextHomePort = (): string => {
-    const port = homePorts[homePortCursor % homePorts.length];
-    homePortCursor += 1;
-    return port;
-  };
-
-  // Deterministic RNG for every synthesized ship/captain/name below.
+  // 5. Build the merchant fleet. Classification (Company vs. SoloTrader)
+  // follows the editor's own factionType() rule from the AUTHORED fleet size
+  // -- exactly one ship is a SoloTrader (no home Location; its one ship
+  // starts at a random TerminalType-compatible Location), anything else is a
+  // real Company (home Location resolved below; every ship in it -- authored
+  // or later-synthesized -- starts there).
+  // Deterministic RNG for every synthesized ship/captain/name AND every
+  // random SoloTrader placement below.
   const fleetRng = new Rng(SYNTH_FLEET_SEED);
   const shipClassNames = Object.keys(SHIP_CLASSES);
   let genShipIndex = 0;
-  // A freshly generated (Transport, Captain, homePort) slot named in
-  // `nationality`, mirroring buildWorld's ship-class cycling / captain params.
-  const generateCrewSlot = (nationality: Nationality): [Transport, Captain, string] => {
+  // A freshly generated (Transport, Captain, homeLocation) slot named in
+  // `nationality`, mirroring buildWorld's ship-class cycling / captain
+  // params -- always placed at the given `homeLocation` (a Company's fixed
+  // home, or a just-picked random spot for a brand-new SoloTrader).
+  const generateCrewSlot = (nationality: Nationality, homeLocation: string): [Transport, Captain, string] => {
     const pools = NATIONALITY_POOLS[nationality];
     const shipClass = SHIP_CLASSES[shipClassNames[genShipIndex % shipClassNames.length]];
     const transport = shipClass.clone({
       name: randomShipName(fleetRng, pools.ships),
       crewRequirement: fleetRng.randint(1, 5),
     });
-    const homePort = nextHomePort();
     const captain = new Captain(
-      randomName(fleetRng, pools.names), homePort, null, 1.25, 0.012 + 0.002 * (genShipIndex % 5),
+      randomName(fleetRng, pools.names), homeLocation, null, 1.25, 0.012 + 0.002 * (genShipIndex % 5),
     );
     genShipIndex += 1;
-    return [transport, captain, homePort];
+    return [transport, captain, homeLocation];
   };
 
-  // The authored companies: their JSON-defined ships (kept in order), plus the
-  // nationality any ships later synthesized onto them will use -- the entity's
-  // nationality if affiliated, else a seeded-random one (drawn once per faction).
+  /** A random Location (out of the whole World) compatible with every Transport in `transports`. Throws if none qualify. */
+  const randomCompatibleLocation = (transports: readonly Transport[]): string => {
+    const candidates = locations.filter((loc) => locationSupportsFleet(loc, transports));
+    if (candidates.length === 0) {
+      throw new Error("No Location in this World supports a fleet with these Transport types.");
+    }
+    return fleetRng.choice(candidates).name;
+  };
+
+  // A throwaway Ship, used only to ask "does this Location support a
+  // synthesized Ship" (every SHIP_CLASSES entry is a Ship, so one instance's
+  // allowedRouteTypes() speaks for all of them) -- never added to a fleet.
+  const probeShip = new Ship({ name: "_ProbeShip" });
+
+  const soloFactions: SoloTrader[] = [];
+  // The authored real Companies: their JSON-defined ships (kept in order),
+  // resolved home Location, plus the nationality any ships later synthesized
+  // onto them will use -- the entity's nationality if affiliated, else a
+  // seeded-random one (drawn once per faction).
   interface PendingFaction {
     name: string;
     startingFunds: number;
     entity: PoliticalEntity | null;
     nationality: Nationality;
+    homeLocation: string;
     crew: FleetCrew;
   }
-  const pending: PendingFaction[] = jsonCompanies.map((company) => {
-    const crew: FleetCrew = company.fleet.map((member) => {
-      const transport = makeTransport(member.transportType, member.transportName);
-      const homePort = nextHomePort();
-      return [transport, new Captain(member.captainName, homePort), homePort];
-    });
+  const pending: PendingFaction[] = [];
+  for (const company of jsonCompanies) {
+    const transports = company.fleet.map((member) => makeTransport(member.transportType, member.transportName));
     const entity = company.politicalEntityId != null
       ? entityByJsonId.get(company.politicalEntityId) ?? null
       : null;
+
+    if (transports.length === 1) {
+      // A 1-ship authored company is a SoloTrader outright -- no home
+      // Location, no bulking-up-into-a-Company later; its one ship starts
+      // somewhere random and compatible.
+      const homeLocation = randomCompatibleLocation(transports);
+      const crew: FleetCrew = [[transports[0], new Captain(company.fleet[0].captainName, homeLocation), homeLocation]];
+      const solo = new SoloTrader(company.name, crew, company.startingFunds);
+      solo.politicalEntity = entity;
+      soloFactions.push(solo);
+      continue;
+    }
+
+    const authoredLocationName = company.homeLocationId != null ? idToName.get(company.homeLocationId) : undefined;
+    const authoredLocation = authoredLocationName !== undefined ? getLocation(authoredLocationName) : undefined;
+    const homeLocation =
+      authoredLocation !== undefined && locationSupportsFleet(authoredLocation, transports)
+        ? authoredLocation.name
+        : defaultCompanyHomeLocation(entity, transports);
+
+    const crew: FleetCrew = company.fleet.map((member, i) => [transports[i], new Captain(member.captainName, homeLocation), homeLocation]);
     const nationality = entity !== null ? entity.nationality : randomNationality(fleetRng);
-    return { name: company.name, startingFunds: company.startingFunds, entity, nationality, crew };
-  });
+    pending.push({ name: company.name, startingFunds: company.startingFunds, entity, nationality, homeLocation, crew });
+  }
 
   // 5b. Size the fleet up to the required ship count (per the grilled spec):
   //   required  = round(locations * 5)               -- the calibrated minimum
   //   remainder = required - ships already defined
   //   newSolo   = round(0.2 * required)  (capped at remainder)
   //               -> that many NEW Independent SoloTraders (1 ship each)
-  //   the rest  = spread round-robin over the JSON's companies (any size --
-  //               a 1-ship company gets bulked up into a multi-ship Company).
-  //               Only if the world defines NO companies at all do these become
-  //               SoloTraders too. So only ~20% of the fleet is SoloTraders;
-  //               the rest lands on the authored companies.
+  //   the rest  = spread round-robin over the real (non-SoloTrader) Companies,
+  //               skipping any whose home Location can't take another
+  //               synthesized Ship. If none of them can (or there are no
+  //               Companies at all), the rest become SoloTraders too.
   // If the world already has at least `required` ships, nothing is added.
   const required = Math.round(locations.length * DEFAULT_TARGET_SHIPS_PER_LOCATION);
-  const existingShips = pending.reduce((sum, f) => sum + f.crew.length, 0);
+  const existingShips =
+    pending.reduce((sum, f) => sum + f.crew.length, 0) + soloFactions.reduce((sum, f) => sum + f.captains.length, 0);
   const remainder = required - existingShips;
 
   const newSoloTraders: SoloTrader[] = [];
-  if (remainder > 0) {
+  // Every synthesized ship is a Ship (SHIP_CLASSES), needing Port/Platform --
+  // in an all-Spaceship/all-Railroad/etc. World with no such Location at all,
+  // there's nowhere for a synthesized Ship to go. Rather than throw (this is
+  // just padding toward a calibrated target, not anything the world author
+  // asked for), silently fall short of `required` instead.
+  const anyLocationTakesShips = locations.some((loc) => locationSupportsTransport(loc, probeShip));
+  if (remainder > 0 && anyLocationTakesShips) {
     let newSolo = Math.min(remainder, Math.round(SOLO_TRADER_FRACTION * required));
     let companyShipsToAdd = remainder - newSolo;
 
-    if (pending.length === 0) {
-      // No companies to distribute to -> the rest become SoloTraders too.
+    const eligiblePending = pending.filter((f) => {
+      const home = getLocation(f.homeLocation);
+      return home !== undefined && locationSupportsTransport(home, probeShip);
+    });
+    if (eligiblePending.length === 0) {
+      // No Company can take another (synthesized) Ship -> the rest become SoloTraders too.
       newSolo += companyShipsToAdd;
       companyShipsToAdd = 0;
     } else {
       for (let i = 0; i < companyShipsToAdd; i++) {
-        const target = pending[i % pending.length];
-        target.crew.push(generateCrewSlot(target.nationality));
+        const target = eligiblePending[i % eligiblePending.length];
+        target.crew.push(generateCrewSlot(target.nationality, target.homeLocation));
         target.startingFunds += SYNTH_CASH_PER_SHIP;
       }
     }
 
     for (let i = 0; i < newSolo; i++) {
       const nationality = randomNationality(fleetRng);
-      const crew: FleetCrew = [generateCrewSlot(nationality)];
+      const homeLocation = randomCompatibleLocation([probeShip]);
+      const crew: FleetCrew = [generateCrewSlot(nationality, homeLocation)];
       newSoloTraders.push(
         new SoloTrader(randomCompanyName(fleetRng, NATIONALITY_POOLS[nationality].companies), crew, SYNTH_CASH_PER_SHIP),
       );
     }
   }
 
-  // 5c. Construct the (possibly augmented) authored factions, then append the
-  // new Independent SoloTraders. Faction subclass mirrors the editor's
-  // factionType(): exactly one ship -> SoloTrader, otherwise Company.
+  // 5c. Construct the (possibly augmented) authored Companies, then append
+  // every SoloTrader (authored 1-ship companies, plus the newly synthesized
+  // ones).
   const factions: Faction[] = [];
   for (const f of pending) {
-    const faction = f.crew.length === 1
-      ? new SoloTrader(f.name, f.crew, f.startingFunds)
-      : new Company(f.name, f.crew, f.startingFunds);
-    faction.politicalEntity = f.entity;
-    factions.push(faction);
+    const company = new Company(f.name, f.crew, f.startingFunds, f.homeLocation);
+    company.politicalEntity = f.entity;
+    factions.push(company);
   }
-  factions.push(...newSoloTraders);
+  factions.push(...soloFactions, ...newSoloTraders);
 
   // 6. Assemble the World. No pirates/police (the editor doesn't model them);
   // event probabilities are irrelevant since random events are disabled.

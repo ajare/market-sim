@@ -19,8 +19,8 @@ import {
 } from "./distance";
 import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGenerators";
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English). */
-export const WORLD_JSON_VERSION = 4;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld). */
+export const WORLD_JSON_VERSION = 5;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -135,6 +135,21 @@ export function parseWorldJson(text: string): EditorWorld {
   };
 }
 
+/** The sliver of the File System Access API (Chromium-only) this module needs -- not yet in lib.dom.d.ts, so declared locally rather than widening the whole global Window type. */
+interface FileSystemWritableFileStream {
+  write(data: BlobPart): Promise<void>;
+  close(): Promise<void>;
+}
+interface FileSystemFileHandle {
+  createWritable(): Promise<FileSystemWritableFileStream>;
+}
+interface SaveFilePickerOptions {
+  suggestedName?: string;
+  types?: Array<{ description: string; accept: Record<string, string[]> }>;
+}
+type ShowSaveFilePicker = (options?: SaveFilePickerOptions) => Promise<FileSystemFileHandle>;
+
+/** Unconditional browser download via a synthetic anchor click -- lands wherever the browser's default download location is, with no picker. Used as the fallback where showSaveFilePicker isn't available. */
 export function downloadJson(json: string, filename: string): void {
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -143,4 +158,33 @@ export function downloadJson(json: string, filename: string): void {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Saves `json` to disk, prompting the user for a filename and location via
+ * the File System Access API's save dialog where the browser supports it
+ * (Chromium-based browsers); falls back to the no-dialog `downloadJson` on
+ * Firefox/Safari, which lack that API. A user-cancelled dialog resolves
+ * quietly (no error, no fallback download) rather than propagating the
+ * picker's AbortError.
+ */
+export async function saveJsonWithDialog(json: string, suggestedName: string): Promise<void> {
+  const showSaveFilePicker = (window as unknown as { showSaveFilePicker?: ShowSaveFilePicker }).showSaveFilePicker;
+  if (typeof showSaveFilePicker !== "function") {
+    downloadJson(json, suggestedName);
+    return;
+  }
+  let handle: FileSystemFileHandle;
+  try {
+    handle = await showSaveFilePicker({
+      suggestedName,
+      types: [{ description: "World JSON", accept: { "application/json": [".json"] } }],
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    throw err;
+  }
+  const writable = await handle.createWritable();
+  await writable.write(json);
+  await writable.close();
 }

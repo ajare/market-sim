@@ -10,7 +10,7 @@ import { RouteInspector } from "./components/RouteInspector";
 import { CommoditiesPanel } from "./components/CommoditiesPanel";
 import { CompaniesPanel } from "./components/CompaniesPanel";
 import { PoliticalEntitiesPanel } from "./components/PoliticalEntitiesPanel";
-import { worldToJson, parseWorldJson, downloadJson } from "./worldJson";
+import { worldToJson, parseWorldJson, saveJsonWithDialog } from "./worldJson";
 import "./App.css";
 
 function App() {
@@ -41,8 +41,12 @@ function App() {
     });
   }
 
-  function handleExport() {
-    downloadJson(currentWorldJson(), "world.json");
+  async function handleExport() {
+    try {
+      await saveJsonWithDialog(currentWorldJson(), "world.json");
+    } catch (err) {
+      window.alert(`Could not export World: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   async function handleCopy() {
@@ -79,48 +83,56 @@ function App() {
       <header className="app-header">
         <h1>World Editor</h1>
         <WorldScaleControl />
+        <span className="toolbar-divider" />
         <DistanceModeControl />
-        <button type="button" onClick={handleExport} disabled={isEmpty}>
-          Export world.json
-        </button>
-        <button type="button" onClick={handleCopy} disabled={isEmpty}>
-          {copied ? "Copied!" : "Copy JSON"}
-        </button>
-        <button type="button" onClick={() => fileInputRef.current?.click()}>
-          Import world.json
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json,.json"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void handleImportFile(file);
-            // Reset so re-selecting the same file still fires onChange.
-            e.target.value = "";
-          }}
-        />
-        <button type="button" onClick={() => backgroundInputRef.current?.click()}>
-          {backgroundImage !== null ? "Change background" : "Set background"}
-        </button>
-        {backgroundImage !== null && (
-          <button type="button" onClick={() => setBackgroundImage(null)}>
-            Clear background
+        <span className="toolbar-divider" />
+        <div className="toolbar-group">
+          <button type="button" onClick={() => fileInputRef.current?.click()}>
+            Import JSON
           </button>
-        )}
+          <button type="button" onClick={handleExport} disabled={isEmpty}>
+            Export JSON
+          </button>
+          <button type="button" onClick={handleCopy} disabled={isEmpty}>
+            {copied ? "Copied!" : "Copy JSON"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleImportFile(file);
+              // Reset so re-selecting the same file still fires onChange.
+              e.target.value = "";
+            }}
+          />
+        </div>
+        <span className="toolbar-divider" />
+        <div className="toolbar-group">
+          <button type="button" onClick={() => backgroundInputRef.current?.click()}>
+            {backgroundImage !== null ? "Change background" : "Set background"}
+          </button>
+          {backgroundImage !== null && (
+            <button type="button" onClick={() => setBackgroundImage(null)}>
+              Clear background
+            </button>
+          )}
+          <input
+            ref={backgroundInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleBackgroundFile(file);
+              e.target.value = "";
+            }}
+          />
+        </div>
+        <span className="toolbar-divider" />
         <AutoConnectRoutesControl />
-        <input
-          ref={backgroundInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleBackgroundFile(file);
-            e.target.value = "";
-          }}
-        />
       </header>
       <div className="app-body">
         <aside className="sidebar-left">

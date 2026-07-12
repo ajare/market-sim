@@ -5,7 +5,7 @@
  */
 import { create } from "zustand";
 import {
-  createLocation, compatibleRouteTypes,
+  createLocation, compatibleRouteTypes, factionType,
   DEFAULT_COMMODITY_RATE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
   ROUTE_TERMINAL_COMPATIBILITY,
   type Commodity, type CommodityField, type EditorCompany, type EditorFleetMember, type EditorRoute,
@@ -17,6 +17,7 @@ import {
   type DistanceConfig, type DistanceMode,
 } from "../distance";
 import { DEFAULT_NATIONALITY, type Nationality } from "../nameGenerators";
+import { defaultCompanyHomeLocation, refreshCompanyHomeLocations, resolveCompanyHomeLocation } from "../companyHome";
 
 let nextId = 1;
 let nextPoliticalEntityId = 1;
@@ -160,8 +161,10 @@ interface EditorStore {
   ) => void;
   updateCompanyName: (id: string, name: string) => void;
   updateCompanyStartingFunds: (id: string, startingFunds: number) => void;
-  /** Sets a Company's PoliticalEntity affiliation, or null for Independent. */
+  /** Sets a Company's PoliticalEntity affiliation, or null for Independent -- also resets homeLocationId to the new affiliation's default (see companyHome.ts). */
   updateCompanyPoliticalEntity: (id: string, politicalEntityId: string | null) => void;
+  /** Sets a Company's home Location directly (the inspector's dropdown) -- no-op if the Company doesn't exist. */
+  updateCompanyHomeLocation: (id: string, locationId: string) => void;
   removeCompany: (id: string) => void;
   /** Adds a Captain/Transport pair to a Company's fleet -- no-op if the Company doesn't exist. */
   addFleetMember: (companyId: string, transportType: TransportType, transportName: string, captainName: string) => void;
@@ -215,13 +218,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       const removedIds = new Set(s.locations.filter((loc) => loc.politicalEntityId === id).map((loc) => loc.id));
       const remainingLocations = s.locations.filter((loc) => !removedIds.has(loc.id));
       const routes = s.routes.filter((r) => !removedIds.has(r.locationAId) && !removedIds.has(r.locationBId));
+      // A Company affiliated with the removed PoliticalEntity falls back to
+      // Independent rather than dangling; nulling its homeLocationId here
+      // (rather than leaving whatever it was) forces refreshCompanyHomeLocations
+      // below to unconditionally recompute a fresh default for the new (null)
+      // affiliation, same as changing it manually would (see
+      // updateCompanyPoliticalEntity) -- it also catches any OTHER Company
+      // whose home Location was one of this entity's, now removed along with it.
+      const reaffiliated = s.companies.map((c) =>
+        c.politicalEntityId === id ? { ...c, politicalEntityId: null, homeLocationId: null } : c,
+      );
       return {
         politicalEntities: s.politicalEntities.filter((c) => c.id !== id),
         locations: remainingLocations,
         routes,
-        // A Company affiliated with the removed PoliticalEntity falls back to
-        // Independent rather than dangling.
-        companies: s.companies.map((c) => (c.politicalEntityId === id ? { ...c, politicalEntityId: null } : c)),
+        companies: refreshCompanyHomeLocations(reaffiliated, remainingLocations),
         selectedId: remainingLocations.some((loc) => loc.id === s.selectedId) ? s.selectedId : null,
         selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
       };
@@ -279,10 +290,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     // a PoliticalEntity that isn't in the imported World -- either way the
     // Company reads as Independent rather than dangling.
     const entityIds = new Set(world.politicalEntities.map((p) => p.id));
-    const companies = world.companies.map((c) => ({
+    const companiesWithEntity = world.companies.map((c) => ({
       ...c,
       politicalEntityId: c.politicalEntityId != null && entityIds.has(c.politicalEntityId) ? c.politicalEntityId : null,
+      // Missing (pre-v5 files) or dangling homeLocationId defaults to null here;
+      // refreshCompanyHomeLocations below resolves it (or leaves a SoloTrader's
+      // at null) against the just-imported Locations.
+      homeLocationId: c.homeLocationId ?? null,
     }));
+    const companies = refreshCompanyHomeLocations(companiesWithEntity, locations);
 
     set({
       worldScale,
@@ -310,7 +326,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set((s) => ({ locations: [...s.locations, location], selectedId: id, selectedRouteId: null }));
   },
 
-  updateLocation: (id, patch) => set((s) => ({ locations: updateOne(s.locations, id, patch) })),
+  // Reassigning a Location's politicalEntityId (see LocationInspector) can
+  // change which Locations a PoliticalEntity owns, same invalidation risk as
+  // removing one outright -- refreshCompanyHomeLocations is cheap and a no-op
+  // for any Company this doesn't actually affect, so it's simplest to just
+  // always run it here rather than special-case which patches matter.
+  updateLocation: (id, patch) =>
+    set((s) => {
+      const locations = updateOne(s.locations, id, patch);
+      return { locations, companies: refreshCompanyHomeLocations(s.companies, locations) };
+    }),
 
   // x/y are normalized canvas coordinates in [0,1] (see WorldCanvas).
   moveLocation: (id, x, y) =>
@@ -321,9 +346,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   removeLocation: (id) =>
     set((s) => {
       const routes = s.routes.filter((r) => r.locationAId !== id && r.locationBId !== id);
+      const locations = s.locations.filter((loc) => loc.id !== id);
       return {
-        locations: s.locations.filter((loc) => loc.id !== id),
+        locations,
         routes,
+        // Any Company whose home Location was this one gets a freshly
+        // recomputed default (see companyHome.ts) rather than dangling.
+        companies: refreshCompanyHomeLocations(s.companies, locations),
         selectedId: s.selectedId === id ? null : s.selectedId,
         selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
       };
@@ -365,7 +394,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         const required = ROUTE_TERMINAL_COMPATIBILITY[r.routeType];
         return required.some((t) => a.terminalTypes.includes(t)) && required.some((t) => b.terminalTypes.includes(t));
       });
-      return { locations, routes, selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null };
+      return {
+        locations,
+        routes,
+        // A Company home-ported here whose fleet no longer fits this
+        // Location's new TerminalTypes gets a freshly recomputed default.
+        companies: refreshCompanyHomeLocations(s.companies, locations),
+        selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
+      };
     }),
 
   routes: [],
@@ -614,22 +650,50 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     })),
 
   addCompany: (name, startingFunds = DEFAULT_COMPANY_STARTING_FUNDS) =>
-    set((s) => ({
-      companies: [...s.companies, { id: `company-${nextCompanyId++}`, name, startingFunds, fleet: [], politicalEntityId: null }],
-    })),
+    set((s) => {
+      const fleet: EditorFleetMember[] = [];
+      const homeLocationId = defaultCompanyHomeLocation(null, s.locations, []);
+      return {
+        companies: [
+          ...s.companies,
+          { id: `company-${nextCompanyId++}`, name, startingFunds, fleet, politicalEntityId: null, homeLocationId },
+        ],
+      };
+    }),
   addGeneratedCompany: (name, members, startingFunds = DEFAULT_COMPANY_STARTING_FUNDS) =>
     set((s) => {
       const fleet: EditorFleetMember[] = members.map((m) => ({ id: `fleet-${nextFleetMemberId++}`, ...m }));
+      // A 1-ship generated fleet is a SoloTrader (no home port) -- anything
+      // else needs one, defaulted the same way a plain addCompany's does.
+      const homeLocationId =
+        fleet.length === 1 ? null : defaultCompanyHomeLocation(null, s.locations, members.map((m) => m.transportType));
       return {
-        companies: [...s.companies, { id: `company-${nextCompanyId++}`, name, startingFunds, fleet, politicalEntityId: null }],
+        companies: [
+          ...s.companies,
+          { id: `company-${nextCompanyId++}`, name, startingFunds, fleet, politicalEntityId: null, homeLocationId },
+        ],
       };
     }),
   updateCompanyName: (id, name) =>
     set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, name } : c)) })),
   updateCompanyStartingFunds: (id, startingFunds) =>
     set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, startingFunds } : c)) })),
+  // Changing affiliation always resets homeLocationId to the new entity's
+  // default (per spec), even if the old one would still be compatible --
+  // unlike the "keep it if still valid" policy resolveCompanyHomeLocation
+  // applies everywhere else.
   updateCompanyPoliticalEntity: (id, politicalEntityId) =>
-    set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, politicalEntityId } : c)) })),
+    set((s) => ({
+      companies: s.companies.map((c) => {
+        if (c.id !== id) return c;
+        const transportTypes = c.fleet.map((m) => m.transportType);
+        const homeLocationId =
+          factionType(c.fleet) === "SoloTrader" ? null : defaultCompanyHomeLocation(politicalEntityId, s.locations, transportTypes);
+        return { ...c, politicalEntityId, homeLocationId };
+      }),
+    })),
+  updateCompanyHomeLocation: (id, locationId) =>
+    set((s) => ({ companies: s.companies.map((c) => (c.id === id ? { ...c, homeLocationId: locationId } : c)) })),
   removeCompany: (id) => set((s) => ({ companies: s.companies.filter((c) => c.id !== id) })),
 
   addFleetMember: (companyId, transportType, transportName, captainName) =>
@@ -637,13 +701,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       companies: s.companies.map((c) => {
         if (c.id !== companyId) return c;
         const member: EditorFleetMember = { id: `fleet-${nextFleetMemberId++}`, transportType, transportName, captainName };
-        return { ...c, fleet: [...c.fleet, member] };
+        const updated = { ...c, fleet: [...c.fleet, member] };
+        return { ...updated, homeLocationId: resolveCompanyHomeLocation(updated, s.locations) };
       }),
     })),
   removeFleetMember: (companyId, memberId) =>
     set((s) => ({
-      companies: s.companies.map((c) =>
-        c.id === companyId ? { ...c, fleet: c.fleet.filter((m) => m.id !== memberId) } : c,
-      ),
+      companies: s.companies.map((c) => {
+        if (c.id !== companyId) return c;
+        const updated = { ...c, fleet: c.fleet.filter((m) => m.id !== memberId) };
+        return { ...updated, homeLocationId: resolveCompanyHomeLocation(updated, s.locations) };
+      }),
     })),
 }));

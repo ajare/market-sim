@@ -14,7 +14,7 @@ import { Commodity, buildCommodities } from "./commodity";
 import { Location, type TerminalType } from "./location";
 import { PoliticalEntity } from "./politicalEntity";
 import {
-  DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, normalizedDistance, type DistanceConfig,
+  DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, worldDistance, type DistanceConfig,
 } from "./distance";
 
 export const FUEL_BASE_PRICE = 1.25;
@@ -367,14 +367,12 @@ export function distanceBetween(locationA: string, locationB: string): number {
 
 /**
  * Distance between two world-coordinate points under the active DISTANCE_CONFIG
- * (see distance.ts). The stored coordinates are world units, so they're divided
- * by the config's worldScale back to the normalized [0,1] fractions the
- * lon/lat mapping expects; in flat mode (worldScale 1 by default) this is just
- * Math.hypot. Route uses this to measure each segment of a Route's curve.
+ * (see distance.ts) -- the stored coordinates are world units, matching
+ * worldDistance's convention (in flat mode, worldScale 1 by default, this is
+ * just Math.hypot). Route uses this to measure each segment of a Route's curve.
  */
 export function pointDistance(x1: number, y1: number, x2: number, y2: number): number {
-  const scale = DISTANCE_CONFIG.worldScale;
-  return normalizedDistance(x1 / scale, y1 / scale, x2 / scale, y2 / scale, DISTANCE_CONFIG);
+  return worldDistance(x1, y1, x2, y2, DISTANCE_CONFIG);
 }
 
 export function travelDaysBetween(

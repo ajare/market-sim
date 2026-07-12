@@ -9,19 +9,23 @@ import { useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
 import {
   DEFAULT_COMPANY_STARTING_FUNDS, FAMOUS_HISTORICAL_NAMES, factionType, TRANSPORT_TYPES, TRANSPORT_TYPE_LABELS,
-  type TransportType,
+  type EditorLocation, type TransportType,
 } from "../types";
 import {
   NATIONALITIES, generateCaptainName, generateCompanyName, generateShipName, type Nationality,
 } from "../nameGenerators";
+import { locationSupportsFleet, locationSupportsTransportType } from "../companyHome";
 
 function randomFamousName(): string {
   return FAMOUS_HISTORICAL_NAMES[Math.floor(Math.random() * FAMOUS_HISTORICAL_NAMES.length)];
 }
 
-function FleetMemberForm({ companyId }: { companyId: string }) {
+/** `homeLocation` is null for a SoloTrader (no home Location to constrain against yet) or a real Company that hasn't resolved one -- either way every TransportType is offered. */
+function FleetMemberForm({ companyId, homeLocation }: { companyId: string; homeLocation: EditorLocation | null }) {
   const addFleetMember = useEditorStore((s) => s.addFleetMember);
-  const [transportType, setTransportType] = useState<TransportType>("Ship");
+  const availableTypes =
+    homeLocation !== null ? TRANSPORT_TYPES.filter((t) => locationSupportsTransportType(homeLocation, t)) : TRANSPORT_TYPES;
+  const [transportType, setTransportType] = useState<TransportType>(availableTypes[0] ?? "Ship");
   const [transportName, setTransportName] = useState("");
   const [captainName, setCaptainName] = useState("");
 
@@ -32,12 +36,23 @@ function FleetMemberForm({ companyId }: { companyId: string }) {
     setCaptainName("");
   }
 
+  if (availableTypes.length === 0) {
+    return (
+      <div className="fleet-member-form fleet-member-form-blocked">
+        This Company's home Location doesn't support any Transport type -- give it a TerminalType first.
+      </div>
+    );
+  }
+
   return (
     <div className="fleet-member-form">
       <label className="fleet-member-field">
         Transport type
-        <select value={transportType} onChange={(e) => setTransportType(e.target.value as TransportType)}>
-          {TRANSPORT_TYPES.map((t) => (
+        <select
+          value={availableTypes.includes(transportType) ? transportType : availableTypes[0]}
+          onChange={(e) => setTransportType(e.target.value as TransportType)}
+        >
+          {availableTypes.map((t) => (
             <option key={t} value={t}>
               {TRANSPORT_TYPE_LABELS[t]}
             </option>
@@ -67,15 +82,22 @@ function FleetMemberForm({ companyId }: { companyId: string }) {
 export function CompaniesPanel() {
   const companies = useEditorStore((s) => s.companies);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
+  const locations = useEditorStore((s) => s.locations);
   const addGeneratedCompany = useEditorStore((s) => s.addGeneratedCompany);
   const updateCompanyName = useEditorStore((s) => s.updateCompanyName);
   const updateCompanyStartingFunds = useEditorStore((s) => s.updateCompanyStartingFunds);
   const updateCompanyPoliticalEntity = useEditorStore((s) => s.updateCompanyPoliticalEntity);
+  const updateCompanyHomeLocation = useEditorStore((s) => s.updateCompanyHomeLocation);
   const removeCompany = useEditorStore((s) => s.removeCompany);
   const removeFleetMember = useEditorStore((s) => s.removeFleetMember);
   const [nationality, setNationality] = useState<Nationality>("English");
   const [numCaptains, setNumCaptains] = useState(3);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  // Only entities that actually own a Location are offered -- an entity with
+  // none can't provide a default home Location, so affiliating with it would
+  // be a dead end (see companyHome.ts).
+  const affiliatableEntities = politicalEntities.filter((p) => locations.some((l) => l.politicalEntityId === p.id));
 
   // Builds a whole Company at once from the chosen nationality: a generated
   // company name plus `numCaptains` fleet members, each with a generated
@@ -109,6 +131,15 @@ export function CompaniesPanel() {
           const faction = factionType(company.fleet);
           const affiliation =
             politicalEntities.find((p) => p.id === company.politicalEntityId)?.name ?? "Independent";
+          const homeLocation = locations.find((l) => l.id === company.homeLocationId) ?? null;
+          // A SoloTrader has no home Location at all; a real Company's
+          // dropdown only offers Locations compatible with its current fleet
+          // (see companyHome.ts) -- never one that would throw when the
+          // World is built.
+          const homeLocationOptions =
+            faction === "SoloTrader"
+              ? []
+              : locations.filter((l) => locationSupportsFleet(l, company.fleet.map((m) => m.transportType)));
           return (
             <div className="company-card" key={company.id}>
               <div className="company-card-header">
@@ -157,13 +188,40 @@ export function CompaniesPanel() {
                       }
                     >
                       <option value="">Independent</option>
-                      {politicalEntities.map((p) => (
+                      {affiliatableEntities.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name}
                         </option>
                       ))}
                     </select>
                   </label>
+
+                  {faction === "SoloTrader" ? (
+                    <div className="company-field company-home-location-note">
+                      SoloTraders have no home Location -- their one ship starts somewhere random.
+                    </div>
+                  ) : (
+                    <label className="company-field">
+                      Home Location
+                      {homeLocationOptions.length === 0 ? (
+                        <div className="company-home-location-note">
+                          No Location supports this fleet's Transport types yet.
+                        </div>
+                      ) : (
+                        <select
+                          value={company.homeLocationId ?? ""}
+                          onChange={(e) => updateCompanyHomeLocation(company.id, e.target.value)}
+                        >
+                          {company.homeLocationId === null && <option value="">-- choose a home Location --</option>}
+                          {homeLocationOptions.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </label>
+                  )}
 
                   <div className="fleet-section">
                     <div className="fleet-section-header">Fleet</div>
@@ -183,7 +241,7 @@ export function CompaniesPanel() {
                         ))}
                       </ul>
                     )}
-                    <FleetMemberForm companyId={company.id} />
+                    <FleetMemberForm companyId={company.id} homeLocation={homeLocation} />
                   </div>
                 </>
               )}
@@ -215,7 +273,13 @@ export function CompaniesPanel() {
             />
           </label>
         </div>
-        <button type="button" className="company-generator-button" onClick={handleGenerate}>
+        <button
+          type="button"
+          className="company-generator-button"
+          onClick={handleGenerate}
+          disabled={locations.length === 0}
+          title={locations.length === 0 ? "Place a Location first -- a Company needs a home Location." : undefined}
+        >
           🎲 Generate company
         </button>
       </div>

@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "editor",
+    "packages/shared"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -12,6 +16,7 @@
     "sweep": "vitest run --config vitest.sweep.config.ts"
   },
   "dependencies": {
+    "@market-sim/shared": "*",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zustand": "^5.0.14"

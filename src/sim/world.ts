@@ -8,19 +8,28 @@
  * phase-2 panel first needs it.
  */
 import { type Event, MarketEvent, LocationClosure } from "./events";
-import type { Location } from "./location";
+import { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
 import { Ship } from "./transport";
 import { Captain, type Directive } from "./captain";
 import { ENGLISH_NAMES, SPANISH_NAMES, randomName, type NameRng } from "./names";
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
+import { randomLocationName } from "./locationNames";
+import { NATIONALITY_POOLS, randomNationality } from "./nationality";
 import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
+import { locationSupportsTransport } from "./companyHome";
+import type { PoliticalEntity } from "./politicalEntity";
 import { primeRouteGraphCache } from "./pathfinding";
-import { randChoice, randInt, randRandom, randShuffle, seedSimRandom } from "./simRandom";
+import { randChoice, randInt, randRandom, randShuffle, seedSimRandom, randSample, randUniform } from "./simRandom";
+import {
+  LOCATIONS, LOCATION_COORDINATES, COMMODITIES, setGeography, getLocation, getDistanceConfig, FUEL_BASE_PRICE,
+} from "./worldData";
+import { Route, ROUTES, setRoutes, addRouteToNetwork, routeKey } from "./routes";
+import { planSeaRoutes, seaRoutesBlockedBy, type RoutePlannerLocation, type RoutePlannerRoute } from "@market-sim/shared";
 
 /** Adapts the global sim RNG to the NameRng surface randomName needs, so pirate/police captains draw names off the same live stream as the rest of the simulation. */
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
-import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
+import { BulletinBoard, contractKey, round2, type Contract, type TenderContractsOptions } from "./contracts";
 
 // Locations must fall within this range. Calibrated via seed-averaged
 // stockpile-ratio sweeps (see analysis.ts / npm run sweep): below ~20 total
@@ -98,6 +107,8 @@ export class World {
   worldwideEventProbability: number;
   locationClosureProbability: number;
   companyEventProbability: number;
+  /** Per-Market event probability new Markets are created with -- remembered so addLocation's new Markets match the rest of this World's, not a hardcoded default. */
+  private localEventProbability: number;
   closedLocations = new Map<string, LocationClosure>();
   closureLog: Array<{ day: number; location: string; event: string; durationDays: number }> = [];
   buyMarkets = new Map<string, Market>();
@@ -156,6 +167,7 @@ export class World {
     this.locationClosureProbability = init.locationClosureProbability ?? 0.001;
     this.companyEventProbability = init.companyEventProbability ?? 0.005;
     const localEventProbability = init.localEventProbability ?? 0.008;
+    this.localEventProbability = localEventProbability;
 
     this.factions = init.factions ? [...init.factions] : [];
 
@@ -294,6 +306,141 @@ export class World {
     const idx = this.captains.indexOf(captain);
     if (idx !== -1) this.captains.splice(idx, 1);
     return captain;
+  }
+
+  /**
+   * Adds a brand-new Location at (x, y) (world-unit coordinates), affiliated
+   * with `politicalEntity` -- the live-simulation counterpart of the editor's
+   * click-to-place (see NetworkView.tsx). Named from the entity's
+   * nationality (deduped against every existing Location name, world-wide --
+   * Location names are live engine keys), given a Port terminal and
+   * randomly-generated produced commodities only (drawn the same
+   * per-location way generateLocations does, but WITHOUT its world-wide
+   * production/consumption rebalance -- every other Location's numbers are
+   * left untouched). Connects it to existing sea-capable Locations via the
+   * shared route planner (the same max-distance/detour-distance rule the
+   * editor's auto-connect uses), removes any existing Sea route the new port
+   * now sits too close to, and tops up the fleet (round(current ships /
+   * current locations) new Ships, $0 starting cash, distributed round-robin
+   * across eligible multi-ship Companies at THEIR OWN home Location) to keep
+   * the ships-per-location ratio roughly constant. Returns the new Location.
+   */
+  addLocation(
+    x: number,
+    y: number,
+    politicalEntity: PoliticalEntity,
+    detourDistance: number,
+    maxDistance: number,
+  ): Location {
+    // 1. Name, world-wide unique.
+    const pool = NATIONALITY_POOLS[politicalEntity.nationality].locations;
+    const name = randomLocationName(globalNameRng, pool, this.locations.map((l) => l.name));
+
+    // 2. Randomly-generated produced commodities only -- no consumed
+    // commodities, no world-wide rebalance (see this method's doc comment).
+    const commodityNames = Object.keys(COMMODITIES);
+    const produced = randSample(commodityNames, Math.min(randInt(2, 4), commodityNames.length));
+    const producedCommodities: Record<string, number> = {};
+    const stockpiles: Record<string, number> = {};
+    const basePriceModifiers: Record<string, number> = {};
+    for (const c of produced) {
+      const modifier = round2(randUniform(0.7, 1.3));
+      producedCommodities[c] = modifier;
+      const effectiveRate = COMMODITIES[c].baseProductionRate * modifier;
+      stockpiles[c] = round2(effectiveRate * randUniform(10, 25));
+      basePriceModifiers[c] = round2(randUniform(0.85, 1.15));
+    }
+
+    const location = new Location({
+      name,
+      producedCommodities,
+      consumedCommodities: {},
+      stockpiles,
+      minStockpiles: {},
+      basePriceModifiers,
+      fuelPrice: FUEL_BASE_PRICE,
+      terminalTypes: new Set(["Port"]),
+    });
+
+    // 3. Register: PoliticalEntity, worldData's module-level geography, this
+    // World's own locations/Markets.
+    politicalEntity.locations.push(location);
+    location.politicalEntity = politicalEntity;
+
+    this.locations.push(location);
+    setGeography([...LOCATIONS, location], { ...LOCATION_COORDINATES, [name]: [x, y] });
+
+    for (const commodity of Object.keys(location.producedCommodities)) {
+      const basePrice = location.basePrice(commodity);
+      const market = new Market(commodity, location.name, location, basePrice, basePrice, "buy", this.localEventProbability);
+      this.buyMarkets.set(marketKey(location.name, commodity), market);
+    }
+    const fuelMarket = new Market(
+      "Fuel", location.name, location, location.fuelPrice, location.fuelPrice, "buy", this.localEventProbability, true,
+    );
+    this.buyMarkets.set(marketKey(location.name, "Fuel"), fuelMarket);
+
+    // 4. Route planning: connect the new port to existing sea-capable
+    // Locations (shared max-distance/detour-distance rule), then remove any
+    // existing Sea route the new port now sits too close to. ROUTES is
+    // reassigned to a brand-new Map instance (setRoutes) so pathfinding's
+    // WeakMap-keyed adjacency cache naturally misses and rebuilds -- mutating
+    // the existing Map in place would leave stale cached adjacency behind.
+    const config = getDistanceConfig();
+    const plannerLocations: RoutePlannerLocation[] = this.locations.map((l) => {
+      const [lx, ly] = LOCATION_COORDINATES[l.name];
+      return { id: l.name, x: lx, y: ly, terminalTypes: [...l.terminalTypes] };
+    });
+    const existingRoutes: RoutePlannerRoute[] = [...ROUTES.values()]
+      .flat()
+      .map((r) => ({ locationAId: r.origin, locationBId: r.destination, routeType: r.routeType }));
+
+    const newPortPlanner = plannerLocations.find((l) => l.id === name)!;
+    const blocked = seaRoutesBlockedBy(newPortPlanner, plannerLocations, existingRoutes, detourDistance, config);
+    const newPairs = planSeaRoutes(plannerLocations, existingRoutes, detourDistance, maxDistance, config);
+
+    const updatedRoutes = new Map<string, Route[]>();
+    for (const [key, list] of ROUTES) updatedRoutes.set(key, [...list]);
+    for (const b of blocked) {
+      const key = routeKey(b.locationAId, b.locationBId);
+      const remaining = (updatedRoutes.get(key) ?? []).filter((r) => r.routeType !== "Sea");
+      if (remaining.length > 0) updatedRoutes.set(key, remaining);
+      else updatedRoutes.delete(key);
+    }
+    for (const pair of newPairs) {
+      addRouteToNetwork(updatedRoutes, new Route(pair.locationAId, pair.locationBId, "Sea"));
+    }
+    setRoutes(updatedRoutes);
+    primeRouteGraphCache();
+
+    // 5. Fleet top-up: keep the ships-per-location ratio roughly constant.
+    // Only real (multi-ship) Companies with a home Location that can host a
+    // Ship are eligible -- a SoloTrader's homeLocation is always null (see
+    // faction.ts), so it's naturally excluded without an extra check.
+    const shipsBefore = this.captains.filter((c) => c.transport !== null).length;
+    const locationsBefore = this.locations.length - 1;
+    const shipsToAdd = locationsBefore > 0 ? Math.round(shipsBefore / locationsBefore) : 0;
+    const probeShip = new Ship({ name: "_ProbeShip" });
+    const eligibleCompanies: Company[] = [];
+    for (const f of this.factions) {
+      if (!(f instanceof Company) || f.homeLocation === null) continue;
+      const home = getLocation(f.homeLocation);
+      if (home !== undefined && locationSupportsTransport(home, probeShip)) eligibleCompanies.push(f);
+    }
+    if (eligibleCompanies.length > 0) {
+      for (let i = 0; i < shipsToAdd; i++) {
+        const target = eligibleCompanies[i % eligibleCompanies.length];
+        const home = target.homeLocation!;
+        const nationality = target.politicalEntity?.nationality ?? randomNationality(globalNameRng);
+        const pools = NATIONALITY_POOLS[nationality];
+        const ship = new Ship({ name: randomShipName(globalNameRng, pools.ships), crewRequirement: randInt(1, 5) });
+        const captain = new Captain(randomName(globalNameRng, pools.names), home);
+        target.addTransport(ship, captain, home, 0);
+        this.captains.push(captain);
+      }
+    }
+
+    return location;
   }
 
   private allMarkets(): Market[] {

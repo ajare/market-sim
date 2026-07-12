@@ -7,26 +7,20 @@
  * distinct curved lane on a map rather than always a straight edge.
  */
 import { Rng } from "./rng";
-import type { Location, TerminalType } from "./location";
+import type { Location } from "./location";
 import { distanceBetween, pointDistance, LOCATION_COORDINATES, WORLD_GEN_SEED } from "./worldData";
+// Imported AND re-exported so every existing `from "./routes"` import of
+// RouteType/ROUTE_TERMINAL_COMPATIBILITY keeps working -- these now live in
+// @market-sim/shared (shared with the editor).
+import type { RouteType } from "@market-sim/shared/terminal";
+import { ROUTE_TERMINAL_COMPATIBILITY, compatibleRouteTypes as sharedCompatibleRouteTypes } from "@market-sim/shared/terminal";
+export type { RouteType };
+export { ROUTE_TERMINAL_COMPATIBILITY };
 
-export type RouteType = "Land" | "Air" | "Sea" | "Space" | "Road" | "Railroad";
 export type Point = readonly [number, number];
 
 /** Whether a Route's geometry is a plain straight line between its endpoints, or a bowed Bezier curve through generated control points (see Route.controlPoints). */
 export type RouteCurveType = "Straight" | "Bezier";
-
-export const ROUTE_TERMINAL_COMPATIBILITY: Record<RouteType, TerminalType[]> = {
-  Land: ["Wagon yard"],
-  Air: ["Airport"],
-  Sea: ["Port", "Platform"],
-  // A Space route can only connect Spaceports.
-  Space: ["Spaceport"],
-  // A Road route can only connect TransitDepots.
-  Road: ["TransitDepot"],
-  // A Railroad route can only connect Stations.
-  Railroad: ["Station"],
-};
 
 export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   Air: 1.0,
@@ -192,14 +186,7 @@ export function routeKey(locationA: string, locationB: string): string {
 }
 
 function compatibleRouteTypes(origin: Location, destination: Location): RouteType[] {
-  const result: RouteType[] = [];
-  for (const routeType of Object.keys(ROUTE_TERMINAL_COMPATIBILITY) as RouteType[]) {
-    const required = ROUTE_TERMINAL_COMPATIBILITY[routeType];
-    const originHas = required.some((t) => origin.terminalTypes.has(t));
-    const destHas = required.some((t) => destination.terminalTypes.has(t));
-    if (originHas && destHas) result.push(routeType);
-  }
-  return result;
+  return sharedCompatibleRouteTypes([...origin.terminalTypes], [...destination.terminalTypes]);
 }
 
 export function generateRoutes(

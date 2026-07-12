@@ -9,7 +9,13 @@ import { LocationRoutesTable } from "./LocationRoutesTable";
 export function LocationInspector() {
   const [nationality, setNationality] = useState<Nationality>("English");
   const selectedId = useEditorStore((s) => s.selectedId);
-  const location = useEditorStore((s) => s.locations.find((l) => l.id === s.selectedId));
+  const locations = useEditorStore((s) => s.locations);
+  const location = locations.find((l) => l.id === selectedId);
+  // Derived in the render body rather than as a store selector: a selector
+  // returning a fresh array every call never settles to a stable snapshot,
+  // which sends useSyncExternalStore (what Zustand's hook is built on) into
+  // an infinite re-render loop ("Maximum update depth exceeded").
+  const otherLocationNames = locations.filter((l) => l.id !== selectedId).map((l) => l.name);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const updateLocation = useEditorStore((s) => s.updateLocation);
   const toggleTerminalType = useEditorStore((s) => s.toggleTerminalType);
@@ -49,7 +55,13 @@ export function LocationInspector() {
             type="button"
             className="random-name-button"
             title={`Generate a random ${nationality} colonial name`}
-            onClick={() => updateLocation(location.id, { name: generateLocationName(nationality) })}
+            onClick={() => {
+              try {
+                updateLocation(location.id, { name: generateLocationName(nationality, otherLocationNames) });
+              } catch (err) {
+                window.alert(err instanceof Error ? err.message : String(err));
+              }
+            }}
           >
             🎲
           </button>

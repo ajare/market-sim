@@ -1,0 +1,19 @@
+{
+  "name": "@market-sim/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./names": "./src/names.ts",
+    "./shipNames": "./src/shipNames.ts",
+    "./companyNames": "./src/companyNames.ts",
+    "./locationNames": "./src/locationNames.ts",
+    "./nationality": "./src/nationality.ts",
+    "./distance": "./src/distance.ts",
+    "./terminal": "./src/terminal.ts",
+    "./routePlanning": "./src/routePlanning.ts"
+  }
+}

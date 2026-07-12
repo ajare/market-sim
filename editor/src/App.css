@@ -23,6 +23,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.6rem;
   padding: 0.5rem 1rem;
   background: #222;
   color: #fff;
@@ -32,6 +33,19 @@ body {
   font-size: 1.1rem;
   margin: 0;
   margin-right: auto;
+}
+
+/* Separates the toolbar into its World scale / distance mode / import-export-copy / background / auto-connect groups. */
+.toolbar-divider {
+  align-self: stretch;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .world-scale-control {

@@ -23,8 +23,21 @@ import { Market, marketKey } from "./markets";
 import { randChoice, randUniform } from "./simRandom";
 import type { BulletinBoard, Contract, ContractType } from "./contracts";
 import type { PoliticalEntity } from "./politicalEntity";
+import { locationSupportsTransport } from "./companyHome";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
+
+/** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see Faction.dedupeCaptainName. */
+function alphaSequence(index: number): string {
+  let n = index + 1;
+  let s = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
 
 /** Range (inclusive, as a fraction of seized quantity) a raid destroys outright before fencing -- rolled fresh per attack. See PirateBrigade.attack. */
 export const MIN_CARGO_DESTRUCTION_FRACTION = 0.25;
@@ -66,6 +79,10 @@ export class Faction {
   /** The single shared pool every captain's `cash` reads/writes through -- only meaningful when poolsCash. */
   cash: number = 0;
   netWorthHistory: FactionNetWorthSnapshot[] = [];
+  /** Names already in use by this Faction's fleet, so a duplicate (whether from a name generator's small pool or hand-authored JSON) gets disambiguated -- see dedupeTransportName. */
+  private readonly transportNames = new Set<string>();
+  /** Names already in use by this Faction's Captains -- see dedupeCaptainName. */
+  private readonly captainNames = new Set<string>();
 
   constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
     this.name = name;
@@ -73,6 +90,8 @@ export class Faction {
       captain.transport = transport;
       captain.location = homeLocation;
       this.captains.push(captain);
+      this.dedupeTransportName(transport);
+      this.dedupeCaptainName(captain);
       this.crewTransport(transport, captain);
     }
     this.startingCash = startingCash;
@@ -96,6 +115,48 @@ export class Faction {
     }
   }
 
+  /**
+   * Renames `transport` if its name collides with one already in this
+   * Faction's fleet, appending " 2", " 3", etc. until unique -- so no two
+   * Ships in the same Company (or SoloTrader/PirateBrigade/PoliceFleet) ever
+   * share a display name, whether the collision came from a name
+   * generator's pool being smaller than the fleet or from hand-authored JSON.
+   */
+  private dedupeTransportName(transport: Transport): void {
+    if (this.transportNames.has(transport.name)) {
+      const base = transport.name;
+      let suffix = 2;
+      while (this.transportNames.has(`${base} ${suffix}`)) suffix += 1;
+      transport.name = `${base} ${suffix}`;
+    }
+    this.transportNames.add(transport.name);
+  }
+
+  /**
+   * Renames `captain` if their name collides with one already in this
+   * Faction, inserting a middle initial before the last name -- "A." for the
+   * first collision, "B." for the next, and so on (falling back to "AA.",
+   * "AB.", ... past "Z." for a long run of same-named captains), replacing
+   * any middle initial a prior dedupe pass already inserted. A name with no
+   * space (no separate last name) just gets the initial appended.
+   */
+  private dedupeCaptainName(captain: Captain): void {
+    if (this.captainNames.has(captain.name)) {
+      const parts = captain.name.trim().split(/\s+/);
+      const firstName = parts[0];
+      const lastName = parts.length > 1 ? parts[parts.length - 1] : null;
+      let index = 0;
+      let candidate: string;
+      do {
+        const initial = alphaSequence(index);
+        candidate = lastName !== null ? `${firstName} ${initial}. ${lastName}` : `${firstName} ${initial}.`;
+        index += 1;
+      } while (this.captainNames.has(candidate));
+      captain.name = candidate;
+    }
+    this.captainNames.add(captain.name);
+  }
+
   /** Fills a Transport's `.crew` (the captain plus Sailors for any extra crewRequirement seats) -- shared by the constructor's initial fleet and addTransport's single-recruit path. */
   private crewTransport(transport: Transport, captain: Captain): void {
     transport.crew = [captain];
@@ -117,6 +178,8 @@ export class Faction {
     captain.transport = transport;
     captain.location = homeLocation;
     this.captains.push(captain);
+    this.dedupeTransportName(transport);
+    this.dedupeCaptainName(captain);
     this.crewTransport(transport, captain);
 
     if (this.poolsCash) {
@@ -234,6 +297,61 @@ export class Company extends ContractFulfiller {
    * all of them at once, but nothing stops per-Company variation.
    */
   contractStrategy: ContractStrategy = "compare";
+
+  /** Backing field for the homeLocation getter -- see it for why this is a getter, not a plain field. */
+  private readonly _homeLocation: string | null;
+
+  /**
+   * The Location this Company's whole fleet is based out of -- every Transport
+   * in it must be compatible with this Location's TerminalTypes (see
+   * validateHomeLocationCompatibility). A getter (like poolsCash/canSmuggle)
+   * so SoloTrader can override it to always report null ("SoloTraders do not
+   * have a home port") regardless of what was passed to the constructor.
+   */
+  get homeLocation(): string | null {
+    return this._homeLocation;
+  }
+
+  constructor(name: string, crew: FleetCrew, startingCash: number = 0.0, homeLocation: string | null = null) {
+    if (homeLocation !== null) {
+      const location = getLocation(homeLocation);
+      if (location === undefined) {
+        throw new Error(`Company '${name}': home Location '${homeLocation}' does not exist.`);
+      }
+      for (const [transport] of crew) {
+        if (!locationSupportsTransport(location, transport)) {
+          throw new Error(
+            `Company '${name}': home Location '${homeLocation}' does not have a TerminalType required by '${transport.name}'.`,
+          );
+        }
+      }
+    }
+    super(name, crew, startingCash);
+    this._homeLocation = homeLocation;
+  }
+
+  /** Throws if `transport` isn't compatible with this Company's home Location -- shared by the constructor (initial fleet) and addTransport (later additions). No-op when homeLocation is null (a SoloTrader, which has none). */
+  private validateHomeLocationCompatibility(transport: Transport): void {
+    if (this._homeLocation === null) return;
+    const location = getLocation(this._homeLocation);
+    if (location === undefined || !locationSupportsTransport(location, transport)) {
+      throw new Error(
+        `Company '${this.name}': home Location '${this._homeLocation}' does not have a TerminalType required by '${transport.name}'.`,
+      );
+    }
+  }
+
+  /**
+   * Same as Faction.addTransport, except: (1) a new Transport incompatible
+   * with this Company's home Location throws, matching the constructor's
+   * check; (2) the new Captain always starts at the Company's home Location
+   * -- the caller-supplied `homeLocation` param is only honored when this
+   * Company has none (a SoloTrader, which overrides homeLocation to null).
+   */
+  override addTransport(transport: Transport, captain: Captain, homeLocation: string, startingCash: number = 0.0): Captain {
+    this.validateHomeLocationCompatibility(transport);
+    return super.addTransport(transport, captain, this._homeLocation ?? homeLocation, startingCash);
+  }
 
   directFleet(
     _day: number,
@@ -541,11 +659,16 @@ export class SoloTrader extends Company {
     if (crew.length !== 1) {
       throw new Error(`SoloTrader '${name}' must have exactly one Transport/Captain, got ${crew.length}`);
     }
-    super(name, crew, startingCash);
+    super(name, crew, startingCash, null);
   }
 
   override get poolsCash(): boolean {
     return false;
+  }
+
+  /** SoloTraders do not have a home port, regardless of what Company's constructor stored -- always null. */
+  override get homeLocation(): string | null {
+    return null;
   }
 
   override contractTypes: readonly ContractType[] = [];

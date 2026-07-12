@@ -15,9 +15,10 @@ import { DEFAULT_BASE_CONSUMPTION_RATE, DEFAULT_BASE_PRICE, DEFAULT_BASE_PRODUCT
 // binding is read lazily via the COMMODITIES getter below, never at this
 // module's own top-level evaluation time.
 import * as worldData from "./worldData";
-
-export type TerminalType =
-  | "Port" | "Wagon yard" | "Airport" | "Platform" | "Spaceport" | "TransitDepot" | "Station";
+// Imported AND re-exported so every existing `from "./location"` import of
+// TerminalType keeps working -- the type itself now lives in @market-sim/shared.
+import type { TerminalType } from "@market-sim/shared/terminal";
+export type { TerminalType };
 
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
