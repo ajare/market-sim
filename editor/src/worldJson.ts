@@ -14,14 +14,22 @@
 import type {
   Commodity, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity,
 } from "./types";
+import {
+  DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
+} from "./distance";
+import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGenerators";
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. */
-export const WORLD_JSON_VERSION = 2;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English). */
+export const WORLD_JSON_VERSION = 4;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
   version: number;
   worldScale: number;
+  /** How distances are measured -- see distance.ts. Defaults to "flat" for files predating this field. */
+  distanceMode: DistanceMode;
+  globeRadius: number;
+  globeLonSpan: number;
   politicalEntities: PoliticalEntity[];
   locations: EditorLocation[];
   commodities: Commodity[];
@@ -98,10 +106,28 @@ export function parseWorldJson(text: string): EditorWorld {
   if (worldScale === undefined) {
     throw new Error("Missing or invalid 'worldScale'.");
   }
+  const distanceMode: DistanceMode = obj.distanceMode === "globe" ? "globe" : DEFAULT_DISTANCE_MODE;
+  const globeRadius =
+    typeof obj.globeRadius === "number" && Number.isFinite(obj.globeRadius) && obj.globeRadius > 0
+      ? obj.globeRadius
+      : defaultGlobeRadius(worldScale);
+  const globeLonSpan =
+    typeof obj.globeLonSpan === "number" && Number.isFinite(obj.globeLonSpan) && obj.globeLonSpan > 0
+      ? obj.globeLonSpan
+      : DEFAULT_GLOBE_LON_SPAN;
   return {
     version: typeof obj.version === "number" ? obj.version : WORLD_JSON_VERSION,
     worldScale,
-    politicalEntities: asArray<PoliticalEntity>(obj.politicalEntities),
+    distanceMode,
+    globeRadius,
+    globeLonSpan,
+    // Default a missing/invalid nationality (files predating v4) to English.
+    politicalEntities: asArray<PoliticalEntity>(obj.politicalEntities).map((pe) => ({
+      ...pe,
+      nationality: (NATIONALITIES as string[]).includes((pe as { nationality?: string }).nationality ?? "")
+        ? ((pe as unknown as { nationality: Nationality }).nationality)
+        : DEFAULT_NATIONALITY,
+    })),
     locations: locationsToNormalized(asArray<EditorLocation>(obj.locations), worldScale),
     commodities: asArray<Commodity>(obj.commodities),
     companies: asArray<EditorCompany>(obj.companies),

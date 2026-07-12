@@ -333,11 +333,13 @@ export function NetworkView() {
 
       ctx.lineWidth = 1;
       ctx.globalAlpha = 0.55;
-      for (const route of ROUTES.values()) {
-        ctx.strokeStyle = ROUTE_COLORS[route.routeType];
-        ctx.beginPath();
-        traceCurve(route, route.origin, false);
-        ctx.stroke();
+      for (const routeList of ROUTES.values()) {
+        for (const route of routeList) {
+          ctx.strokeStyle = ROUTE_COLORS[route.routeType];
+          ctx.beginPath();
+          traceCurve(route, route.origin, false);
+          ctx.stroke();
+        }
       }
       ctx.globalAlpha = 1;
 

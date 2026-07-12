@@ -9,7 +9,7 @@
  * point count -- see deriveRouteCurveType -- flipping to Bezier/Straight
  * automatically as the count crosses 2 either way).
  */
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
 import { routeRenderPoints, sortRouteControlPoints, type RouteControlPoint } from "../types";
 
@@ -28,7 +28,7 @@ export function WorldCanvas() {
   const selectedId = useEditorStore((s) => s.selectedId);
   const selectedRouteId = useEditorStore((s) => s.selectedRouteId);
   const backgroundImage = useEditorStore((s) => s.backgroundImage);
-  const pendingPoliticalEntityId = useEditorStore((s) => s.pendingPoliticalEntityId);
+  const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const addLocation = useEditorStore((s) => s.addLocation);
   const selectLocation = useEditorStore((s) => s.selectLocation);
   const moveLocation = useEditorStore((s) => s.moveLocation);
@@ -53,6 +53,10 @@ export function WorldCanvas() {
     /** Screen coords at the start of this drag -- used to tell a plain click (remove) from a real drag (leave moved) apart on release. Not tracked for a freshly created point (see handleRoutePointerDown), which should never be deleted just for not having moved yet. */
     start: { x: number; y: number } | null;
   } | null>(null);
+  /** An open "which PoliticalEntity owns this new Location?" menu: its pixel position within the canvas (for placing the menu) and the normalized [0,1] point the Location would be created at. Null when no menu is open. */
+  const [placeMenu, setPlaceMenu] = useState<{ pixelX: number; pixelY: number; normX: number; normY: number } | null>(
+    null,
+  );
 
   const locationById = new Map(locations.map((loc) => [loc.id, loc]));
   const connectingFrom = connectingFromId !== null ? locationById.get(connectingFromId) ?? null : null;
@@ -77,6 +81,16 @@ export function WorldCanvas() {
     return () => observer.disconnect();
   }, []);
 
+  // Escape closes the open placement menu (same as picking "<cancel>").
+  useEffect(() => {
+    if (placeMenu === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPlaceMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [placeMenu]);
+
   // A client (screen) point mapped through the SVG's own transform to pixel
   // (viewBox) coordinates.
   function toPixelPoint(clientX: number, clientY: number): { x: number; y: number } {
@@ -98,12 +112,25 @@ export function WorldCanvas() {
 
   function handleBackgroundClick(e: React.MouseEvent<SVGSVGElement>) {
     if (draggingId !== null) return;
+    // Open the owner-picking menu at the click, rather than placing straight
+    // away -- the chosen PoliticalEntity (or "<cancel>") drives creation.
+    const svg = svgRef.current;
+    if (svg === null) return;
+    const rect = svg.getBoundingClientRect();
     const { x, y } = toNormalizedPoint(e.clientX, e.clientY);
-    addLocation(x, y);
+    setPlaceMenu({ pixelX: e.clientX - rect.left, pixelY: e.clientY - rect.top, normX: x, normY: y });
+  }
+
+  /** Create the pending Location under `politicalEntityId` and close the menu. */
+  function confirmPlacement(politicalEntityId: string) {
+    if (placeMenu === null) return;
+    addLocation(placeMenu.normX, placeMenu.normY, politicalEntityId);
+    setPlaceMenu(null);
   }
 
   function handlePinPointerDown(e: React.PointerEvent<SVGGElement>, id: string) {
     e.stopPropagation();
+    setPlaceMenu(null);
     (e.target as Element).setPointerCapture(e.pointerId);
     if (e.shiftKey) {
       setConnectingFromId(id);
@@ -183,9 +210,9 @@ export function WorldCanvas() {
         // has-background class) so this shows through.
         <img className="canvas-background" src={backgroundImage} alt="" draggable={false} />
       )}
-      {pendingPoliticalEntityId === null && (
+      {politicalEntities.length === 0 && (
         <div className="canvas-hint">
-          Select (or create) a Political Entity in the sidebar before placing a Location
+          Create a Political Entity in the sidebar before placing a Location
         </div>
       )}
       {connectingFrom !== null && connectingFrom.terminalTypes.length === 0 && (
@@ -297,6 +324,37 @@ export function WorldCanvas() {
         })}
         </g>
       </svg>
+      {placeMenu !== null && (
+        <div
+          className="placement-menu"
+          style={{ left: placeMenu.pixelX, top: placeMenu.pixelY }}
+          role="menu"
+        >
+          <div className="placement-menu-header">Owner</div>
+          {politicalEntities.map((entity) => (
+            <button
+              key={entity.id}
+              type="button"
+              className="placement-menu-item"
+              role="menuitem"
+              onClick={() => confirmPlacement(entity.id)}
+            >
+              {entity.name}
+            </button>
+          ))}
+          {politicalEntities.length === 0 && (
+            <div className="placement-menu-empty">No Political Entities defined</div>
+          )}
+          <button
+            type="button"
+            className="placement-menu-item placement-menu-cancel"
+            role="menuitem"
+            onClick={() => setPlaceMenu(null)}
+          >
+            &lt;cancel&gt;
+          </button>
+        </div>
+      )}
     </div>
   );
 }

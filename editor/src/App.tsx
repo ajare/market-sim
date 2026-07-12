@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { useEditorStore } from "./state/useEditorStore";
 import { WorldCanvas } from "./components/WorldCanvas";
 import { WorldScaleControl } from "./components/WorldScaleControl";
+import { DistanceModeControl } from "./components/DistanceModeControl";
+import { AutoConnectRoutesControl } from "./components/AutoConnectRoutesControl";
 import { LocationList } from "./components/LocationList";
 import { LocationInspector } from "./components/LocationInspector";
 import { RouteInspector } from "./components/RouteInspector";
@@ -13,6 +15,9 @@ import "./App.css";
 
 function App() {
   const worldScale = useEditorStore((s) => s.worldScale);
+  const distanceMode = useEditorStore((s) => s.distanceMode);
+  const globeRadius = useEditorStore((s) => s.globeRadius);
+  const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const locations = useEditorStore((s) => s.locations);
   const commodities = useEditorStore((s) => s.commodities);
@@ -30,7 +35,10 @@ function App() {
     locations.length === 0 && commodities.length === 0 && companies.length === 0 && politicalEntities.length === 0;
 
   function currentWorldJson(): string {
-    return worldToJson({ worldScale, politicalEntities, locations, commodities, companies, routes });
+    return worldToJson({
+      worldScale, distanceMode, globeRadius, globeLonSpan,
+      politicalEntities, locations, commodities, companies, routes,
+    });
   }
 
   function handleExport() {
@@ -71,6 +79,7 @@ function App() {
       <header className="app-header">
         <h1>World Editor</h1>
         <WorldScaleControl />
+        <DistanceModeControl />
         <button type="button" onClick={handleExport} disabled={isEmpty}>
           Export world.json
         </button>
@@ -100,6 +109,7 @@ function App() {
             Clear background
           </button>
         )}
+        <AutoConnectRoutesControl />
         <input
           ref={backgroundInputRef}
           type="file"

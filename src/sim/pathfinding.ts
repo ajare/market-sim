@@ -12,18 +12,23 @@ import { ROUTES, type Route } from "./routes";
 
 type Adjacency = Map<string, Route[]>;
 
-const adjacencyCache = new WeakMap<Map<string, Route>, Adjacency>();
+const adjacencyCache = new WeakMap<Map<string, Route[]>, Adjacency>();
 
 export function primeRouteGraphCache(): Adjacency {
   const cached = adjacencyCache.get(ROUTES);
   if (cached) return cached;
 
   const adjacency: Adjacency = new Map();
-  for (const route of ROUTES.values()) {
-    if (!adjacency.has(route.origin)) adjacency.set(route.origin, []);
-    adjacency.get(route.origin)!.push(route);
-    if (!adjacency.has(route.destination)) adjacency.set(route.destination, []);
-    adjacency.get(route.destination)!.push(route);
+  // Each pair may hold several Routes of different types (see routes.ts); every
+  // one is its own edge, so a Ship and a Plane connecting the same two ports
+  // give Dijkstra two parallel edges to choose between per the transport.
+  for (const routeList of ROUTES.values()) {
+    for (const route of routeList) {
+      if (!adjacency.has(route.origin)) adjacency.set(route.origin, []);
+      adjacency.get(route.origin)!.push(route);
+      if (!adjacency.has(route.destination)) adjacency.set(route.destination, []);
+      adjacency.get(route.destination)!.push(route);
+    }
   }
   adjacencyCache.set(ROUTES, adjacency);
   return adjacency;

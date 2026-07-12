@@ -6,9 +6,13 @@ import { pirateNote } from "./pirateNote";
 /** Every Route touching `location`, paired with the Location at its other end -- sorted by distance so the nearest connections show first. */
 function connectionsFor(location: string): Array<{ other: string; route: Route }> {
   const result: Array<{ other: string; route: Route }> = [];
-  for (const route of ROUTES.values()) {
-    if (route.origin === location) result.push({ other: route.destination, route });
-    else if (route.destination === location) result.push({ other: route.origin, route });
+  // A pair can have several routes of different types (see sim/routes.ts), so
+  // each list may contribute more than one connection for this Location.
+  for (const routeList of ROUTES.values()) {
+    for (const route of routeList) {
+      if (route.origin === location) result.push({ other: route.destination, route });
+      else if (route.destination === location) result.push({ other: route.origin, route });
+    }
   }
   result.sort((a, b) => a.route.distance - b.route.distance);
   return result;

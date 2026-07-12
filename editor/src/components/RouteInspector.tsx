@@ -6,7 +6,8 @@
  * Route is selected.
  */
 import { useEditorStore } from "../state/useEditorStore";
-import { compatibleRouteTypes, deriveRouteCurveType, routePathLength, sortRouteControlPoints, type RouteType } from "../types";
+import { compatibleRouteTypes, deriveRouteCurveType, sortRouteControlPoints, type RouteType } from "../types";
+import { routeWorldLength } from "../distance";
 
 export function RouteInspector() {
   const route = useEditorStore((s) => s.routes.find((r) => r.id === s.selectedRouteId));
@@ -14,6 +15,9 @@ export function RouteInspector() {
   const setRouteType = useEditorStore((s) => s.setRouteType);
   const removeRoute = useEditorStore((s) => s.removeRoute);
   const removeRouteControlPoint = useEditorStore((s) => s.removeRouteControlPoint);
+  const distanceMode = useEditorStore((s) => s.distanceMode);
+  const globeRadius = useEditorStore((s) => s.globeRadius);
+  const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
   const worldScale = useEditorStore((s) => s.worldScale);
 
   // Nothing selected (or a dangling id) -> show nothing in the panel.
@@ -23,9 +27,11 @@ export function RouteInspector() {
   if (a === undefined || b === undefined) return null;
 
   const allowedTypes = compatibleRouteTypes(a.terminalTypes, b.terminalTypes);
-  // Positions are normalized [0,1]; the world length is the normalized length
-  // scaled by worldScale (a uniform multiplier on both axes).
-  const length = routePathLength(a, b, route.controlPoints) * worldScale;
+  // World length of the (possibly curved) path under the active distance mode
+  // (flat Euclidean or globe great-circle -- see distance.ts).
+  const length = routeWorldLength(a, b, route.controlPoints, {
+    mode: distanceMode, radius: globeRadius, lonSpan: globeLonSpan, worldScale,
+  });
   // Ordered along the Route (origin -> destination), the same order the canvas
   // draws and measures them, so the list reads left-to-right along the path.
   const sortedControlPoints = sortRouteControlPoints(a, b, route.controlPoints);

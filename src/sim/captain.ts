@@ -10,7 +10,7 @@ import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
 import type { TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
-import { getRoute, routeTravelDays, type Route, type RouteType } from "./routes";
+import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randRandom } from "./simRandom";
@@ -949,7 +949,7 @@ export class Captain extends Crew {
           m.commodityName === commodity &&
           m.locationName !== this.location &&
           !closedLocations.has(m.locationName) &&
-          this.transport!.canUseRoute(getRoute(this.location, m.locationName)) &&
+          getRoutes(this.location, m.locationName).some((r) => this.transport!.canUseRoute(r)) &&
           m.isAvailable
         ) {
           buyCandidates.push(m);
@@ -978,7 +978,7 @@ export class Captain extends Crew {
         for (const destSellMarket of sellCandidates) {
           const destLoc = destSellMarket.locationName;
           if (destLoc === targetLoc) continue;
-          if (!this.transport!.canUseRoute(getRoute(targetLoc, destLoc))) continue;
+          if (!getRoutes(targetLoc, destLoc).some((r) => this.transport!.canUseRoute(r))) continue;
           const econ = this.routeEconomics(
             targetLoc, destLoc, targetBuyMarket.price, destSellMarket.price,
             trialQuantity, fuelPriceAtTarget, buyMarkets,

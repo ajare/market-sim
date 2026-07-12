@@ -4,6 +4,8 @@
  * the nested shapes (per-commodity produced/consumed/stockpile/base-price
  * maps, terminal types) directly rather than flattening them into columns.
  */
+import type { Nationality } from "./nameGenerators";
+
 export type TerminalType =
   | "Port" | "Wagon yard" | "Airport" | "Platform" | "Spaceport" | "TransitDepot" | "Station";
 
@@ -41,11 +43,13 @@ export const POLITICAL_ENTITY_TYPES: PoliticalEntityType[] = ["Universal", "Plan
 
 export const DEFAULT_POLITICAL_ENTITY_TYPE: PoliticalEntityType = "Universal";
 
-/** A group of Locations -- mirrors src/sim/politicalEntity.ts's PoliticalEntity (TS-only, no Python original). The editor only needs name/membership/type; shared cash pooling is a simulation-runtime concern. */
+/** A group of Locations -- mirrors src/sim/politicalEntity.ts's PoliticalEntity (TS-only, no Python original). The editor only needs name/membership/type/nationality; shared cash pooling is a simulation-runtime concern. */
 export interface PoliticalEntity {
   id: string;
   name: string;
   type: PoliticalEntityType;
+  /** Cultural nationality the sim uses to name ships/captains synthesized for this entity's affiliated Companies (see src/sim/buildWorldFromJson.ts). */
+  nationality: Nationality;
 }
 
 /** Default starting cash for a newly defined Company -- an editor-only convenience default, distinct from src/sim/faction.ts's Company (whose own default startingCash is 0). */
@@ -274,20 +278,6 @@ export function routeRenderPoints(
     samples.push(bezierPoint(throughPoints, i / CURVE_SAMPLE_COUNT));
   }
   return samples;
-}
-
-/** Total length of the Route's actual rendered path (see routeRenderPoints) -- the straight-line distance with no control points, or the sampled curve's arc length with one or more. */
-export function routePathLength(
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-  controlPoints: readonly RouteControlPoint[],
-): number {
-  const points = routeRenderPoints(a, b, controlPoints);
-  let total = 0;
-  for (let i = 1; i < points.length; i++) {
-    total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-  }
-  return total;
 }
 
 export function createLocation(

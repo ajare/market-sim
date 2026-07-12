@@ -1,7 +1,7 @@
 /**
- * Nationality-based name generators for the editor's Company creator: captain
- * names (75% male first names), ship names, and company names in the style of
- * the 16th-18th century chartered merchant companies.
+ * Nationality-based name generators for the editor: captain names (75% male
+ * first names), ship names, company names in the style of the 16th-18th
+ * century chartered merchant companies, and colonial-era location names.
  *
  * These mirror the simulation's own generators (src/sim/names.ts,
  * shipNames.ts, companyNames.ts) but live here as a standalone copy: the
@@ -13,6 +13,8 @@
 export type Nationality = "English" | "French" | "Spanish" | "Dutch" | "Portuguese";
 
 export const NATIONALITIES: Nationality[] = ["English", "French", "Spanish", "Dutch", "Portuguese"];
+
+export const DEFAULT_NATIONALITY: Nationality = "English";
 
 /** Fraction of generated captain first names that are male. */
 export const MALE_FIRST_NAME_FRACTION = 0.75;
@@ -32,6 +34,7 @@ interface NationalityData {
   personNames: NamePool;
   shipNames: string[];
   companyNames: CompanyNamePool;
+  locationNames: string[];
 }
 
 const DATA: Record<Nationality, NationalityData> = {
@@ -66,6 +69,12 @@ const DATA: Record<Nationality, NationalityData> = {
         "Greenland", "Bengal", "Canton", "Newfoundland", "Massachusetts Bay", "Bermuda",
       ],
     },
+    locationNames: [
+      "Jamestown", "Charlestown", "New Providence", "Port Royal", "Kingston",
+      "Bridgetown", "Georgetown", "New Plymouth", "Salem", "Newport", "Falmouth",
+      "Portsmouth", "Nassau", "Annapolis", "Williamsburg", "New London",
+      "Elizabeth City", "Providence", "New Bristol", "Fort James",
+    ],
   },
   French: {
     personNames: {
@@ -99,6 +108,12 @@ const DATA: Record<Nationality, NationalityData> = {
         "de la Louisiane", "du Cap-Vert", "de Cayenne", "de Madagascar", "du Canada",
       ],
     },
+    locationNames: [
+      "Nouvelle-Orléans", "Québec", "Montréal", "Port-au-Prince", "Cap-Français",
+      "Louisbourg", "Fort-Royal", "Saint-Pierre", "Trois-Rivières", "Léogâne",
+      "Basse-Terre", "Pointe-à-Pitre", "Cayenne", "Baton Rouge", "Biloxi",
+      "Fort-Dauphin", "Port-de-Paix", "Les Cayes", "Fort-de-France", "Mobile",
+    ],
   },
   Spanish: {
     personNames: {
@@ -133,6 +148,12 @@ const DATA: Record<Nationality, NationalityData> = {
         "Guipúzcoa", "Santo Domingo",
       ],
     },
+    locationNames: [
+      "Cartagena", "Veracruz", "Portobelo", "La Habana", "Santo Domingo",
+      "San Juan", "Panamá", "Maracaibo", "Campeche", "Nombre de Dios",
+      "Santiago de Cuba", "San Agustín", "Cumaná", "Santa Marta", "Puerto Cabello",
+      "Trinidad", "San Germán", "Riohacha", "Coro", "Valdivia",
+    ],
   },
   Dutch: {
     personNames: {
@@ -165,6 +186,13 @@ const DATA: Record<Nationality, NationalityData> = {
         "Zeeuwse", "Amsterdamse", "Bataviase", "Molukse", "Perzische", "Afrikaanse",
       ],
     },
+    locationNames: [
+      "Nieuw Amsterdam", "Willemstad", "Paramaribo", "Fort Oranje", "Oranjestad",
+      "Stabroek", "Nieuw Middelburg", "Fort Nassau", "Nieuw Walcheren", "Berbice",
+      "Kaapstad", "Nieuw Zeeland", "Fort Zeelandia", "Nieuw Vlissingen",
+      "Fort Amsterdam", "Sint Eustatius", "Essequibo", "Fort Kijkoveral",
+      "Nieuw Oranje", "Kralendijk",
+    ],
   },
   Portuguese: {
     personNames: {
@@ -196,6 +224,12 @@ const DATA: Record<Nationality, NationalityData> = {
         "da Mina", "de Malaca", "de Ormuz", "do Estado da Índia", "de Moçambique", "do Brasil",
       ],
     },
+    locationNames: [
+      "Salvador", "Recife", "Olinda", "Rio de Janeiro", "São Luís", "Belém",
+      "São Vicente", "Cabo Frio", "Ilhéus", "Porto Seguro", "Luanda", "Cacheu",
+      "São Jorge da Mina", "Espírito Santo", "Nazaré", "Vila Rica", "São Salvador",
+      "Nova Lisboa", "Porto Calvo", "São Filipe",
+    ],
   },
 };
 
@@ -219,4 +253,9 @@ export function generateShipName(nationality: Nationality): string {
 export function generateCompanyName(nationality: Nationality): string {
   const pool = DATA[nationality].companyNames;
   return pick(pool.forms).replace("{subject}", pick(pool.subjects));
+}
+
+/** A colonial-era settlement/port name for `nationality`. */
+export function generateLocationName(nationality: Nationality): string {
+  return pick(DATA[nationality].locationNames);
 }

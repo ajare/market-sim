@@ -12,6 +12,11 @@ import {
   type PoliticalEntity, type PoliticalEntityType, type EditorLocation, type RouteType, type TerminalType, type TransportType,
 } from "../types";
 import type { EditorWorld } from "../worldJson";
+import {
+  DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius,
+  type DistanceConfig, type DistanceMode,
+} from "../distance";
+import { DEFAULT_NATIONALITY, type Nationality } from "../nameGenerators";
 
 let nextId = 1;
 let nextPoliticalEntityId = 1;
@@ -63,6 +68,18 @@ interface EditorStore {
   worldScale: number;
   setWorldScale: (scale: number) => void;
 
+  /** How distances are measured for display and export -- "flat" (Euclidean plane, the default) or "globe" (great-circle on a sphere). See distance.ts. */
+  distanceMode: DistanceMode;
+  /** Sphere radius in world-size units, used only in globe mode. */
+  globeRadius: number;
+  /** Degrees of longitude a full map width spans, used only in globe mode (the same degrees-per-fraction applies vertically). */
+  globeLonSpan: number;
+  setDistanceMode: (mode: DistanceMode) => void;
+  setGlobeRadius: (radius: number) => void;
+  setGlobeLonSpan: (lonSpan: number) => void;
+  /** The active distance settings bundled for distance.ts's helpers. */
+  distanceConfig: () => DistanceConfig;
+
   /** A user-picked background image (data URL) drawn behind the canvas, or null for none. Rendered as a plain HTML image fixed to the canvas viewport, so it does NOT scale when the world size changes (see WorldCanvas). Purely an editor view setting -- not part of the exported World. */
   backgroundImage: string | null;
   setBackgroundImage: (dataUrl: string | null) => void;
@@ -70,19 +87,17 @@ interface EditorStore {
   /** Replaces the entire authored World with an imported one (see worldJson.ts), clearing UI state (selection) and re-seeding id counters past every imported id so later additions can't collide. */
   loadWorld: (world: EditorWorld) => void;
 
-  /** PoliticalEntities a new Location can be placed into -- membership is required at creation time (see addLocation/pendingPoliticalEntityId), so an empty registry blocks placement entirely. */
+  /** PoliticalEntities a new Location can belong to -- membership is required at creation time (see addLocation), which the canvas's placement menu supplies, so an empty registry means a Location can't be placed. */
   politicalEntities: PoliticalEntity[];
-  /** Which PoliticalEntity a click on the canvas will assign to the new Location -- must be set (via the PoliticalEntities panel's dropdown) before addLocation will do anything. */
-  pendingPoliticalEntityId: string | null;
   addPoliticalEntity: (name: string) => void;
   /** Removes the PoliticalEntity, along with every Location that belonged to it -- a Location can't exist without one. */
   removePoliticalEntity: (id: string) => void;
-  setPendingPoliticalEntityId: (id: string | null) => void;
   setPoliticalEntityType: (id: string, type: PoliticalEntityType) => void;
+  setPoliticalEntityNationality: (id: string, nationality: Nationality) => void;
   updatePoliticalEntityName: (id: string, name: string) => void;
 
-  /** No-ops if pendingPoliticalEntityId is unset -- a Location can't be created without a PoliticalEntity selected first. */
-  addLocation: (x: number, y: number) => void;
+  /** Creates a Location at (x, y) owned by `politicalEntityId` (chosen from the canvas's placement menu). No-ops if that PoliticalEntity doesn't exist. */
+  addLocation: (x: number, y: number, politicalEntityId: string) => void;
   updateLocation: (id: string, patch: Partial<EditorLocation>) => void;
   moveLocation: (id: string, x: number, y: number) => void;
   removeLocation: (id: string) => void;
@@ -105,7 +120,11 @@ interface EditorStore {
    * either direction, since a Route is undirected).
    */
   addRoute: (locationAId: string, locationBId: string) => void;
+  /** Appends a straight Route of `routeType` for each given pair, with a fresh id and no control points -- used by the header's "Auto-connect Sea routes" action, which has already filtered the pairs (see autoRoutes.ts). Trusted to receive valid, not-already-connected pairs; performs no per-pair validation of its own. */
+  addRoutesForPairs: (pairs: ReadonlyArray<{ locationAId: string; locationBId: string }>, routeType: RouteType) => void;
   removeRoute: (id: string) => void;
+  /** Removes every Route, clearing any selected Route. Used by the toolbar's "Delete all routes" action. */
+  clearRoutes: () => void;
   /** Adds a new control point to a Route at (x, y) and returns the point's id so the caller (WorldCanvas) can immediately start dragging it. The Route's curveType follows from the resulting count (see deriveRouteCurveType). No-ops (returning null) if the Route doesn't exist. */
   addRouteControlPoint: (routeId: string, x: number, y: number) => string | null;
   /** Repositions an existing control point -- no-op if the Route or point doesn't exist. */
@@ -164,8 +183,18 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   worldScale: DEFAULT_WORLD_SCALE,
   backgroundImage: null,
 
+  distanceMode: DEFAULT_DISTANCE_MODE,
+  globeRadius: defaultGlobeRadius(DEFAULT_WORLD_SCALE),
+  globeLonSpan: DEFAULT_GLOBE_LON_SPAN,
+  setDistanceMode: (mode) => set({ distanceMode: mode }),
+  setGlobeRadius: (radius) => set({ globeRadius: Math.max(0.01, radius) }),
+  setGlobeLonSpan: (lonSpan) => set({ globeLonSpan: clamp(lonSpan, 1, 360) }),
+  distanceConfig: () => {
+    const s = get();
+    return { mode: s.distanceMode, radius: s.globeRadius, lonSpan: s.globeLonSpan, worldScale: s.worldScale };
+  },
+
   politicalEntities: [],
-  pendingPoliticalEntityId: null,
 
   addPoliticalEntity: (name: string) =>
     set((s) => {
@@ -173,9 +202,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       if (trimmed === "") return s;
       const id = `political-entity-${nextPoliticalEntityId++}`;
       return {
-        politicalEntities: [...s.politicalEntities, { id, name: trimmed, type: DEFAULT_POLITICAL_ENTITY_TYPE }],
-        // First PoliticalEntity defined becomes the default target for new Locations.
-        pendingPoliticalEntityId: s.pendingPoliticalEntityId ?? id,
+        politicalEntities: [
+          ...s.politicalEntities,
+          { id, name: trimmed, type: DEFAULT_POLITICAL_ENTITY_TYPE, nationality: DEFAULT_NATIONALITY },
+        ],
       };
     }),
 
@@ -194,11 +224,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         companies: s.companies.map((c) => (c.politicalEntityId === id ? { ...c, politicalEntityId: null } : c)),
         selectedId: remainingLocations.some((loc) => loc.id === s.selectedId) ? s.selectedId : null,
         selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
-        pendingPoliticalEntityId: s.pendingPoliticalEntityId === id ? null : s.pendingPoliticalEntityId,
       };
     }),
 
-  setPendingPoliticalEntityId: (id) => set({ pendingPoliticalEntityId: id }),
+  setPoliticalEntityNationality: (id, nationality) =>
+    set((s) => ({
+      politicalEntities: s.politicalEntities.map((c) => (c.id === id ? { ...c, nationality } : c)),
+    })),
 
   setPoliticalEntityType: (id, type) =>
     set((s) => ({
@@ -254,6 +286,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     set({
       worldScale,
+      distanceMode: world.distanceMode,
+      globeRadius: world.globeRadius > 0 ? world.globeRadius : defaultGlobeRadius(worldScale),
+      globeLonSpan: clamp(world.globeLonSpan, 1, 360),
       locations,
       politicalEntities: world.politicalEntities,
       commodities: world.commodities,
@@ -261,23 +296,17 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       routes: world.routes,
       selectedId: null,
       selectedRouteId: null,
-      pendingPoliticalEntityId: world.politicalEntities[0]?.id ?? null,
     });
   },
 
   // x/y are normalized canvas coordinates in [0,1] (see WorldCanvas) -- the
-  // world position they map to is (x, y) * worldScale.
-  addLocation: (x: number, y: number) => {
-    const { pendingPoliticalEntityId } = get();
-    if (pendingPoliticalEntityId === null) return;
+  // world position they map to is (x, y) * worldScale. The owning
+  // politicalEntityId comes from the canvas's placement menu.
+  addLocation: (x: number, y: number, politicalEntityId: string) => {
+    const { politicalEntities } = get();
+    if (!politicalEntities.some((p) => p.id === politicalEntityId)) return;
     const id = `loc-${nextId++}`;
-    const location = createLocation(
-      id,
-      `Location ${nextId - 1}`,
-      clamp(x, 0, 1),
-      clamp(y, 0, 1),
-      pendingPoliticalEntityId,
-    );
+    const location = createLocation(id, `Location ${nextId - 1}`, clamp(x, 0, 1), clamp(y, 0, 1), politicalEntityId);
     set((s) => ({ locations: [...s.locations, location], selectedId: id, selectedRouteId: null }));
   },
 
@@ -371,11 +400,27 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       };
     }),
 
+  addRoutesForPairs: (pairs, routeType) =>
+    set((s) => ({
+      routes: [
+        ...s.routes,
+        ...pairs.map((p) => ({
+          id: `route-${nextRouteId++}`,
+          locationAId: p.locationAId,
+          locationBId: p.locationBId,
+          routeType,
+          controlPoints: [],
+        })),
+      ],
+    })),
+
   removeRoute: (id) =>
     set((s) => ({
       routes: s.routes.filter((r) => r.id !== id),
       selectedRouteId: s.selectedRouteId === id ? null : s.selectedRouteId,
     })),
+
+  clearRoutes: () => set({ routes: [], selectedRouteId: null }),
 
   // Selecting a Route clears any selected Location -- only one thing is
   // inspected at a time (see RouteInspector / LocationInspector).

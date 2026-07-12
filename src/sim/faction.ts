@@ -16,7 +16,7 @@
 import { Captain, type Directive, type TradeDirective } from "./captain";
 import { Sailor } from "./crew";
 import { Ship, type Transport } from "./transport";
-import { getRoute } from "./routes";
+import { getRoutes } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
 import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
@@ -870,7 +870,7 @@ export class PirateBrigade extends Faction {
 
       for (const { loc } of ranked) {
         if (loc === captain.location || closedLocations.has(loc)) continue;
-        if (!captain.transport!.canUseRoute(getRoute(captain.location, loc))) continue;
+        if (!getRoutes(captain.location, loc).some((r) => captain.transport!.canUseRoute(r))) continue;
         directives.set(captain, { action: "REPOSITION", destination: loc });
         pirateCounts.set(loc, (pirateCounts.get(loc) ?? 0) + 1);
         pirateCounts.set(captain.location, Math.max(0, (pirateCounts.get(captain.location) ?? 0) - 1));
@@ -914,7 +914,7 @@ export class PoliceFleet extends Faction {
       (loc) =>
         loc !== captain.location &&
         !closedLocations.has(loc) &&
-        captain.transport!.canUseRoute(getRoute(captain.location, loc)),
+        getRoutes(captain.location, loc).some((r) => captain.transport!.canUseRoute(r)),
     );
     if (candidates.length === 0) return null;
     return randChoice(candidates);

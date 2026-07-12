@@ -75,12 +75,21 @@ describe("Company PoliticalEntity affiliation", () => {
   });
 
   it("affiliates a single-ship SoloTrader too (affiliation lives on the base Faction)", () => {
+    // A filler company carries the world past its required ship count (20
+    // locations -> 100), so no fleet is synthesized (see buildWorldFromJson)
+    // and the authored single-ship SoloTrader is preserved as-is rather than
+    // being bulked up into a Company.
+    const fillerFleet = Array.from({ length: 100 }, (_, i) => ({
+      id: `ff${i}`, transportType: "Ship", transportName: `Filler ${i}`, captainName: `Hand ${i}`,
+    }));
     const { factions, politicalEntities } = buildWith([
       { id: "c1", name: "Lone Duke Trader", startingFunds: 50000, politicalEntityId: "pe-2",
         fleet: [{ id: "f1", transportType: "Ship", transportName: "Solo", captainName: "Ivy" }] },
+      { id: "c2", name: "Filler Fleet", startingFunds: 1, fleet: fillerFleet },
     ]);
     const duchy = politicalEntities.find((p) => p.name === "The Duchy");
-    expect(factions[0].constructor.name).toBe("SoloTrader");
-    expect(factions[0].politicalEntity).toBe(duchy);
+    const lone = factions.find((f) => f.name === "Lone Duke Trader")!;
+    expect(lone.constructor.name).toBe("SoloTrader");
+    expect(lone.politicalEntity).toBe(duchy);
   });
 });

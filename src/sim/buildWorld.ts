@@ -8,8 +8,9 @@ import { Rng } from "./rng";
 import {
   ALL_LOCATION_NAMES, COMMODITIES, FUEL_DEPOT_NAMES, WORLD_GEN_SEED,
   DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR, DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY,
-  generateLocations, generateCoordinates, setGeography, assignPoliticalEntities,
+  generateLocations, generateCoordinates, setGeography, assignPoliticalEntities, setDistanceConfig,
 } from "./worldData";
+import { DEFAULT_GLOBE_LON_SPAN } from "./distance";
 import type { Commodity } from "./commodity";
 import type { PoliticalEntity } from "./politicalEntity";
 import { generateRoutes, setRoutes, ROUTES } from "./routes";
@@ -125,7 +126,7 @@ const DEFAULT_SEED = 42;
 // reading a single run tells you almost nothing at fine resolution. To retune
 // this ratio, average many seeds per candidate value (`npm run sweep`), never
 // a lone run.
-const DEFAULT_TARGET_SHIPS_PER_LOCATION = 5;
+export const DEFAULT_TARGET_SHIPS_PER_LOCATION = 5;
 const DEFAULT_SHIPS_PER_COMPANY = 5;
 const DEFAULT_ARBITRAGE_SHIP_FRACTION = 0.2;
 
@@ -195,6 +196,13 @@ export function buildWorld(
   const pirateCashPerShip = options.pirateCashPerShip ?? DEFAULT_PIRATE_CASH_PER_SHIP;
   const numPoliceShips = options.numPoliceShips ?? DEFAULT_NUM_POLICE_SHIPS;
 
+  // The procedural world is always flat (with worldScale 1, so distanceBetween
+  // is plain Math.hypot on the world-unit coordinates). Reset the module-level
+  // distance config here in case a prior buildWorldFromJson left it in globe
+  // mode -- otherwise route-generation pruning and Route lengths below would
+  // silently inherit that world's mode.
+  setDistanceConfig({ mode: "flat", radius: 1, lonSpan: DEFAULT_GLOBE_LON_SPAN, worldScale: 1 });
+
   let locations = generateLocations(
     locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,
   );
@@ -213,7 +221,7 @@ export function buildWorld(
   // rates and terminal types, just with different stockpile targets.
   if (options.autoMinStockpileDaysFromRoutes) {
     let totalRouteLength = 0;
-    for (const route of ROUTES.values()) totalRouteLength += route.distance;
+    for (const routeList of ROUTES.values()) for (const route of routeList) totalRouteLength += route.distance;
     minStockpileDays = 11 * (totalRouteLength / BASELINE_TOTAL_ROUTE_LENGTH);
     locations = generateLocations(
       locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,

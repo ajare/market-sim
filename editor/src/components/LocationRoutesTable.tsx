@@ -9,13 +9,20 @@
  * read/delete-only.
  */
 import { useEditorStore } from "../state/useEditorStore";
-import { deriveRouteCurveType, routePathLength, type EditorLocation } from "../types";
+import { deriveRouteCurveType, type EditorLocation } from "../types";
+import { routeWorldLength } from "../distance";
 
 export function LocationRoutesTable({ locationId }: { locationId: string }) {
   const locations = useEditorStore((s) => s.locations);
   const routes = useEditorStore((s) => s.routes);
   const removeRoute = useEditorStore((s) => s.removeRoute);
+  // Re-read distance settings so the displayed lengths update live when the
+  // mode/radius/span change (distanceConfig() itself is not reactive).
+  const distanceMode = useEditorStore((s) => s.distanceMode);
+  const globeRadius = useEditorStore((s) => s.globeRadius);
+  const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
   const worldScale = useEditorStore((s) => s.worldScale);
+  const config = { mode: distanceMode, radius: globeRadius, lonSpan: globeLonSpan, worldScale };
 
   const location = locations.find((loc) => loc.id === locationId);
   if (location === undefined) return null;
@@ -56,7 +63,7 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
                 <td className="routes-table-name-cell">{other.name}</td>
                 <td>{route.routeType}</td>
                 <td>{deriveRouteCurveType(route.controlPoints.length)}</td>
-                <td>{(routePathLength(location, other, route.controlPoints) * worldScale).toFixed(1)}</td>
+                <td>{routeWorldLength(location, other, route.controlPoints, config).toFixed(1)}</td>
                 <td>
                   <button type="button" onClick={() => removeRoute(route.id)}>
                     Delete

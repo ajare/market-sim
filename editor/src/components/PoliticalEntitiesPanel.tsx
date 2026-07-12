@@ -11,15 +11,15 @@
 import { useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
 import { POLITICAL_ENTITY_TYPES } from "../types";
+import { NATIONALITIES, type Nationality } from "../nameGenerators";
 
 export function PoliticalEntitiesPanel() {
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const locations = useEditorStore((s) => s.locations);
-  const pendingPoliticalEntityId = useEditorStore((s) => s.pendingPoliticalEntityId);
   const addPoliticalEntity = useEditorStore((s) => s.addPoliticalEntity);
   const removePoliticalEntity = useEditorStore((s) => s.removePoliticalEntity);
-  const setPendingPoliticalEntityId = useEditorStore((s) => s.setPendingPoliticalEntityId);
   const setPoliticalEntityType = useEditorStore((s) => s.setPoliticalEntityType);
+  const setPoliticalEntityNationality = useEditorStore((s) => s.setPoliticalEntityNationality);
   const updatePoliticalEntityName = useEditorStore((s) => s.updatePoliticalEntityName);
   const selectLocation = useEditorStore((s) => s.selectLocation);
   const [newName, setNewName] = useState("");
@@ -43,24 +43,6 @@ export function PoliticalEntitiesPanel() {
   return (
     <div className="political-entities-panel">
       <div className="sidebar-section-header">Political Entities</div>
-
-      <label className="new-location-political-entity-label">
-        New locations go to
-        <select
-          value={pendingPoliticalEntityId ?? ""}
-          onChange={(e) => setPendingPoliticalEntityId(e.target.value === "" ? null : e.target.value)}
-          disabled={politicalEntities.length === 0}
-        >
-          <option value="">
-            {politicalEntities.length === 0 ? "no political entities defined" : "select political entity..."}
-          </option>
-          {politicalEntities.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </label>
 
       {politicalEntities.length === 0 && (
         <div className="political-entities-empty">No political entities defined yet.</div>
@@ -108,6 +90,21 @@ export function PoliticalEntitiesPanel() {
                       {POLITICAL_ENTITY_TYPES.map((t) => (
                         <option key={t} value={t}>
                           {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="political-entity-type-label">
+                    Nationality
+                    <select
+                      value={politicalEntity.nationality}
+                      onChange={(e) =>
+                        setPoliticalEntityNationality(politicalEntity.id, e.target.value as Nationality)
+                      }
+                    >
+                      {NATIONALITIES.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
                         </option>
                       ))}
                     </select>

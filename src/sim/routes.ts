@@ -8,7 +8,7 @@
  */
 import { Rng } from "./rng";
 import type { Location, TerminalType } from "./location";
-import { distanceBetween, LOCATION_COORDINATES, WORLD_GEN_SEED } from "./worldData";
+import { distanceBetween, pointDistance, LOCATION_COORDINATES, WORLD_GEN_SEED } from "./worldData";
 
 export type RouteType = "Land" | "Air" | "Sea" | "Space" | "Road" | "Railroad";
 export type Point = readonly [number, number];
@@ -137,7 +137,10 @@ export class Route {
     let prev = curvePoints[0];
     for (let i = 1; i <= CURVE_SAMPLE_COUNT; i++) {
       const point = bezierPoint(curvePoints, i / CURVE_SAMPLE_COUNT);
-      cumulative += Math.hypot(point[0] - prev[0], point[1] - prev[1]);
+      // Each segment measured under the active distance mode (Euclidean in flat
+      // mode, great-circle in globe mode -- see distance.ts), so a curved
+      // Route's total length is the arc length along the surface either way.
+      cumulative += pointDistance(prev[0], prev[1], point[0], point[1]);
       this.samplePoints.push(point);
       this.cumulativeDistances.push(cumulative);
       prev = point;
@@ -203,9 +206,9 @@ export function generateRoutes(
   locations: Location[],
   seed: number = WORLD_GEN_SEED,
   maxDistance?: number,
-): Map<string, Route> {
+): Map<string, Route[]> {
   const rng = new Rng(seed + 2);
-  const routes = new Map<string, Route>();
+  const routes = new Map<string, Route[]>();
 
   for (let i = 0; i < locations.length; i++) {
     const origin = locations[i];
@@ -218,20 +221,58 @@ export function generateRoutes(
         const scale = ROUTE_TYPE_DISTANCE_SCALE[routeType] ?? 1.0;
         if (distanceBetween(origin.name, destination.name) > maxDistance * scale) continue;
       }
-      routes.set(routeKey(origin.name, destination.name), new Route(origin.name, destination.name, routeType, seed));
+      addRouteToNetwork(routes, new Route(origin.name, destination.name, routeType, seed));
     }
   }
   return routes;
 }
 
-export let ROUTES: Map<string, Route> = new Map();
+/**
+ * The route network, keyed by location pair (routeKey). A pair can be connected
+ * by more than one Route, of DIFFERENT types (e.g. a Sea route and an Air route
+ * between the same two ports), so each entry is a list -- at most one Route per
+ * RouteType. Pathfinding treats every Route in every list as its own edge (see
+ * pathfinding.ts), so parallel routes of different types are naturally weighed
+ * against each other per the transport that can use them.
+ */
+export let ROUTES: Map<string, Route[]> = new Map();
 
 /** Wholesale-reassign the route network (called once by buildWorld). */
-export function setRoutes(routes: Map<string, Route>): void {
+export function setRoutes(routes: Map<string, Route[]>): void {
   ROUTES = routes;
 }
 
+/**
+ * Adds `route` to a route-network map, grouped by its location pair. A pair may
+ * hold several Routes of different types, but never two of the same type -- a
+ * duplicate RouteType for a pair is ignored (the first one wins), since the
+ * pair can only be connected once by any given mode.
+ */
+export function addRouteToNetwork(network: Map<string, Route[]>, route: Route): void {
+  const key = routeKey(route.origin, route.destination);
+  const list = network.get(key);
+  if (list === undefined) {
+    network.set(key, [route]);
+    return;
+  }
+  if (list.some((r) => r.routeType === route.routeType)) return;
+  list.push(route);
+}
+
+/** Every Route directly connecting the two locations, across all types (empty if none, or if the two are the same location). */
+export function getRoutes(locationA: string, locationB: string): Route[] {
+  if (locationA === locationB) return [];
+  return ROUTES.get(routeKey(locationA, locationB)) ?? [];
+}
+
+/**
+ * A single Route directly connecting the two locations -- the shortest one if
+ * the pair has several of different types. For display/tracing where any one of
+ * the pair's routes will do; trading logic uses getRoutes (all of them) so it
+ * can pick whichever type the transport can actually use.
+ */
 export function getRoute(locationA: string, locationB: string): Route | undefined {
-  if (locationA === locationB) return undefined;
-  return ROUTES.get(routeKey(locationA, locationB));
+  const list = getRoutes(locationA, locationB);
+  if (list.length === 0) return undefined;
+  return list.reduce((best, r) => (r.distance < best.distance ? r : best));
 }

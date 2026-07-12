@@ -87,13 +87,16 @@ describe("Spaceship / Space route / Spaceport", () => {
 
     const { world, factions } = buildWorldFromJson(json);
     expect(world.locations.length).toBe(20);
-    expect(factions.length).toBe(1);
 
-    // Every captain's transport is a Spaceship that can traverse Space routes.
-    const captains = factions.flatMap((f) => f.captains);
+    // Fleet synthesis (see buildWorldFromJson) adds sea ships to reach the
+    // required ship count; in this all-Space world they can't use any route and
+    // simply idle. The regression guard here is about the AUTHORED spaceships,
+    // so isolate them (the two Spaceships in "Star Freight Inc").
+    const starFreight = factions.find((f) => f.name === "Star Freight Inc");
+    expect(starFreight).toBeDefined();
+    const captains = starFreight!.captains.filter((c) => c.transport instanceof Spaceship);
     expect(captains.length).toBe(2);
     for (const captain of captains) {
-      expect(captain.transport).toBeInstanceOf(Spaceship);
       expect(captain.transport!.allowedRouteTypes()).toEqual(["Space"]);
     }
 
@@ -103,7 +106,7 @@ describe("Spaceship / Space route / Spaceport", () => {
     // guard: a route-type validator once silently downgraded "Space" to "Sea",
     // which stranded the spaceships).
     const { ROUTES } = await import("../routes");
-    expect([...ROUTES.values()].every((r) => r.routeType === "Space")).toBe(true);
+    expect([...ROUTES.values()].flat().every((r) => r.routeType === "Space")).toBe(true);
 
     // The world runs without throwing, and the spaceships actually move cargo
     // over the space-route network (proving they aren't stranded).

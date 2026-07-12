@@ -13,8 +13,36 @@ import { Rng } from "./rng";
 import { Commodity, buildCommodities } from "./commodity";
 import { Location, type TerminalType } from "./location";
 import { PoliticalEntity } from "./politicalEntity";
+import {
+  DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, normalizedDistance, type DistanceConfig,
+} from "./distance";
 
 export const FUEL_BASE_PRICE = 1.25;
+
+/**
+ * How distanceBetween (and, through it, every Route's length, fuel/travel cost,
+ * and route-generation pruning) measures distance -- see distance.ts. The
+ * default is flat with worldScale 1, so on the procedural world's world-unit
+ * coordinates it is exactly Math.hypot, unchanged from before this setting
+ * existed. buildWorldFromJson overrides it from the authored World's
+ * distanceMode/globeRadius/globeLonSpan/worldScale; buildWorld resets it to
+ * this flat default. It is module-level (like LOCATION_COORDINATES) because
+ * distanceBetween is called by name from many modules.
+ */
+let DISTANCE_CONFIG: DistanceConfig = {
+  mode: DEFAULT_DISTANCE_MODE,
+  radius: 1,
+  lonSpan: DEFAULT_GLOBE_LON_SPAN,
+  worldScale: 1,
+};
+
+export function setDistanceConfig(config: DistanceConfig): void {
+  DISTANCE_CONFIG = config;
+}
+
+export function getDistanceConfig(): DistanceConfig {
+  return DISTANCE_CONFIG;
+}
 
 export let COMMODITIES: Record<string, Commodity> = buildCommodities(
   [
@@ -334,7 +362,19 @@ export function distanceBetween(locationA: string, locationB: string): number {
   if (locationA === locationB) return 0.0;
   const [x1, y1] = LOCATION_COORDINATES[locationA];
   const [x2, y2] = LOCATION_COORDINATES[locationB];
-  return Math.hypot(x2 - x1, y2 - y1);
+  return pointDistance(x1, y1, x2, y2);
+}
+
+/**
+ * Distance between two world-coordinate points under the active DISTANCE_CONFIG
+ * (see distance.ts). The stored coordinates are world units, so they're divided
+ * by the config's worldScale back to the normalized [0,1] fractions the
+ * lon/lat mapping expects; in flat mode (worldScale 1 by default) this is just
+ * Math.hypot. Route uses this to measure each segment of a Route's curve.
+ */
+export function pointDistance(x1: number, y1: number, x2: number, y2: number): number {
+  const scale = DISTANCE_CONFIG.worldScale;
+  return normalizedDistance(x1 / scale, y1 / scale, x2 / scale, y2 / scale, DISTANCE_CONFIG);
 }
 
 export function travelDaysBetween(

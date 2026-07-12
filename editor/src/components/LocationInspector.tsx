@@ -1,14 +1,13 @@
 /** Edit form for the currently selected Location -- name, position, terminal types, and commodity maps. */
+import { useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
-import { FAMOUS_HISTORICAL_PORTS, TERMINAL_TYPES } from "../types";
+import { TERMINAL_TYPES } from "../types";
+import { NATIONALITIES, generateLocationName, type Nationality } from "../nameGenerators";
 import { CommodityMapEditor } from "./CommodityMapEditor";
 import { LocationRoutesTable } from "./LocationRoutesTable";
 
-function randomPortName(): string {
-  return FAMOUS_HISTORICAL_PORTS[Math.floor(Math.random() * FAMOUS_HISTORICAL_PORTS.length)];
-}
-
 export function LocationInspector() {
+  const [nationality, setNationality] = useState<Nationality>("English");
   const selectedId = useEditorStore((s) => s.selectedId);
   const location = useEditorStore((s) => s.locations.find((l) => l.id === s.selectedId));
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
@@ -33,17 +32,31 @@ export function LocationInspector() {
           value={location.name}
           onChange={(e) => updateLocation(location.id, { name: e.target.value })}
         />
-        <button
-          type="button"
-          className="random-name-button"
-          title="Generate a random name from famous historical ports"
-          onClick={() => updateLocation(location.id, { name: randomPortName() })}
-        >
-          🎲
-        </button>
-        <button type="button" className="delete-button" onClick={() => removeLocation(location.id)}>
-          Delete
-        </button>
+        <div className="inspector-header-actions">
+          <select
+            className="random-name-nationality"
+            value={nationality}
+            title="Nationality for the generated colonial name"
+            onChange={(e) => setNationality(e.target.value as Nationality)}
+          >
+            {NATIONALITIES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="random-name-button"
+            title={`Generate a random ${nationality} colonial name`}
+            onClick={() => updateLocation(location.id, { name: generateLocationName(nationality) })}
+          >
+            🎲
+          </button>
+          <button type="button" className="delete-button" onClick={() => removeLocation(location.id)}>
+            Delete
+          </button>
+        </div>
       </div>
 
       <div className="field-row">
