@@ -4,6 +4,7 @@ import { ControlsPanel } from "./components/ControlsPanel";
 import { PoliticalEntitiesPanel } from "./components/PoliticalEntitiesPanel";
 import { LocationsPanel } from "./components/LocationsPanel";
 import { FleetPanel } from "./components/FleetPanel";
+import { TransportsPanel } from "./components/TransportsPanel";
 import { ContractsPanel } from "./components/ContractsPanel";
 import { StockHistoryPanel } from "./components/StockHistoryPanel";
 import { PriceHistoryPanel } from "./components/PriceHistoryPanel";
@@ -31,6 +32,7 @@ function App() {
         <PoliticalEntitiesPanel />
         <LocationsPanel />
         <FleetPanel />
+        <TransportsPanel />
         <ContractsPanel />
       </div>
     </div>

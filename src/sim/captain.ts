@@ -5,17 +5,22 @@
  * the economic reasoning; comments here are kept light since the logic is
  * transcribed 1:1.
  */
-import { Crew } from "./crew";
+import { Crew, Sailor } from "./crew";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
-import type { TransportStatus } from "./transport";
+import { Ship, crewSpeedFraction, type TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
-import { randRandom } from "./simRandom";
+import { randChoice, randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
 import { round2 } from "./utils";
+import type { NameRng } from "./names";
+import { randomSailorNickname } from "./sailorNicknames";
+
+/** Adapts the global sim RNG to the NameRng surface randomSailorNickname needs, so a Ship's newly hired Sailors draw off the same seeded stream as the rest of the simulation. */
+const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 
 export interface CargoState {
   commodity: string;
@@ -246,6 +251,41 @@ export class Captain extends Crew {
     return this.transport!.crew.reduce((sum, member) => sum + member.dailyWages, 0);
   }
 
+  /**
+   * Effective speed given how fully crewed this Transport currently is.
+   * Ships only: 50% of speedUnitsPerDay with just the Captain aboard, up to
+   * 100% at a full complement (crewRequirement), linear in between (see
+   * hireCrewIfPossible). Every other Transport type is unaffected -- always
+   * its plain speedUnitsPerDay.
+   */
+  private currentSpeedUnitsPerDay(): number {
+    return this.transport!.speedUnitsPerDay * crewSpeedFraction(this.transport!);
+  }
+
+  /**
+   * If this Captain's Ship is docked at a Location with a Port terminal
+   * (Platform doesn't count, even though both support Sea routes
+   * identically otherwise -- see ROUTE_TERMINAL_COMPATIBILITY) and isn't at
+   * full complement, hires enough Sailors to fill every open seat in one
+   * day. Hiring itself is free -- the only cost is the upfront wage the
+   * next time this Ship actually departs (see routeEconomics/
+   * dailyCrewCost). No-op for every other Transport type.
+   */
+  private hireCrewIfPossible(): void {
+    const transport = this.transport!;
+    if (!(transport instanceof Ship)) return;
+    const seatsOpen = transport.crewRequirement - transport.crew.length;
+    if (seatsOpen <= 0) return;
+    const location = getLocation(this.location);
+    if (location === undefined || !location.terminalTypes.has("Port")) return;
+    const existingNames = new Set(transport.crew.map((member) => member.name));
+    for (let i = 0; i < seatsOpen; i++) {
+      const name = randomSailorNickname(globalNameRng, existingNames);
+      existingNames.add(name);
+      transport.crew.push(new Sailor(name, transport));
+    }
+  }
+
   private routeEconomics(
     origin: string,
     destination: string,
@@ -285,7 +325,7 @@ export class Captain extends Crew {
       const legFuelPrice = legFuelMarket !== undefined ? legFuelMarket.price : fuelPrice;
 
       totalDistance += route.distance;
-      totalDays += routeTravelDays(route, this.transport!.speedUnitsPerDay);
+      totalDays += routeTravelDays(route, this.currentSpeedUnitsPerDay());
       totalFuelUnits += legFuelUnits;
       totalFuelCost += legFuelUnits * legFuelPrice;
       if (!routeTypes.includes(route.routeType)) routeTypes.push(route.routeType);
@@ -331,26 +371,11 @@ export class Captain extends Crew {
 
     let justArrived = false;
     if (this.status === "InTransit") {
-      const crewCost = this.dailyCrewCost();
-      if (crewCost > this.cash) {
-        // Non-contract cargo has no delivery obligation, so sell it at the
-        // last port and free the ship for redispatch rather than losing both
-        // forever. Contract cargo can only be honored at the issuing
-        // location, so it falls back to the existing Inactive release valve
-        // (Faction clears contract.inFlightCaptain so the contract itself
-        // can be reassigned, even though this transport stays parked).
-        if (this.cargo !== null && this.cargo.contract === null) {
-          this.strandCargo(day, sellMarkets);
-          this.transport!.status = "AtLocation";
-          this.destination = null;
-          this.path = [];
-          this.dailyFuelBurn = 0.0;
-          return;
-        }
-        this.transport!.status = "Inactive";
-        return;
-      }
-      this.cash -= crewCost;
+      // Crew wages are no longer owed day-by-day here -- the whole trip's
+      // crew cost is paid upfront at departure (see routeEconomics/
+      // executeLocalRoute/executeContractDelivery/departEmptyTo), sized to
+      // the estimated day count, so there's nothing left to deduct or check
+      // affordability against while already underway.
       this.transport!.consumeFuel(this.dailyFuelBurn);
       this.daysRemaining -= 1;
       if (this.daysRemaining > 0) return;
@@ -380,6 +405,11 @@ export class Captain extends Crew {
       return;
     }
 
+    // Runs even on the arrival day itself -- a Ship shouldn't sit under-crewed
+    // at a Port for a whole extra day just because it happened to just dock
+    // there, before the "no same-day redeparture" rule below applies.
+    this.hireCrewIfPossible();
+
     if (justArrived) return;
 
     if (this.cargo === null) {
@@ -408,7 +438,7 @@ export class Captain extends Crew {
       const legFuelUnits = this.refuelAtStop(day, buyMarkets, nextRoute.distance, closedLocations);
       this.transport!.refuel(legFuelUnits);
       this.destination = nextNode;
-      this.daysRemaining = routeTravelDays(nextRoute, this.transport!.speedUnitsPerDay);
+      this.daysRemaining = routeTravelDays(nextRoute, this.currentSpeedUnitsPerDay());
       this.dailyFuelBurn = this.daysRemaining > 0 ? legFuelUnits / this.daysRemaining : 0.0;
       return false;
     }
@@ -504,43 +534,6 @@ export class Captain extends Crew {
       fuelCostPaid: round2(this.cargo.fuelCostTotal),
       profit: round2(profit),
     });
-    this.cargo = null;
-  }
-
-  /** Sells stranded non-contract cargo at the last port if a market exists there; otherwise the cargo is simply lost so the ship can be freed. */
-  private strandCargo(day: number, sellMarkets: Map<string, Market>): void {
-    const cargo = this.cargo!;
-    const market = sellMarkets.get(marketKey(this.location, cargo.commodity));
-    if (market !== undefined && market.isAvailable) {
-      const sellPrice = market.price;
-      const proceeds = sellPrice * cargo.quantity;
-      const profit = proceeds - cargo.totalCost;
-
-      this.cash += proceeds;
-      this.realizedProfit += profit;
-      this.applyPriceImpact(market, cargo.quantity, "sell");
-      market.applyTrade(cargo.quantity);
-      market.location.cash -= proceeds;
-
-      this.tradeLog.push({
-        day,
-        action: "SELL",
-        commodity: cargo.commodity,
-        location: this.location,
-        destination: null,
-        quantity: round2(cargo.quantity),
-        price: round2(sellPrice),
-        distance: cargo.distance,
-        routeType: cargo.routeType,
-        travelDays: cargo.travelDays,
-        fuelPrice: round2(cargo.fuelPricePaid),
-        fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
-        fuelCostPaid: round2(cargo.fuelCostTotal),
-        profit: round2(profit),
-      });
-    } else {
-      this.realizedProfit -= cargo.totalCost;
-    }
     this.cargo = null;
   }
 
@@ -745,7 +738,7 @@ export class Captain extends Crew {
     if (deliveryPath === null) return null;
     let deliveryDays = 0;
     for (const leg of deliveryPath) {
-      deliveryDays += routeTravelDays(leg, this.transport!.speedUnitsPerDay);
+      deliveryDays += routeTravelDays(leg, this.currentSpeedUnitsPerDay());
     }
 
     let repositionDays = 0;
@@ -753,7 +746,7 @@ export class Captain extends Crew {
     if (producer !== this.location) {
       const repositionPath = findShortestPath(this.location, producer, canUse);
       if (repositionPath === null) return null;
-      repositionDays = travelDaysBetween(this.location, producer, this.transport!.speedUnitsPerDay);
+      repositionDays = travelDaysBetween(this.location, producer, this.currentSpeedUnitsPerDay());
       const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
       const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
       repositionFuelCost = distanceBetween(this.location, producer) * this.currentRepositionFuelRate() * fuelPrice;
@@ -800,7 +793,10 @@ export class Captain extends Crew {
     const originLocation = this.location;
     const leg1FuelUnits = firstLeg.distance * this.currentFuelConsumptionRate() * quantity;
     const leg1FuelCost = leg1FuelUnits * fuelPrice;
-    const upfrontCost = quantity * originMarket.price + leg1FuelCost + this.currentFixedShipmentCost();
+    // Crew wages for the WHOLE trip (every leg, see routeEconomics) are paid
+    // upfront here alongside goods/fuel/fixed-cost -- there's no later daily
+    // deduction while InTransit any more (see act()).
+    const upfrontCost = quantity * originMarket.price + leg1FuelCost + this.currentFixedShipmentCost() + econ.crewCost;
 
     const buyPrice = originMarket.price;
     this.cash -= upfrontCost;
@@ -835,7 +831,7 @@ export class Captain extends Crew {
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
-    this.daysRemaining = routeTravelDays(firstLeg, this.transport!.speedUnitsPerDay);
+    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay());
     this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
 
     this.tradeLog.push({
@@ -884,10 +880,26 @@ export class Captain extends Crew {
     const firstLeg = path[0];
     const originLocation = this.location;
 
+    // Distance/duration for the WHOLE path -- computed before the quantity/
+    // affordability gates below since crew cost doesn't depend on cargo
+    // quantity, only on how many days the trip takes.
+    let totalDistance = 0.0;
+    let totalDays = 0;
+    const routeTypes: RouteType[] = [];
+    for (const leg of path) {
+      totalDistance += leg.distance;
+      totalDays += routeTravelDays(leg, this.currentSpeedUnitsPerDay());
+      if (!routeTypes.includes(leg.routeType)) routeTypes.push(leg.routeType);
+    }
+    // Crew wages for the whole trip are paid upfront here -- there's no
+    // later daily deduction while InTransit any more (see act()).
+    const crewCost = this.dailyCrewCost() * totalDays;
+    if (crewCost > this.cash) return;
+
     const perUnitFuelUnits = firstLeg.distance * this.currentFuelConsumptionRate();
     const perUnitFuelCost = perUnitFuelUnits * fuelPrice;
     const goodsAffordableQuantity = originMarket.price > 0 ? issuingLocation.cash / originMarket.price : 0;
-    const fuelAffordableQuantity = perUnitFuelCost > 0 ? this.cash / perUnitFuelCost : Infinity;
+    const fuelAffordableQuantity = perUnitFuelCost > 0 ? (this.cash - crewCost) / perUnitFuelCost : Infinity;
 
     const quantity = Math.min(
       this.transport!.cargoCapacity,
@@ -900,11 +912,11 @@ export class Captain extends Crew {
 
     const leg1FuelUnits = perUnitFuelUnits * quantity;
     const leg1FuelCost = leg1FuelUnits * fuelPrice;
-    if (leg1FuelCost > this.cash) return;
+    if (leg1FuelCost + crewCost > this.cash) return;
 
     const buyPrice = originMarket.price;
     const goodsCost = quantity * buyPrice;
-    this.cash -= leg1FuelCost;
+    this.cash -= leg1FuelCost + crewCost;
     this.totalFuelSpent += leg1FuelCost;
     this.totalFuelUnitsConsumed += leg1FuelUnits;
     this.applyPriceImpact(originMarket, quantity, "buy");
@@ -912,15 +924,6 @@ export class Captain extends Crew {
     originMarket.location.cash += goodsCost;
     issuingLocation.cash -= goodsCost;
     if (fuelMarket !== undefined) this.applyPriceImpact(fuelMarket, leg1FuelUnits, "buy");
-
-    let totalDistance = 0.0;
-    let totalDays = 0;
-    const routeTypes: RouteType[] = [];
-    for (const leg of path) {
-      totalDistance += leg.distance;
-      totalDays += routeTravelDays(leg, this.transport!.speedUnitsPerDay);
-      if (!routeTypes.includes(leg.routeType)) routeTypes.push(leg.routeType);
-    }
 
     contract.inFlightCaptain = this;
     this.cargo = {
@@ -935,7 +938,7 @@ export class Captain extends Crew {
       fuelPricePaid: fuelPrice,
       fuelUnitsConsumed: leg1FuelUnits,
       fuelCostTotal: leg1FuelCost,
-      totalCost: leg1FuelCost,
+      totalCost: leg1FuelCost + crewCost,
       departureDay: day,
       contract,
     };
@@ -946,7 +949,7 @@ export class Captain extends Crew {
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
-    this.daysRemaining = routeTravelDays(firstLeg, this.transport!.speedUnitsPerDay);
+    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay());
     this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
 
     this.tradeLog.push({
@@ -1045,7 +1048,7 @@ export class Captain extends Crew {
     const fuelMarketHere = buyMarkets.get(marketKey(this.location, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
     const repositionDistance = distanceBetween(this.location, best.targetLoc);
-    const repositionDays = travelDaysBetween(this.location, best.targetLoc, this.transport!.speedUnitsPerDay);
+    const repositionDays = travelDaysBetween(this.location, best.targetLoc, this.currentSpeedUnitsPerDay());
     const repositionFuelUnits = repositionDistance * this.currentRepositionFuelRate();
     const repositionFuelCost = repositionFuelUnits * fuelPriceHere;
     const repositionCrewCost = this.dailyCrewCost() * repositionDays;
@@ -1080,15 +1083,18 @@ export class Captain extends Crew {
     const fuelMarketHere = buyMarkets.get(marketKey(this.location, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
     const repositionDistance = distanceBetween(this.location, destination);
-    const repositionDays = travelDaysBetween(this.location, destination, this.transport!.speedUnitsPerDay);
+    const repositionDays = travelDaysBetween(this.location, destination, this.currentSpeedUnitsPerDay());
     const repositionRouteTypes: RouteType[] = [];
     for (const leg of path) if (!repositionRouteTypes.includes(leg.routeType)) repositionRouteTypes.push(leg.routeType);
     const repositionRouteType: string = repositionRouteTypes.join("+");
     const repositionFuelUnits = repositionDistance * this.currentRepositionFuelRate();
     const repositionFuelCost = repositionFuelUnits * fuelPriceHere;
-    if (repositionFuelCost > this.cash) return false;
+    // Crew wages for the reposition leg are paid upfront here -- there's no
+    // later daily deduction while InTransit any more (see act()).
+    const repositionCrewCost = this.dailyCrewCost() * repositionDays;
+    if (repositionFuelCost + repositionCrewCost > this.cash) return false;
 
-    this.cash -= repositionFuelCost;
+    this.cash -= repositionFuelCost + repositionCrewCost;
     this.totalFuelSpent += repositionFuelCost;
     this.totalFuelUnitsConsumed += repositionFuelUnits;
     this.totalRepositions += 1;

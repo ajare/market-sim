@@ -8,9 +8,10 @@ export class Crew {
   name: string;
   transport: Transport | null;
   /**
-   * Per-day cost to the Faction that owns this Crew member's Transport,
-   * owed only while that Transport is actually underway (idle time in port
-   * is free) -- see captain.ts's dailyCrewCost/act.
+   * Per-day wage rate for this Crew member, used to size the lump-sum
+   * payment a Captain pays upfront at departure -- dailyWages * the trip's
+   * estimated day count (see captain.ts's dailyCrewCost/routeEconomics).
+   * Idle time in port costs nothing regardless of rate.
    */
   dailyWages: number;
 

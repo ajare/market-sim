@@ -357,10 +357,9 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   const generateCrewSlot = (nationality: Nationality, homeLocation: string): [Transport, Captain, string] => {
     const pools = NATIONALITY_POOLS[nationality];
     const shipClass = SHIP_CLASSES[shipClassNames[genShipIndex % shipClassNames.length]];
-    const transport = shipClass.clone({
-      name: randomShipName(fleetRng, pools.ships),
-      crewRequirement: fleetRng.randint(1, 5),
-    });
+    // crewRequirement isn't overridden here -- clone() carries over shipClass's
+    // own fixed value (see SHIP_CLASSES in transport.ts).
+    const transport = shipClass.clone({ name: randomShipName(fleetRng, pools.ships) });
     transport.speedUnitsPerDay *= transportSpeedScale;
     const captain = new Captain(
       randomName(fleetRng, pools.names), homeLocation, null, 1.25, 0.012 + 0.002 * (genShipIndex % 5),

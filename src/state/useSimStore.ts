@@ -17,6 +17,9 @@ import type { World } from "../sim/world";
 import type { Location } from "../sim/location";
 import type { PoliticalEntity } from "../sim/politicalEntity";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
+import type { Transport } from "../sim/transport";
+import type { Crew } from "../sim/crew";
+import type { Captain } from "../sim/captain";
 
 interface SimStore {
   world: World | null;
@@ -29,6 +32,10 @@ interface SimStore {
   secondsPerDay: number;
   contractStrategy: ContractStrategy;
   version: number;
+  /** The Captain currently selected in the Fleet panel, highlighted in the Network view -- null when nothing's selected. Cleared whenever a new World is built/loaded, since the old fleet's Captain objects no longer apply. */
+  selectedCaptain: Captain | null;
+  /** Toggles selection: selecting the already-selected Captain again clears it. Pass null to explicitly clear. */
+  selectTransport: (captain: Captain | null) => void;
   reset: () => void;
   /** Builds a fresh World from an editor JSON export (see buildWorldFromJson) and installs it, replacing the current one. Throws if the JSON can't be turned into a valid World -- the caller surfaces the message. */
   loadWorldFromJson: (text: string) => void;
@@ -53,6 +60,14 @@ interface SimStore {
     detourDistance: number,
     maxDistance: number,
   ) => Location | null;
+  /**
+   * Removes `member` from `transport`'s crew -- the Transports panel's "kill
+   * crew member" button, only enabled while the ship is InTransit (guarded
+   * here too, not just by the UI's disabled attribute). The ship hires a
+   * replacement for free next time it's docked at a Port (see
+   * Captain.hireCrewIfPossible). No-op if the transport isn't InTransit.
+   */
+  killCrewMember: (transport: Transport, member: Crew) => void;
 }
 
 let accumulator = 0;
@@ -74,13 +89,16 @@ export const useSimStore = create<SimStore>((set, get) => ({
   secondsPerDay: 1.0,
   contractStrategy: "compare",
   version: 0,
+  selectedCaptain: null,
+  selectTransport: (captain) => set((s) => ({ selectedCaptain: s.selectedCaptain === captain ? null : captain })),
 
   reset: () => {
     const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
     set((s) => ({
-      world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false, version: s.version + 1,
+      world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false,
+      selectedCaptain: null, version: s.version + 1,
     }));
   },
 
@@ -92,7 +110,8 @@ export const useSimStore = create<SimStore>((set, get) => ({
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
     set((s) => ({
-      world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false, version: s.version + 1,
+      world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false,
+      selectedCaptain: null, version: s.version + 1,
     }));
   },
 
@@ -151,6 +170,12 @@ export const useSimStore = create<SimStore>((set, get) => ({
     const location = world.addLocation(x, y, politicalEntity, detourDistance, maxDistance);
     set((s) => ({ version: s.version + 1 }));
     return location;
+  },
+
+  killCrewMember: (transport, member) => {
+    if (transport.status !== "InTransit") return;
+    transport.removeCrewMember(member);
+    set((s) => ({ version: s.version + 1 }));
   },
 }));
 

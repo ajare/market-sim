@@ -323,6 +323,8 @@ export function NetworkView() {
   const version = useSimStore((s) => s.version);
   const politicalEntities = useSimStore((s) => s.politicalEntities);
   const addLocationAction = useSimStore((s) => s.addLocation);
+  const selectedCaptain = useSimStore((s) => s.selectedCaptain);
+  const selectTransport = useSimStore((s) => s.selectTransport);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -512,6 +514,17 @@ export function NetworkView() {
           ctx!.stroke();
         }
 
+        // The Transport selected in the Fleet panel gets a bold outer ring,
+        // independent of (and drawn outside) the hover-only docked halo above
+        // -- persists whether this ship is docked or in transit.
+        if (captain === selectedCaptain) {
+          ctx!.beginPath();
+          ctx!.arc(mx, my, markerRadius + 4, 0, Math.PI * 2);
+          ctx!.strokeStyle = accent;
+          ctx!.lineWidth = 2;
+          ctx!.stroke();
+        }
+
         markers.push({ captain, x: mx, y: my, r: markerRadius });
       }
 
@@ -673,7 +686,9 @@ export function NetworkView() {
       }
       setHover(null);
     }
-    // Clicking empty canvas (not an existing ship/location marker) opens the
+    // Clicking a ship marker toggles its selection (mirrors clicking its row
+    // in the Fleet panel -- same store state, see selectedCaptain). Clicking
+    // empty canvas (not an existing ship/location marker) instead opens the
     // placement popup at the click, mirroring the editor's WorldCanvas -- the
     // chosen PoliticalEntity (or Cancel) drives actually creating the Location.
     function handleClick(e: MouseEvent): void {
@@ -681,9 +696,13 @@ export function NetworkView() {
       const rect = canvas!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const hitShip = markers.some((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      const shipHit = markers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      if (shipHit !== undefined) {
+        selectTransport(shipHit.captain);
+        return;
+      }
       const hitLocation = locationMarkers.some((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
-      if (hitShip || hitLocation) return;
+      if (hitLocation) return;
       const worldX = (mx - projection.pad) / projection.scaleX + projection.minX;
       const worldY = (my - projection.pad) / projection.scaleY + projection.minY;
       const { maxDistance, detourDistance } = deriveDefaultThresholds();
@@ -699,7 +718,7 @@ export function NetworkView() {
       canvas.removeEventListener("mouseleave", handleMouseLeave);
       canvas.removeEventListener("click", handleClick);
     };
-  }, [world, version, politicalEntities]);
+  }, [world, version, politicalEntities, selectedCaptain, selectTransport]);
 
   if (world === null) return null;
 
@@ -719,6 +738,7 @@ export function NetworkView() {
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.soloTrader }} />Solo trader</span>
         <span><i className="legend-ring" />Docked (not in transit)</span>
         <span><i className="legend-line" style={{ borderBottomColor: "var(--warning, #f59e0b)" }} />Hover a ship to see its route</span>
+        <span>Click a ship to select it (also selectable from the Fleet panel)</span>
         <span>Click empty water to add a Location</span>
       </div>
       <div className="network-canvas-wrap" ref={containerRef}>

@@ -3,6 +3,8 @@ import { travelDaysBetween } from "../sim/worldData";
 
 export function FleetPanel() {
   const world = useSimStore((s) => s.world);
+  const selectedCaptain = useSimStore((s) => s.selectedCaptain);
+  const selectTransport = useSimStore((s) => s.selectTransport);
   if (world === null) return null;
 
   return (
@@ -38,7 +40,11 @@ export function FleetPanel() {
               // an index key reconciles correctly and avoids stale rows lingering
               // after a Paste World swaps the whole fleet out.
               return (
-                <tr key={i}>
+                <tr
+                  key={i}
+                  className={captain === selectedCaptain ? "fleet-row-selected" : undefined}
+                  onClick={() => selectTransport(captain)}
+                >
                   <td>{captain.name}</td>
                   <td>{captain.transport?.name ?? "-"}</td>
                   <td>{captain.company?.name ?? "(independent)"}</td>

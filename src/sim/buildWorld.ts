@@ -275,7 +275,10 @@ export function buildWorld(
 
   const fleetCrew: Array<[Transport, Captain, string]> = homePorts.map((homePort, i) => {
     const shipClass = SHIP_CLASSES[shipClassNames[i % shipClassNames.length]];
-    const transport = shipClass.clone({ name: randomShipName(fleetRng, DUTCH_SHIP_NAMES), crewRequirement: fleetRng.randint(1, 5) });
+    // crewRequirement isn't overridden here -- clone() carries over shipClass's
+    // own fixed value (see SHIP_CLASSES in transport.ts), so crew size depends
+    // on which class this ship is, not a random roll.
+    const transport = shipClass.clone({ name: randomShipName(fleetRng, DUTCH_SHIP_NAMES) });
     const captain = new Captain(
       randomName(fleetRng, DUTCH_NAMES),
       homePort,

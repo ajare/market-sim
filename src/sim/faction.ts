@@ -20,13 +20,18 @@ import { getRoutes } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
 import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
-import { randChoice, randUniform } from "./simRandom";
+import { randChoice, randRandom, randUniform } from "./simRandom";
 import type { BulletinBoard, Contract, ContractType } from "./contracts";
 import type { PoliticalEntity } from "./politicalEntity";
 import { locationSupportsTransport } from "./companyHome";
 import { round2 } from "./utils";
+import type { NameRng } from "./names";
+import { randomSailorNickname } from "./sailorNicknames";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
+
+/** Adapts the global sim RNG to the NameRng surface randomSailorNickname needs, so Sailor nicknames draw off the same seeded stream as the rest of the simulation. */
+const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 
 /** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see Faction.dedupeCaptainName. */
 function alphaSequence(index: number): string {
@@ -158,12 +163,26 @@ export class Faction {
     this.captainNames.add(captain.name);
   }
 
-  /** Fills a Transport's `.crew` (the captain plus Sailors for any extra crewRequirement seats) -- shared by the constructor's initial fleet and addTransport's single-recruit path. */
+  /**
+   * Fills a Transport's `.crew` (the captain plus Sailors for any extra
+   * crewRequirement seats) -- shared by the constructor's initial fleet and
+   * addTransport's single-recruit path. A Ship's Sailors draw a sailor
+   * nickname (see sailorNicknames.ts), deduped within this one ship's crew
+   * only; every other Transport type keeps the placeholder
+   * "${transport.name} Sailor N" name, since the crew-nickname/hiring/speed
+   * mechanic (see Captain.act) is Ship-specific.
+   */
   private crewTransport(transport: Transport, captain: Captain): void {
     transport.crew = [captain];
     const extraSeats = Math.max(0, transport.crewRequirement - 1);
+    const isShip = transport instanceof Ship;
+    const usedNicknames = new Set<string>();
     for (let i = 0; i < extraSeats; i++) {
-      transport.crew.push(new Sailor(`${transport.name} Sailor ${i + 2}`, transport));
+      const name = isShip
+        ? randomSailorNickname(globalNameRng, usedNicknames)
+        : `${transport.name} Sailor ${i + 2}`;
+      usedNicknames.add(name);
+      transport.crew.push(new Sailor(name, transport));
     }
   }
 

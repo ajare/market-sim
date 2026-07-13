@@ -67,6 +67,17 @@ export class Transport {
     if (this.currentFuel !== null) this.currentFuel = Math.min(this.fuelCapacity, this.currentFuel + amount);
   }
 
+  /**
+   * Removes `member` from this Transport's crew (e.g. the Transports panel's
+   * "kill crew member" UI action) -- no-op if not present. Leaves the seat
+   * open; for a Ship, the next time it's docked at a Port,
+   * Captain.hireCrewIfPossible tops it back up with a freshly hired Sailor.
+   */
+  removeCrewMember(member: Crew): void {
+    const idx = this.crew.indexOf(member);
+    if (idx !== -1) this.crew.splice(idx, 1);
+  }
+
   canUseRoute(route: Route | undefined | null): boolean {
     if (route == null) return false;
     const allowed = this.allowedRouteTypes();
@@ -100,12 +111,32 @@ export class Transport {
  */
 export class Ship extends Transport {
   constructor(init: TransportInit = {}) {
-    super({ name: "Standard Freighter", ...init });
+    // 6 (Handysize's crew size) is the fallback for a generic/editor-authored
+    // Ship not built from one of the SHIP_CLASSES presets below, each of
+    // which passes its own crewRequirement explicitly.
+    super({ name: "Standard Freighter", crewRequirement: 6, ...init });
   }
 
   override allowedRouteTypes(): RouteType[] | null {
     return ["Sea"];
   }
+}
+
+/**
+ * Fraction of a Ship's plain speedUnitsPerDay it currently makes, given how
+ * fully crewed it is -- 50% with just its Captain aboard, up to 100% at a
+ * full complement (crewRequirement), linear in between. A Ship's Sailors are
+ * hired for free while docked at a Port (see Captain.hireCrewIfPossible);
+ * every other Transport type is always 100% -- crew fullness doesn't affect
+ * it. Used both by Captain (to price/estimate a trip's actual travel time)
+ * and the Transports UI panel (to show a Ship's current speed).
+ */
+export function crewSpeedFraction(transport: Transport): number {
+  if (!(transport instanceof Ship)) return 1;
+  const sailorsNeeded = transport.crewRequirement - 1;
+  if (sailorsNeeded <= 0) return 1;
+  const sailorsHired = transport.crew.length - 1;
+  return 0.5 + 0.5 * Math.min(1, sailorsHired / sailorsNeeded);
 }
 
 export class WagonTrain extends Transport {
@@ -210,28 +241,28 @@ export const SHIP_CLASSES: Record<string, Ship> = {
   Speedster: new Ship({
     name: "Speedster", cargoCapacity: 80.0, speedUnitsPerDay: 800.0,
     fuelConsumptionPerUnitDistance: 0.003, repositionFuelConsumptionPerDistance: 0.025,
-    fixedShipmentCost: 8.0, fuelCapacity: 60.0, currentFuel: 0.0,
+    fixedShipmentCost: 8.0, fuelCapacity: 60.0, currentFuel: 0.0, crewRequirement: 4,
   }),
   Handysize: new Ship({
     name: "Handysize", cargoCapacity: 120.0, speedUnitsPerDay: 600.0,
     fuelConsumptionPerUnitDistance: 0.0035, repositionFuelConsumptionPerDistance: 0.03,
-    fixedShipmentCost: 10.0, fuelCapacity: 90.0, currentFuel: 0.0,
+    fixedShipmentCost: 10.0, fuelCapacity: 90.0, currentFuel: 0.0, crewRequirement: 6,
   }),
   Panamax: new Ship({
     name: "Panamax", cargoCapacity: 200.0, speedUnitsPerDay: 500.0,
     fuelConsumptionPerUnitDistance: 0.004, repositionFuelConsumptionPerDistance: 0.04,
-    fixedShipmentCost: 15.0, fuelCapacity: 140.0, currentFuel: 0.0,
+    fixedShipmentCost: 15.0, fuelCapacity: 140.0, currentFuel: 0.0, crewRequirement: 9,
   }),
   Capesize: new Ship({
     name: "Capesize", cargoCapacity: 350.0, speedUnitsPerDay: 400.0,
     fuelConsumptionPerUnitDistance: 0.0045, repositionFuelConsumptionPerDistance: 0.05,
-    fixedShipmentCost: 25.0, fuelCapacity: 220.0, currentFuel: 0.0,
+    fixedShipmentCost: 25.0, fuelCapacity: 220.0, currentFuel: 0.0, crewRequirement: 13,
   }),
   // Wind-powered -- burns no fuel at all, and leaves currentFuel at null,
   // so needsRefuel() is always false: never needs a refueling stop.
   SailingVessel: new Ship({
     name: "SailingVessel", cargoCapacity: 100.0, speedUnitsPerDay: 300.0,
     fuelConsumptionPerUnitDistance: 0.0, repositionFuelConsumptionPerDistance: 0.0,
-    fixedShipmentCost: 5.0, fuelCapacity: 0.0, currentFuel: null,
+    fixedShipmentCost: 5.0, fuelCapacity: 0.0, currentFuel: null, crewRequirement: 3,
   }),
 };
