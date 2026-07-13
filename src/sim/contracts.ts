@@ -77,10 +77,6 @@ export interface Contract {
   expiryDay: number;
 }
 
-export function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
 /** Canonical key for a (location, commodity) pair -- mirrors markets.ts's marketKey. */
 export function contractKey(location: string, commodity: string): string {
   return `${location}::${commodity}`;

@@ -15,6 +15,7 @@ import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
+import { round2 } from "./utils";
 
 export interface CargoState {
   commodity: string;
@@ -128,9 +129,6 @@ function isContractDeliveryDirective(d: Directive): d is ContractDeliveryDirecti
   return "action" in d && d.action === "CONTRACT_DELIVER";
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 function excludeRouteKey(commodity: string, location: string): string {
   return `${commodity}||${location}`;
 }
@@ -335,6 +333,20 @@ export class Captain extends Crew {
     if (this.status === "InTransit") {
       const crewCost = this.dailyCrewCost();
       if (crewCost > this.cash) {
+        // Non-contract cargo has no delivery obligation, so sell it at the
+        // last port and free the ship for redispatch rather than losing both
+        // forever. Contract cargo can only be honored at the issuing
+        // location, so it falls back to the existing Inactive release valve
+        // (Faction clears contract.inFlightCaptain so the contract itself
+        // can be reassigned, even though this transport stays parked).
+        if (this.cargo !== null && this.cargo.contract === null) {
+          this.strandCargo(day, sellMarkets);
+          this.transport!.status = "AtLocation";
+          this.destination = null;
+          this.path = [];
+          this.dailyFuelBurn = 0.0;
+          return;
+        }
         this.transport!.status = "Inactive";
         return;
       }
@@ -492,6 +504,43 @@ export class Captain extends Crew {
       fuelCostPaid: round2(this.cargo.fuelCostTotal),
       profit: round2(profit),
     });
+    this.cargo = null;
+  }
+
+  /** Sells stranded non-contract cargo at the last port if a market exists there; otherwise the cargo is simply lost so the ship can be freed. */
+  private strandCargo(day: number, sellMarkets: Map<string, Market>): void {
+    const cargo = this.cargo!;
+    const market = sellMarkets.get(marketKey(this.location, cargo.commodity));
+    if (market !== undefined && market.isAvailable) {
+      const sellPrice = market.price;
+      const proceeds = sellPrice * cargo.quantity;
+      const profit = proceeds - cargo.totalCost;
+
+      this.cash += proceeds;
+      this.realizedProfit += profit;
+      this.applyPriceImpact(market, cargo.quantity, "sell");
+      market.applyTrade(cargo.quantity);
+      market.location.cash -= proceeds;
+
+      this.tradeLog.push({
+        day,
+        action: "SELL",
+        commodity: cargo.commodity,
+        location: this.location,
+        destination: null,
+        quantity: round2(cargo.quantity),
+        price: round2(sellPrice),
+        distance: cargo.distance,
+        routeType: cargo.routeType,
+        travelDays: cargo.travelDays,
+        fuelPrice: round2(cargo.fuelPricePaid),
+        fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
+        fuelCostPaid: round2(cargo.fuelCostTotal),
+        profit: round2(profit),
+      });
+    } else {
+      this.realizedProfit -= cargo.totalCost;
+    }
     this.cargo = null;
   }
 

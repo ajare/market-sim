@@ -6,10 +6,11 @@
 import {
   CONTRACT_BASE_FEE_RATE, CONTRACT_FEE_ESCALATION_BASE, CONTRACT_QUANTITY_MULTIPLIER,
   CONTRACT_PIRATE_FEE_BOOST_PER_SHIP, MAX_CONTRACT_PIRATE_FEE_BOOST,
-  DEFAULT_CONTRACT_EXPIRY_DAYS, contractKey, round2,
+  DEFAULT_CONTRACT_EXPIRY_DAYS, contractKey,
   type BulletinBoard, type Contract, type TenderContractsOptions,
 } from "./contracts";
 import type { PoliticalEntity } from "./politicalEntity";
+import { round2 } from "./utils";
 import { DEFAULT_BASE_CONSUMPTION_RATE, DEFAULT_BASE_PRICE, DEFAULT_BASE_PRODUCTION_RATE } from "./commodity";
 // Deferred (not destructured) import -- worldData.ts imports Location, so this
 // binding is read lazily via the COMMODITIES getter below, never at this

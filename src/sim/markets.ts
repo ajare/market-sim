@@ -7,6 +7,7 @@ import { DEFAULT_PRICE_SENSITIVITY, DEFAULT_DEFICIT_PRICE_BOOST, DEFAULT_EXCESS_
 import { MarketEvent } from "./events";
 import type { Location } from "./location";
 import { randGauss } from "./simRandom";
+import { round2 } from "./utils";
 
 export type MarketSide = "buy" | "sell";
 
@@ -256,8 +257,4 @@ export class Market {
 
     return record;
   }
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

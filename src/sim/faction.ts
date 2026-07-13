@@ -24,6 +24,7 @@ import { randChoice, randUniform } from "./simRandom";
 import type { BulletinBoard, Contract, ContractType } from "./contracts";
 import type { PoliticalEntity } from "./politicalEntity";
 import { locationSupportsTransport } from "./companyHome";
+import { round2 } from "./utils";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
@@ -464,6 +465,7 @@ export class Company extends ContractFulfiller {
         // forever, since inFlightCaptain !== null blocks any replacement.
         // Release it so another idle captain can pick up the delivery.
         if (contract.inFlightCaptain.transport?.status === "Inactive") {
+          contract.cancelled = true;
           contract.inFlightCaptain = null;
         } else {
           continue;
@@ -561,8 +563,10 @@ export class Company extends ContractFulfiller {
     for (const contract of candidateContracts) {
       if (contract.inFlightCaptain !== null) {
         // Same Inactive-transport release valve as serviceContracts.
-        if (contract.inFlightCaptain.transport?.status === "Inactive") contract.inFlightCaptain = null;
-        else continue;
+        if (contract.inFlightCaptain.transport?.status === "Inactive") {
+          contract.cancelled = true;
+          contract.inFlightCaptain = null;
+        } else continue;
       }
       for (const captain of idle) {
         if (assigned.has(captain)) continue;
@@ -1071,8 +1075,4 @@ export class PoliceFleet extends Faction {
     }
     return directives;
   }
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

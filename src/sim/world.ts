@@ -29,7 +29,8 @@ import { planSeaRoutes, seaRoutesBlockedBy, type RoutePlannerLocation, type Rout
 
 /** Adapts the global sim RNG to the NameRng surface randomName needs, so pirate/police captains draw names off the same live stream as the rest of the simulation. */
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
-import { BulletinBoard, contractKey, round2, type Contract, type TenderContractsOptions } from "./contracts";
+import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
+import { round2 } from "./utils";
 
 // Locations must fall within this range. Calibrated via seed-averaged
 // stockpile-ratio sweeps (see analysis.ts / npm run sweep): below ~20 total

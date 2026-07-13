@@ -13,6 +13,7 @@ import { Rng } from "./rng";
 import { Commodity, buildCommodities } from "./commodity";
 import { Location, type TerminalType } from "./location";
 import { PoliticalEntity } from "./politicalEntity";
+import { round2 } from "./utils";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, worldDistance, type DistanceConfig,
 } from "./distance";
@@ -286,20 +287,20 @@ export function generateCoordinates(
 
   for (const name of names) {
     let candidate: [number, number] = [rng.uniform(0, COORDINATE_SPREAD), rng.uniform(0, COORDINATE_SPREAD)];
+    let farEnough = false;
     for (let attempt = 0; attempt < 1000; attempt++) {
-      const farEnough = Object.values(coordinates).every(
+      farEnough = Object.values(coordinates).every(
         ([x, y]) => Math.hypot(candidate[0] - x, candidate[1] - y) >= minDistance,
       );
       if (farEnough) break;
       candidate = [rng.uniform(0, COORDINATE_SPREAD), rng.uniform(0, COORDINATE_SPREAD)];
     }
+    if (!farEnough) {
+      console.warn(`generateCoordinates: could not place "${name}" after 1000 attempts; overlapping placement`);
+    }
     coordinates[name] = candidate;
   }
   return coordinates;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 export let LOCATIONS: Location[] = [];
