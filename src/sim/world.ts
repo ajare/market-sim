@@ -25,7 +25,9 @@ import {
   LOCATIONS, LOCATION_COORDINATES, COMMODITIES, setGeography, getLocation, getDistanceConfig, FUEL_BASE_PRICE,
 } from "./worldData";
 import { Route, ROUTES, setRoutes, addRouteToNetwork, routeKey } from "./routes";
-import { planSeaRoutes, seaRoutesBlockedBy, type RoutePlannerLocation, type RoutePlannerRoute } from "@market-sim/shared";
+import {
+  planSeaRoutes, seaRoutesBlockedBy, DEFAULT_START_DATE, type RoutePlannerLocation, type RoutePlannerRoute,
+} from "@market-sim/shared";
 
 /** Adapts the global sim RNG to the NameRng surface randomName needs, so pirate/police captains draw names off the same live stream as the rest of the simulation. */
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
@@ -99,7 +101,11 @@ export interface WorldInit {
   pirateStartingCash?: number;
   /** Overrides for Location.tenderContracts' tunable knobs (expiry, fee curve, quantity multiplier) -- defaults to contracts.ts's module constants if omitted. */
   contractOptions?: TenderContractsOptions;
+  /** The in-world date/time of day 1, as an ISO 8601 string -- see startDate/currentDate. Default DEFAULT_START_DATE. */
+  startDate?: string;
 }
+
+export { DEFAULT_START_DATE };
 
 export class World {
   locations: Location[];
@@ -137,6 +143,15 @@ export class World {
    */
   private pirateCountsByLocation = new Map<string, number>();
   private nextDay = 1;
+  /** The calendar date/time of day 1 -- currentDate advances from this by exactly one day per completed step(). */
+  private startDate: Date;
+
+  /** The in-world date/time as of the start of the next unsimulated day (i.e. day 1's date before any step() call). Time-of-day is carried from startDate; only the calendar date is meant for display (see ControlsPanel). */
+  get currentDate(): Date {
+    const date = new Date(this.startDate);
+    date.setUTCDate(date.getUTCDate() + (this.nextDay - 1));
+    return date;
+  }
 
   /** Every Contract currently in play: open board postings plus every ContractFulfiller's accepted-but-not-yet-fulfilled ones (a just-fulfilled contract stays visible here for the rest of the day it was delivered -- it's only pruned from its fulfiller's own list at the start of that fulfiller's next servicing pass). */
   get contracts(): Contract[] {
@@ -169,6 +184,7 @@ export class World {
     this.companyEventProbability = init.companyEventProbability ?? 0.005;
     const localEventProbability = init.localEventProbability ?? 0.008;
     this.localEventProbability = localEventProbability;
+    this.startDate = new Date(init.startDate ?? DEFAULT_START_DATE);
 
     this.factions = init.factions ? [...init.factions] : [];
 

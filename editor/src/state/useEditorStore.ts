@@ -11,7 +11,7 @@ import {
   type Commodity, type CommodityField, type CommodityType, type EditorCompany, type EditorFleetMember, type EditorRoute,
   type PoliticalEntity, type PoliticalEntityType, type EditorLocation, type RouteType, type TerminalType, type TransportType,
 } from "../types";
-import type { EditorWorld } from "../worldJson";
+import { DEFAULT_START_DATE, type EditorWorld } from "../worldJson";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius,
   type DistanceConfig, type DistanceMode,
@@ -80,6 +80,10 @@ interface EditorStore {
   setGlobeLonSpan: (lonSpan: number) => void;
   /** The active distance settings bundled for distance.ts's helpers. */
   distanceConfig: () => DistanceConfig;
+
+  /** The in-world date/time of day 1, as an ISO 8601 string -- set via the header's start-date control, exported/imported verbatim (see worldJson.ts). */
+  startDate: string;
+  setStartDate: (startDate: string) => void;
 
   /** A user-picked background image (data URL) drawn behind the canvas, or null for none. Rendered as a plain HTML image fixed to the canvas viewport, so it does NOT scale when the world size changes (see WorldCanvas). Purely an editor view setting -- not part of the exported World. */
   backgroundImage: string | null;
@@ -198,6 +202,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     return { mode: s.distanceMode, radius: s.globeRadius, lonSpan: s.globeLonSpan, worldScale: s.worldScale };
   },
 
+  startDate: DEFAULT_START_DATE,
+  setStartDate: (startDate) => {
+    if (Number.isNaN(Date.parse(startDate))) return;
+    set({ startDate });
+  },
+
   politicalEntities: [],
 
   addPoliticalEntity: (name: string) =>
@@ -306,6 +316,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       distanceMode: world.distanceMode,
       globeRadius: world.globeRadius > 0 ? world.globeRadius : defaultGlobeRadius(worldScale),
       globeLonSpan: clamp(world.globeLonSpan, 1, 360),
+      startDate: Number.isNaN(Date.parse(world.startDate)) ? DEFAULT_START_DATE : world.startDate,
       locations,
       politicalEntities: world.politicalEntities,
       commodities: world.commodities,

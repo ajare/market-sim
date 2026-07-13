@@ -263,8 +263,9 @@ export class Location extends ContractIssuer {
   dailyUpdate(): void {
     for (const commodity of Object.keys(this.producedCommodities)) {
       const current = this.stockpiles[commodity] ?? 0;
-      if (current < this.maxStockpile(commodity)) {
-        this.stockpiles[commodity] = current + this.productionRate(commodity);
+      const max = this.maxStockpile(commodity);
+      if (current < max) {
+        this.stockpiles[commodity] = Math.min(max, current + this.productionRate(commodity));
       }
       this.updateDiscount(commodity);
     }

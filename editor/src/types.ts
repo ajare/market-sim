@@ -19,14 +19,22 @@ export {
   TRANSPORT_TYPES, TRANSPORT_TYPE_LABELS,
 };
 export type { TerminalType, RouteType, TransportType };
+import {
+  COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType,
+} from "@market-sim/shared/commodity";
+export { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE };
+export type { CommodityType };
+import {
+  POLITICAL_ENTITY_TYPES, DEFAULT_POLITICAL_ENTITY_TYPE, type PoliticalEntityType,
+} from "@market-sim/shared/politicalEntity";
+export { POLITICAL_ENTITY_TYPES, DEFAULT_POLITICAL_ENTITY_TYPE };
+export type { PoliticalEntityType };
+// The De Casteljau curve math a Route's path is rendered/measured through
+// (also used by src/sim/routes.ts's Route) lives in @market-sim/shared.
+import { sampleBezierCurve, CURVE_SAMPLE_COUNT, type Point } from "@market-sim/shared/bezier";
 
 /** Default base rate (units/day, at a Location whose rate modifier is the default 1.0) for a newly defined Commodity -- mirrors DEFAULT_BASE_PRODUCTION_RATE/DEFAULT_BASE_CONSUMPTION_RATE in sim/commodity.py. */
 export const DEFAULT_COMMODITY_RATE = 8;
-
-/** Broad category a Commodity belongs to -- purely descriptive, mirrors src/sim/commodity.ts's CommodityType. */
-export const COMMODITY_TYPES = ["Energy", "Metal", "Precious", "Foodstuff", "Textile", "General"] as const;
-export type CommodityType = (typeof COMMODITY_TYPES)[number];
-export const DEFAULT_COMMODITY_TYPE: CommodityType = "General";
 
 /**
  * A registered Commodity: basePrice is this commodity's world-wide reference
@@ -48,13 +56,6 @@ export type CommodityField =
   | "stockpiles"
   | "minStockpiles"
   | "basePriceModifiers";
-
-/** The scale a PoliticalEntity groups Locations at -- mirrors src/sim/politicalEntity.ts's PoliticalEntityType. */
-export type PoliticalEntityType = "Universal" | "Planet" | "Country" | "State";
-
-export const POLITICAL_ENTITY_TYPES: PoliticalEntityType[] = ["Universal", "Planet", "Country", "State"];
-
-export const DEFAULT_POLITICAL_ENTITY_TYPE: PoliticalEntityType = "Universal";
 
 /** A group of Locations -- mirrors src/sim/politicalEntity.ts's PoliticalEntity (TS-only, no Python original). The editor only needs name/membership/type/nationality; shared cash pooling is a simulation-runtime concern. */
 export interface PoliticalEntity {
@@ -212,20 +213,12 @@ export function sortRouteControlPoints(
   return [...controlPoints].sort((p, q) => projection(p) - projection(q));
 }
 
-/** Points sampled evenly in Bezier parameter t along a curve through `points` -- mirrors src/sim/routes.ts's CURVE_SAMPLE_COUNT/curvePoints sampling density, so an editor-rendered Bezier reads at the same visual smoothness as the simulation's own. */
-const CURVE_SAMPLE_COUNT = 24;
+function toPoint(p: { x: number; y: number }): Point {
+  return [p.x, p.y];
+}
 
-/** De Casteljau evaluation -- works for a Bezier curve of any degree (any number of control points), not just cubic. Mirrors src/sim/routes.ts's bezierPoint. */
-function bezierPoint(points: readonly { x: number; y: number }[], t: number): { x: number; y: number } {
-  let pts = points;
-  while (pts.length > 1) {
-    const next: { x: number; y: number }[] = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      next.push({ x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t });
-    }
-    pts = next;
-  }
-  return pts[0];
+function fromPoint([x, y]: Point): { x: number; y: number } {
+  return { x, y };
 }
 
 /**
@@ -233,10 +226,11 @@ function bezierPoint(points: readonly { x: number; y: number }[], t: number): { 
  * and `b` directly if there are no control points (nothing to curve
  * through), otherwise CURVE_SAMPLE_COUNT points sampled along the single
  * Bezier curve through `a`, every control point, and `b` -- quadratic for
- * exactly one control point, cubic-or-higher for more, same De Casteljau
- * technique as src/sim/routes.ts's Route. Always smooth once there's at
- * least one control point, never a sharp-cornered polyline through them,
- * regardless of how many.
+ * exactly one control point, cubic-or-higher for more, the same De Casteljau
+ * sampling src/sim/routes.ts's Route measures/animates along (see
+ * @market-sim/shared/bezier). Always smooth once there's at least one
+ * control point, never a sharp-cornered polyline through them, regardless of
+ * how many.
  */
 export function routeRenderPoints(
   a: { x: number; y: number },
@@ -245,12 +239,8 @@ export function routeRenderPoints(
 ): { x: number; y: number }[] {
   const sorted = sortRouteControlPoints(a, b, controlPoints);
   if (sorted.length === 0) return [a, b];
-  const throughPoints = [a, ...sorted, b];
-  const samples: { x: number; y: number }[] = [];
-  for (let i = 0; i <= CURVE_SAMPLE_COUNT; i++) {
-    samples.push(bezierPoint(throughPoints, i / CURVE_SAMPLE_COUNT));
-  }
-  return samples;
+  const throughPoints = [a, ...sorted, b].map(toPoint);
+  return sampleBezierCurve(throughPoints, CURVE_SAMPLE_COUNT).map(fromPoint);
 }
 
 export function createLocation(

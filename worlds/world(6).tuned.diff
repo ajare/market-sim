@@ -1,0 +1,623 @@
+===================================================================
+--- world(6).json
++++ world(6).tuned.json
+@@ -43,30 +43,30 @@
+       "x": 82.14,
+       "y": 83.94,
+       "politicalEntityId": "political-entity-1",
+       "producedCommodities": {
+-        "Gunpowder": 1,
+-        "Indigo": 1.25
++        "Gunpowder": 0.6667,
++        "Pimento": 1.1667
+       },
+       "consumedCommodities": {
+         "Tobacco": 0.75,
+         "Rice": 1.75
+       },
+       "stockpiles": {
+         "Gunpowder": 120,
+-        "Indigo": 120,
+         "Tobacco": 160,
+-        "Rice": 160
++        "Rice": 160,
++        "Pimento": 120
+       },
+       "minStockpiles": {
+         "Tobacco": 80,
+         "Rice": 80
+       },
+       "basePriceModifiers": {
+         "Gunpowder": 1,
+-        "Indigo": 1,
+         "Tobacco": 1,
+-        "Rice": 1
++        "Rice": 1,
++        "Pimento": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -78,9 +78,9 @@
+       "x": 524.4,
+       "y": 286.23,
+       "politicalEntityId": "political-entity-3",
+       "producedCommodities": {
+-        "Rice": 0.7
++        "Rice": 0.5
+       },
+       "consumedCommodities": {
+         "Salt": 0.75,
+         "Silver": 1.5
+@@ -110,29 +110,29 @@
+       "x": 317.86,
+       "y": 557.37,
+       "politicalEntityId": "political-entity-5",
+       "producedCommodities": {
+-        "Coffee": 1.5,
+-        "Pearls": 0.6,
+-        "Rum": 1
++        "Pearls": 0.5,
++        "Rum": 0.5,
++        "Sugar": 1
+       },
+       "consumedCommodities": {
+         "Indigo": 0.8333
+       },
+       "stockpiles": {
+-        "Coffee": 120,
+         "Pearls": 120,
+         "Rum": 120,
+-        "Indigo": 160
++        "Indigo": 160,
++        "Sugar": 120
+       },
+       "minStockpiles": {
+         "Indigo": 80
+       },
+       "basePriceModifiers": {
+-        "Coffee": 1,
+         "Pearls": 1,
+         "Rum": 1,
+-        "Indigo": 1
++        "Indigo": 1,
++        "Sugar": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -144,30 +144,30 @@
+       "x": 786.9,
+       "y": 733.7,
+       "politicalEntityId": "political-entity-4",
+       "producedCommodities": {
+-        "Cacao": 2,
+-        "Ginger": 2
++        "Cacao": 1.0001,
++        "Cochineal": 2.0001
+       },
+       "consumedCommodities": {
+-        "Mahogany": 0.7916,
++        "Mahogany": 0.7783,
+         "Pimento": 0.875
+       },
+       "stockpiles": {
+         "Cacao": 120,
+-        "Ginger": 120,
+         "Mahogany": 160,
+-        "Pimento": 160
++        "Pimento": 160,
++        "Cochineal": 120
+       },
+       "minStockpiles": {
+         "Mahogany": 80,
+         "Pimento": 80
+       },
+       "basePriceModifiers": {
+         "Cacao": 1,
+-        "Ginger": 1,
+         "Mahogany": 1,
+-        "Pimento": 1
++        "Pimento": 1,
++        "Cochineal": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -179,37 +179,37 @@
+       "x": 779.76,
+       "y": 176.93,
+       "politicalEntityId": "political-entity-2",
+       "producedCommodities": {
+-        "Sugar": 1,
+         "Silver": 0.75,
+-        "Indigo": 1.25
++        "Indigo": 0.625,
++        "Ginger": 0.6667
+       },
+       "consumedCommodities": {
+         "Logwood": 0.75,
+         "Pimento": 0.875,
+         "Rum": 1
+       },
+       "stockpiles": {
+-        "Sugar": 120,
+         "Silver": 120,
+         "Indigo": 120,
+         "Logwood": 160,
+         "Pimento": 160,
+-        "Rum": 160
++        "Rum": 160,
++        "Ginger": 120
+       },
+       "minStockpiles": {
+         "Logwood": 80,
+         "Pimento": 80,
+         "Rum": 80
+       },
+       "basePriceModifiers": {
+-        "Sugar": 1,
+         "Silver": 1,
+         "Indigo": 1,
+         "Logwood": 1,
+         "Pimento": 1,
+-        "Rum": 1
++        "Rum": 1,
++        "Ginger": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -222,21 +222,25 @@
+       "y": 106.88,
+       "politicalEntityId": "political-entity-1",
+       "producedCommodities": {
+         "Cotton": 0.6667,
+-        "Tobacco": 1.5
++        "Tobacco": 1.5,
++        "Ginger": 0.6667,
++        "Indigo": 0.625
+       },
+       "consumedCommodities": {
+         "Coffee": 0.75,
+-        "Cochineal": 0.6667,
++        "Cochineal": 0.65,
+         "Rice": 1.75
+       },
+       "stockpiles": {
+         "Cotton": 120,
+         "Coffee": 160,
+         "Cochineal": 160,
+         "Rice": 160,
+-        "Tobacco": 120
++        "Tobacco": 120,
++        "Ginger": 80.004,
++        "Indigo": 99.996
+       },
+       "minStockpiles": {
+         "Coffee": 80,
+         "Cochineal": 80,
+@@ -246,9 +250,11 @@
+         "Cotton": 1,
+         "Coffee": 1,
+         "Cochineal": 1,
+         "Rice": 1,
+-        "Tobacco": 1
++        "Tobacco": 1,
++        "Ginger": 1,
++        "Indigo": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -260,9 +266,10 @@
+       "x": 97.62,
+       "y": 364.13,
+       "politicalEntityId": "political-entity-1",
+       "producedCommodities": {
+-        "Rice": 0.7
++        "Rice": 0.5,
++        "Cacao": 1.0001
+       },
+       "consumedCommodities": {
+         "Salt": 0.75,
+         "Tortoiseshell": 1,
+@@ -271,9 +278,10 @@
+       "stockpiles": {
+         "Rice": 120,
+         "Salt": 160,
+         "Tortoiseshell": 160,
+-        "Tobacco": 160
++        "Tobacco": 160,
++        "Cacao": 120.012
+       },
+       "minStockpiles": {
+         "Salt": 80,
+         "Tortoiseshell": 80,
+@@ -282,9 +290,10 @@
+       "basePriceModifiers": {
+         "Rice": 1,
+         "Salt": 1,
+         "Tortoiseshell": 1,
+-        "Tobacco": 1
++        "Tobacco": 1,
++        "Cacao": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -296,12 +305,12 @@
+       "x": 103.57,
+       "y": 882.85,
+       "politicalEntityId": "political-entity-1",
+       "producedCommodities": {
+-        "Rum": 1
++        "Rum": 0.5
+       },
+       "consumedCommodities": {
+-        "Molasses": 1
++        "Molasses": 0.78
+       },
+       "stockpiles": {
+         "Rum": 120,
+         "Molasses": 160
+@@ -324,29 +333,32 @@
+       "x": 548.81,
+       "y": 109.3,
+       "politicalEntityId": "political-entity-2",
+       "producedCommodities": {
+-        "Pearls": 0.6,
+-        "Mahogany": 1.25,
+-        "Rice": 0.7
++        "Pearls": 0.5,
++        "Mahogany": 1.2396,
++        "Rice": 0.5,
++        "Rum": 0.5
+       },
+       "consumedCommodities": {
+         "Ginger": 0.6667
+       },
+       "stockpiles": {
+         "Ginger": 160,
+         "Pearls": 120,
+         "Mahogany": 120,
+-        "Rice": 120
++        "Rice": 120,
++        "Rum": 80.004
+       },
+       "minStockpiles": {
+         "Ginger": 80
+       },
+       "basePriceModifiers": {
+         "Ginger": 1,
+         "Pearls": 1,
+         "Mahogany": 1,
+-        "Rice": 1
++        "Rice": 1,
++        "Rum": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -359,28 +371,31 @@
+       "y": 440.22,
+       "politicalEntityId": "political-entity-2",
+       "producedCommodities": {
+         "Cotton": 0.6667,
+-        "Molasses": 1,
+-        "Cochineal": 2
++        "Pearls": 0.5,
++        "Gunpowder": 0.6667,
++        "Rum": 0.5
+       },
+       "consumedCommodities": {
+         "Cacao": 0.6667
+       },
+       "stockpiles": {
+         "Cacao": 160,
+         "Cotton": 120,
+-        "Molasses": 120,
+-        "Cochineal": 120
++        "Pearls": 120,
++        "Gunpowder": 120,
++        "Rum": 60
+       },
+       "minStockpiles": {
+         "Cacao": 80
+       },
+       "basePriceModifiers": {
+         "Cacao": 1,
+         "Cotton": 1,
+-        "Molasses": 1,
+-        "Cochineal": 1
++        "Pearls": 1,
++        "Gunpowder": 1,
++        "Rum": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -392,30 +407,37 @@
+       "x": 657.14,
+       "y": 672.1,
+       "politicalEntityId": "political-entity-2",
+       "producedCommodities": {
+-        "Pearls": 0.6,
+-        "Gold": 1
++        "Pearls": 0.5,
++        "Gold": 1,
++        "Indigo": 0.625
+       },
+       "consumedCommodities": {
+-        "Mahogany": 0.8333,
+-        "Pimento": 0.875
++        "Mahogany": 0.6723,
++        "Pimento": 0.875,
++        "Gunpowder": 2
+       },
+       "stockpiles": {
+         "Mahogany": 160,
+         "Pimento": 160,
+         "Pearls": 120,
+-        "Gold": 120
++        "Gold": 120,
++        "Gunpowder": 224,
++        "Indigo": 75
+       },
+       "minStockpiles": {
+         "Mahogany": 80,
+-        "Pimento": 80
++        "Pimento": 80,
++        "Gunpowder": 112
+       },
+       "basePriceModifiers": {
+         "Mahogany": 1,
+         "Pimento": 1,
+         "Pearls": 1,
+-        "Gold": 1
++        "Gold": 1,
++        "Gunpowder": 1,
++        "Indigo": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -427,9 +449,9 @@
+       "x": 434.52,
+       "y": 926.93,
+       "politicalEntityId": "political-entity-2",
+       "producedCommodities": {
+-        "Gunpowder": 1
++        "Gunpowder": 0.6667
+       },
+       "consumedCommodities": {
+         "Pearls": 3,
+         "Ginger": 0.6667,
+@@ -465,12 +487,14 @@
+       "politicalEntityId": "political-entity-3",
+       "producedCommodities": {
+         "Cotton": 0.6667,
+         "Silver": 0.75,
+-        "Salt": 1.5
++        "Salt": 0.75,
++        "Rice": 0.5,
++        "Coffee": 0.75
+       },
+       "consumedCommodities": {
+-        "Sugar": 1,
++        "Sugar": 0.72,
+         "Indigo": 0.8333,
+         "Ginger": 0.6667
+       },
+       "stockpiles": {
+@@ -478,9 +502,11 @@
+         "Indigo": 160,
+         "Ginger": 160,
+         "Cotton": 120,
+         "Silver": 120,
+-        "Salt": 120
++        "Salt": 120,
++        "Rice": 69.996,
++        "Coffee": 90
+       },
+       "minStockpiles": {
+         "Sugar": 80,
+         "Indigo": 80,
+@@ -491,9 +517,11 @@
+         "Indigo": 1,
+         "Ginger": 1,
+         "Cotton": 1,
+         "Silver": 1,
+-        "Salt": 1
++        "Salt": 1,
++        "Rice": 1,
++        "Coffee": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -506,25 +534,28 @@
+       "y": 354.47,
+       "politicalEntityId": "political-entity-3",
+       "producedCommodities": {
+         "Tortoiseshell": 1,
+-        "Silver": 0.75
++        "Silver": 0.75,
++        "Rice": 0.5
+       },
+       "consumedCommodities": {
+-        "Mahogany": 0.8333
++        "Mahogany": 0.8404
+       },
+       "stockpiles": {
+         "Mahogany": 160,
+         "Tortoiseshell": 120,
+-        "Silver": 120
++        "Silver": 120,
++        "Rice": 60
+       },
+       "minStockpiles": {
+         "Mahogany": 80
+       },
+       "basePriceModifiers": {
+         "Mahogany": 1,
+         "Tortoiseshell": 1,
+-        "Silver": 1
++        "Silver": 1,
++        "Rice": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -574,37 +605,37 @@
+       "x": 483.33,
+       "y": 571.86,
+       "politicalEntityId": "political-entity-5",
+       "producedCommodities": {
+-        "Pimento": 1.1667,
+         "Silver": 0.75,
+-        "Pearls": 0.6
++        "Pearls": 0.5,
++        "Indigo": 0.625
+       },
+       "consumedCommodities": {
+         "Logwood": 0.75,
+-        "Cotton": 2,
++        "Cotton": 2.0001,
+         "Cacao": 0.6667
+       },
+       "stockpiles": {
+-        "Pimento": 120,
+         "Silver": 120,
+         "Pearls": 120,
+         "Logwood": 160,
+         "Cotton": 160,
+-        "Cacao": 160
++        "Cacao": 160,
++        "Indigo": 120
+       },
+       "minStockpiles": {
+         "Logwood": 80,
+         "Cotton": 80,
+         "Cacao": 80
+       },
+       "basePriceModifiers": {
+-        "Pimento": 1,
+         "Silver": 1,
+         "Pearls": 1,
+         "Logwood": 1,
+         "Cotton": 1,
+-        "Cacao": 1
++        "Cacao": 1,
++        "Indigo": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -616,23 +647,26 @@
+       "x": 55.95,
+       "y": 547.71,
+       "politicalEntityId": "political-entity-5",
+       "producedCommodities": {
+-        "Mahogany": 1.25
++        "Rice": 0.5,
++        "Salt": 0.75
+       },
+       "consumedCommodities": {
+         "Cacao": 0.6667
+       },
+       "stockpiles": {
+         "Cacao": 160,
+-        "Mahogany": 120
++        "Rice": 120,
++        "Salt": 90
+       },
+       "minStockpiles": {
+         "Cacao": 80
+       },
+       "basePriceModifiers": {
+         "Cacao": 1,
+-        "Mahogany": 1
++        "Rice": 1,
++        "Salt": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -644,10 +678,10 @@
+       "x": 289.29,
+       "y": 802.54,
+       "politicalEntityId": "political-entity-5",
+       "producedCommodities": {
+-        "Rice": 0.7,
+-        "Pearls": 0.6
++        "Rice": 0.5,
++        "Molasses": 1
+       },
+       "consumedCommodities": {
+         "Sugar": 1,
+         "Coffee": 0.75
+@@ -655,9 +689,9 @@
+       "stockpiles": {
+         "Sugar": 160,
+         "Coffee": 160,
+         "Rice": 120,
+-        "Pearls": 120
++        "Molasses": 120
+       },
+       "minStockpiles": {
+         "Sugar": 80,
+         "Coffee": 80
+@@ -665,9 +699,9 @@
+       "basePriceModifiers": {
+         "Sugar": 1,
+         "Coffee": 1,
+         "Rice": 1,
+-        "Pearls": 1
++        "Molasses": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"
+@@ -711,29 +745,35 @@
+       "x": 535.71,
+       "y": 788.04,
+       "politicalEntityId": "political-entity-4",
+       "producedCommodities": {
+-        "Gunpowder": 1,
+         "Gold": 1,
+-        "Rice": 0.7
++        "Mahogany": 1.2396,
++        "Coffee": 0.75,
++        "Ginger": 0.6667,
++        "Pearls": 0.5
+       },
+       "consumedCommodities": {
+         "Cochineal": 0.6667
+       },
+       "stockpiles": {
+         "Cochineal": 160,
+-        "Gunpowder": 120,
+         "Gold": 120,
+-        "Rice": 120
++        "Mahogany": 120,
++        "Coffee": 120,
++        "Ginger": 120.012,
++        "Pearls": 60
+       },
+       "minStockpiles": {
+         "Cochineal": 80
+       },
+       "basePriceModifiers": {
+         "Cochineal": 1,
+-        "Gunpowder": 1,
+         "Gold": 1,
+-        "Rice": 1
++        "Mahogany": 1,
++        "Coffee": 1,
++        "Ginger": 1,
++        "Pearls": 1
+       },
+       "fuelPrice": 1,
+       "terminalTypes": [
+         "Port"

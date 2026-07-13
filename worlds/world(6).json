@@ -1,0 +1,1405 @@
+{
+  "version": 5,
+  "worldScale": 1000,
+  "distanceMode": "flat",
+  "globeRadius": 31.83,
+  "globeLonSpan": 180,
+  "politicalEntities": [
+    {
+      "id": "political-entity-1",
+      "name": "England",
+      "type": "Universal",
+      "nationality": "English"
+    },
+    {
+      "id": "political-entity-2",
+      "name": "France",
+      "type": "Universal",
+      "nationality": "French"
+    },
+    {
+      "id": "political-entity-3",
+      "name": "Spain",
+      "type": "Universal",
+      "nationality": "Spanish"
+    },
+    {
+      "id": "political-entity-4",
+      "name": "Portugal",
+      "type": "Universal",
+      "nationality": "Portuguese"
+    },
+    {
+      "id": "political-entity-5",
+      "name": "Netherlands",
+      "type": "Universal",
+      "nationality": "Dutch"
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-1",
+      "name": "New Plymouth",
+      "x": 82.14,
+      "y": 83.94,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Gunpowder": 1,
+        "Indigo": 1.25
+      },
+      "consumedCommodities": {
+        "Tobacco": 0.75,
+        "Rice": 1.75
+      },
+      "stockpiles": {
+        "Gunpowder": 120,
+        "Indigo": 120,
+        "Tobacco": 160,
+        "Rice": 160
+      },
+      "minStockpiles": {
+        "Tobacco": 80,
+        "Rice": 80
+      },
+      "basePriceModifiers": {
+        "Gunpowder": 1,
+        "Indigo": 1,
+        "Tobacco": 1,
+        "Rice": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-2",
+      "name": "Portobelo",
+      "x": 524.4,
+      "y": 286.23,
+      "politicalEntityId": "political-entity-3",
+      "producedCommodities": {
+        "Rice": 0.7
+      },
+      "consumedCommodities": {
+        "Salt": 0.75,
+        "Silver": 1.5
+      },
+      "stockpiles": {
+        "Rice": 120,
+        "Salt": 160,
+        "Silver": 160
+      },
+      "minStockpiles": {
+        "Salt": 80,
+        "Silver": 80
+      },
+      "basePriceModifiers": {
+        "Rice": 1,
+        "Salt": 1,
+        "Silver": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-3",
+      "name": "Fort Kijkoveral",
+      "x": 317.86,
+      "y": 557.37,
+      "politicalEntityId": "political-entity-5",
+      "producedCommodities": {
+        "Coffee": 1.5,
+        "Pearls": 0.6,
+        "Rum": 1
+      },
+      "consumedCommodities": {
+        "Indigo": 0.8333
+      },
+      "stockpiles": {
+        "Coffee": 120,
+        "Pearls": 120,
+        "Rum": 120,
+        "Indigo": 160
+      },
+      "minStockpiles": {
+        "Indigo": 80
+      },
+      "basePriceModifiers": {
+        "Coffee": 1,
+        "Pearls": 1,
+        "Rum": 1,
+        "Indigo": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-4",
+      "name": "São Salvador",
+      "x": 786.9,
+      "y": 733.7,
+      "politicalEntityId": "political-entity-4",
+      "producedCommodities": {
+        "Cacao": 2,
+        "Ginger": 2
+      },
+      "consumedCommodities": {
+        "Mahogany": 0.7916,
+        "Pimento": 0.875
+      },
+      "stockpiles": {
+        "Cacao": 120,
+        "Ginger": 120,
+        "Mahogany": 160,
+        "Pimento": 160
+      },
+      "minStockpiles": {
+        "Mahogany": 80,
+        "Pimento": 80
+      },
+      "basePriceModifiers": {
+        "Cacao": 1,
+        "Ginger": 1,
+        "Mahogany": 1,
+        "Pimento": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-5",
+      "name": "Montréal",
+      "x": 779.76,
+      "y": 176.93,
+      "politicalEntityId": "political-entity-2",
+      "producedCommodities": {
+        "Sugar": 1,
+        "Silver": 0.75,
+        "Indigo": 1.25
+      },
+      "consumedCommodities": {
+        "Logwood": 0.75,
+        "Pimento": 0.875,
+        "Rum": 1
+      },
+      "stockpiles": {
+        "Sugar": 120,
+        "Silver": 120,
+        "Indigo": 120,
+        "Logwood": 160,
+        "Pimento": 160,
+        "Rum": 160
+      },
+      "minStockpiles": {
+        "Logwood": 80,
+        "Pimento": 80,
+        "Rum": 80
+      },
+      "basePriceModifiers": {
+        "Sugar": 1,
+        "Silver": 1,
+        "Indigo": 1,
+        "Logwood": 1,
+        "Pimento": 1,
+        "Rum": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-6",
+      "name": "Charlestown",
+      "x": 328.57,
+      "y": 106.88,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Cotton": 0.6667,
+        "Tobacco": 1.5
+      },
+      "consumedCommodities": {
+        "Coffee": 0.75,
+        "Cochineal": 0.6667,
+        "Rice": 1.75
+      },
+      "stockpiles": {
+        "Cotton": 120,
+        "Coffee": 160,
+        "Cochineal": 160,
+        "Rice": 160,
+        "Tobacco": 120
+      },
+      "minStockpiles": {
+        "Coffee": 80,
+        "Cochineal": 80,
+        "Rice": 80
+      },
+      "basePriceModifiers": {
+        "Cotton": 1,
+        "Coffee": 1,
+        "Cochineal": 1,
+        "Rice": 1,
+        "Tobacco": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-7",
+      "name": "New Providence",
+      "x": 97.62,
+      "y": 364.13,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Rice": 0.7
+      },
+      "consumedCommodities": {
+        "Salt": 0.75,
+        "Tortoiseshell": 1,
+        "Tobacco": 0.75
+      },
+      "stockpiles": {
+        "Rice": 120,
+        "Salt": 160,
+        "Tortoiseshell": 160,
+        "Tobacco": 160
+      },
+      "minStockpiles": {
+        "Salt": 80,
+        "Tortoiseshell": 80,
+        "Tobacco": 80
+      },
+      "basePriceModifiers": {
+        "Rice": 1,
+        "Salt": 1,
+        "Tortoiseshell": 1,
+        "Tobacco": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-8",
+      "name": "Port Royal",
+      "x": 103.57,
+      "y": 882.85,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Rum": 1
+      },
+      "consumedCommodities": {
+        "Molasses": 1
+      },
+      "stockpiles": {
+        "Rum": 120,
+        "Molasses": 160
+      },
+      "minStockpiles": {
+        "Molasses": 80
+      },
+      "basePriceModifiers": {
+        "Rum": 1,
+        "Molasses": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-9",
+      "name": "Fort-Royal",
+      "x": 548.81,
+      "y": 109.3,
+      "politicalEntityId": "political-entity-2",
+      "producedCommodities": {
+        "Pearls": 0.6,
+        "Mahogany": 1.25,
+        "Rice": 0.7
+      },
+      "consumedCommodities": {
+        "Ginger": 0.6667
+      },
+      "stockpiles": {
+        "Ginger": 160,
+        "Pearls": 120,
+        "Mahogany": 120,
+        "Rice": 120
+      },
+      "minStockpiles": {
+        "Ginger": 80
+      },
+      "basePriceModifiers": {
+        "Ginger": 1,
+        "Pearls": 1,
+        "Mahogany": 1,
+        "Rice": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-10",
+      "name": "Louisbourg",
+      "x": 859.52,
+      "y": 440.22,
+      "politicalEntityId": "political-entity-2",
+      "producedCommodities": {
+        "Cotton": 0.6667,
+        "Molasses": 1,
+        "Cochineal": 2
+      },
+      "consumedCommodities": {
+        "Cacao": 0.6667
+      },
+      "stockpiles": {
+        "Cacao": 160,
+        "Cotton": 120,
+        "Molasses": 120,
+        "Cochineal": 120
+      },
+      "minStockpiles": {
+        "Cacao": 80
+      },
+      "basePriceModifiers": {
+        "Cacao": 1,
+        "Cotton": 1,
+        "Molasses": 1,
+        "Cochineal": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-11",
+      "name": "Fort-de-France",
+      "x": 657.14,
+      "y": 672.1,
+      "politicalEntityId": "political-entity-2",
+      "producedCommodities": {
+        "Pearls": 0.6,
+        "Gold": 1
+      },
+      "consumedCommodities": {
+        "Mahogany": 0.8333,
+        "Pimento": 0.875
+      },
+      "stockpiles": {
+        "Mahogany": 160,
+        "Pimento": 160,
+        "Pearls": 120,
+        "Gold": 120
+      },
+      "minStockpiles": {
+        "Mahogany": 80,
+        "Pimento": 80
+      },
+      "basePriceModifiers": {
+        "Mahogany": 1,
+        "Pimento": 1,
+        "Pearls": 1,
+        "Gold": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-12",
+      "name": "Saint-Pierre",
+      "x": 434.52,
+      "y": 926.93,
+      "politicalEntityId": "political-entity-2",
+      "producedCommodities": {
+        "Gunpowder": 1
+      },
+      "consumedCommodities": {
+        "Pearls": 3,
+        "Ginger": 0.6667,
+        "Gold": 1
+      },
+      "stockpiles": {
+        "Pearls": 160,
+        "Ginger": 160,
+        "Gold": 160,
+        "Gunpowder": 120
+      },
+      "minStockpiles": {
+        "Pearls": 80,
+        "Ginger": 80,
+        "Gold": 80
+      },
+      "basePriceModifiers": {
+        "Pearls": 1,
+        "Ginger": 1,
+        "Gold": 1,
+        "Gunpowder": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-13",
+      "name": "Nombre de Dios",
+      "x": 298.81,
+      "y": 213.16,
+      "politicalEntityId": "political-entity-3",
+      "producedCommodities": {
+        "Cotton": 0.6667,
+        "Silver": 0.75,
+        "Salt": 1.5
+      },
+      "consumedCommodities": {
+        "Sugar": 1,
+        "Indigo": 0.8333,
+        "Ginger": 0.6667
+      },
+      "stockpiles": {
+        "Sugar": 160,
+        "Indigo": 160,
+        "Ginger": 160,
+        "Cotton": 120,
+        "Silver": 120,
+        "Salt": 120
+      },
+      "minStockpiles": {
+        "Sugar": 80,
+        "Indigo": 80,
+        "Ginger": 80
+      },
+      "basePriceModifiers": {
+        "Sugar": 1,
+        "Indigo": 1,
+        "Ginger": 1,
+        "Cotton": 1,
+        "Silver": 1,
+        "Salt": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-14",
+      "name": "San Agustín",
+      "x": 546.43,
+      "y": 354.47,
+      "politicalEntityId": "political-entity-3",
+      "producedCommodities": {
+        "Tortoiseshell": 1,
+        "Silver": 0.75
+      },
+      "consumedCommodities": {
+        "Mahogany": 0.8333
+      },
+      "stockpiles": {
+        "Mahogany": 160,
+        "Tortoiseshell": 120,
+        "Silver": 120
+      },
+      "minStockpiles": {
+        "Mahogany": 80
+      },
+      "basePriceModifiers": {
+        "Mahogany": 1,
+        "Tortoiseshell": 1,
+        "Silver": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-15",
+      "name": "Santo Domingo",
+      "x": 710.71,
+      "y": 599.64,
+      "politicalEntityId": "political-entity-3",
+      "producedCommodities": {
+        "Molasses": 1,
+        "Logwood": 1.5,
+        "Pimento": 1.1667
+      },
+      "consumedCommodities": {
+        "Silver": 1.5,
+        "Indigo": 0.8333
+      },
+      "stockpiles": {
+        "Silver": 160,
+        "Indigo": 160,
+        "Molasses": 120,
+        "Logwood": 120,
+        "Pimento": 120
+      },
+      "minStockpiles": {
+        "Silver": 80,
+        "Indigo": 80
+      },
+      "basePriceModifiers": {
+        "Silver": 1,
+        "Indigo": 1,
+        "Molasses": 1,
+        "Logwood": 1,
+        "Pimento": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-16",
+      "name": "Nieuw Middelburg",
+      "x": 483.33,
+      "y": 571.86,
+      "politicalEntityId": "political-entity-5",
+      "producedCommodities": {
+        "Pimento": 1.1667,
+        "Silver": 0.75,
+        "Pearls": 0.6
+      },
+      "consumedCommodities": {
+        "Logwood": 0.75,
+        "Cotton": 2,
+        "Cacao": 0.6667
+      },
+      "stockpiles": {
+        "Pimento": 120,
+        "Silver": 120,
+        "Pearls": 120,
+        "Logwood": 160,
+        "Cotton": 160,
+        "Cacao": 160
+      },
+      "minStockpiles": {
+        "Logwood": 80,
+        "Cotton": 80,
+        "Cacao": 80
+      },
+      "basePriceModifiers": {
+        "Pimento": 1,
+        "Silver": 1,
+        "Pearls": 1,
+        "Logwood": 1,
+        "Cotton": 1,
+        "Cacao": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-17",
+      "name": "Nieuw Oranje",
+      "x": 55.95,
+      "y": 547.71,
+      "politicalEntityId": "political-entity-5",
+      "producedCommodities": {
+        "Mahogany": 1.25
+      },
+      "consumedCommodities": {
+        "Cacao": 0.6667
+      },
+      "stockpiles": {
+        "Cacao": 160,
+        "Mahogany": 120
+      },
+      "minStockpiles": {
+        "Cacao": 80
+      },
+      "basePriceModifiers": {
+        "Cacao": 1,
+        "Mahogany": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-18",
+      "name": "Willemstad",
+      "x": 289.29,
+      "y": 802.54,
+      "politicalEntityId": "political-entity-5",
+      "producedCommodities": {
+        "Rice": 0.7,
+        "Pearls": 0.6
+      },
+      "consumedCommodities": {
+        "Sugar": 1,
+        "Coffee": 0.75
+      },
+      "stockpiles": {
+        "Sugar": 160,
+        "Coffee": 160,
+        "Rice": 120,
+        "Pearls": 120
+      },
+      "minStockpiles": {
+        "Sugar": 80,
+        "Coffee": 80
+      },
+      "basePriceModifiers": {
+        "Sugar": 1,
+        "Coffee": 1,
+        "Rice": 1,
+        "Pearls": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-19",
+      "name": "Luanda",
+      "x": 876.19,
+      "y": 925.12,
+      "politicalEntityId": "political-entity-4",
+      "producedCommodities": {
+        "Pimento": 1.1667
+      },
+      "consumedCommodities": {
+        "Cochineal": 0.6667,
+        "Gold": 1
+      },
+      "stockpiles": {
+        "Pimento": 120,
+        "Cochineal": 160,
+        "Gold": 160
+      },
+      "minStockpiles": {
+        "Cochineal": 80,
+        "Gold": 80
+      },
+      "basePriceModifiers": {
+        "Pimento": 1,
+        "Cochineal": 1,
+        "Gold": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-20",
+      "name": "Espírito Santo",
+      "x": 535.71,
+      "y": 788.04,
+      "politicalEntityId": "political-entity-4",
+      "producedCommodities": {
+        "Gunpowder": 1,
+        "Gold": 1,
+        "Rice": 0.7
+      },
+      "consumedCommodities": {
+        "Cochineal": 0.6667
+      },
+      "stockpiles": {
+        "Cochineal": 160,
+        "Gunpowder": 120,
+        "Gold": 120,
+        "Rice": 120
+      },
+      "minStockpiles": {
+        "Cochineal": 80
+      },
+      "basePriceModifiers": {
+        "Cochineal": 1,
+        "Gunpowder": 1,
+        "Gold": 1,
+        "Rice": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    },
+    {
+      "id": "loc-21",
+      "name": "Belém",
+      "x": 945.24,
+      "y": 580.31,
+      "politicalEntityId": "political-entity-4",
+      "producedCommodities": {
+        "Sugar": 1
+      },
+      "consumedCommodities": {
+        "Molasses": 1,
+        "Pimento": 0.875,
+        "Rum": 1
+      },
+      "stockpiles": {
+        "Sugar": 120,
+        "Molasses": 160,
+        "Pimento": 160,
+        "Rum": 160
+      },
+      "minStockpiles": {
+        "Molasses": 80,
+        "Pimento": 80,
+        "Rum": 80
+      },
+      "basePriceModifiers": {
+        "Sugar": 1,
+        "Molasses": 1,
+        "Pimento": 1,
+        "Rum": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Port"
+      ]
+    }
+  ],
+  "commodities": [
+    {
+      "name": "Rice",
+      "basePrice": 14,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Pimento",
+      "basePrice": 42,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Gunpowder",
+      "basePrice": 90,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Rum",
+      "basePrice": 46,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Gold",
+      "basePrice": 520,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Molasses",
+      "basePrice": 18,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Coffee",
+      "basePrice": 56,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Tobacco",
+      "basePrice": 52,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Pearls",
+      "basePrice": 300,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Silver",
+      "basePrice": 210,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Logwood",
+      "basePrice": 66,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Mahogany",
+      "basePrice": 72,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Cochineal",
+      "basePrice": 110,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Tortoiseshell",
+      "basePrice": 125,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Salt",
+      "basePrice": 8,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Indigo",
+      "basePrice": 82,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Ginger",
+      "basePrice": 34,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Sugar",
+      "basePrice": 30,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Cacao",
+      "basePrice": 60,
+      "productionRate": 8,
+      "consumptionRate": 8
+    },
+    {
+      "name": "Cotton",
+      "basePrice": 38,
+      "productionRate": 8,
+      "consumptionRate": 8
+    }
+  ],
+  "companies": [
+    {
+      "id": "company-1",
+      "name": "Africa Company",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-1",
+      "homeLocationId": "loc-1"
+    },
+    {
+      "id": "company-2",
+      "name": "Merchant Adventurers of Eastland",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-1",
+      "homeLocationId": "loc-1"
+    },
+    {
+      "id": "company-3",
+      "name": "Compagnie royale de Saint-Domingue",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-2",
+      "homeLocationId": "loc-5"
+    },
+    {
+      "id": "company-4",
+      "name": "Compagnie de Cayenne",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-2",
+      "homeLocationId": "loc-5"
+    },
+    {
+      "id": "company-5",
+      "name": "Real Compañía de Comercio de San Fernando",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-3",
+      "homeLocationId": "loc-2"
+    },
+    {
+      "id": "company-6",
+      "name": "Compañía de Comercio de Cádiz",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-3",
+      "homeLocationId": "loc-2"
+    },
+    {
+      "id": "company-7",
+      "name": "Geoctrooieerde Surinaamse Compagnie",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-5",
+      "homeLocationId": "loc-3"
+    },
+    {
+      "id": "company-8",
+      "name": "Geoctrooieerde Perzische Compagnie",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-5",
+      "homeLocationId": "loc-3"
+    },
+    {
+      "id": "company-9",
+      "name": "Companhia Geral de Cabo Verde",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-4",
+      "homeLocationId": "loc-4"
+    },
+    {
+      "id": "company-10",
+      "name": "Companhia do Oriente",
+      "startingFunds": 100000,
+      "fleet": [],
+      "politicalEntityId": "political-entity-4",
+      "homeLocationId": "loc-4"
+    }
+  ],
+  "routes": [
+    {
+      "id": "route-1",
+      "locationAId": "loc-1",
+      "locationBId": "loc-6",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-2",
+      "locationAId": "loc-1",
+      "locationBId": "loc-7",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-3",
+      "locationAId": "loc-1",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-4",
+      "locationAId": "loc-2",
+      "locationBId": "loc-14",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-5",
+      "locationAId": "loc-3",
+      "locationBId": "loc-7",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-6",
+      "locationAId": "loc-3",
+      "locationBId": "loc-8",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-7",
+      "locationAId": "loc-3",
+      "locationBId": "loc-12",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-8",
+      "locationAId": "loc-3",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-9",
+      "locationAId": "loc-3",
+      "locationBId": "loc-16",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-10",
+      "locationAId": "loc-3",
+      "locationBId": "loc-17",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-11",
+      "locationAId": "loc-3",
+      "locationBId": "loc-18",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-12",
+      "locationAId": "loc-3",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-13",
+      "locationAId": "loc-4",
+      "locationBId": "loc-10",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-14",
+      "locationAId": "loc-4",
+      "locationBId": "loc-11",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-15",
+      "locationAId": "loc-4",
+      "locationBId": "loc-15",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-16",
+      "locationAId": "loc-4",
+      "locationBId": "loc-19",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-17",
+      "locationAId": "loc-4",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-18",
+      "locationAId": "loc-4",
+      "locationBId": "loc-21",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-19",
+      "locationAId": "loc-5",
+      "locationBId": "loc-9",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-20",
+      "locationAId": "loc-5",
+      "locationBId": "loc-10",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-21",
+      "locationAId": "loc-6",
+      "locationBId": "loc-9",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-22",
+      "locationAId": "loc-6",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-23",
+      "locationAId": "loc-7",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-24",
+      "locationAId": "loc-7",
+      "locationBId": "loc-17",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-25",
+      "locationAId": "loc-8",
+      "locationBId": "loc-12",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-26",
+      "locationAId": "loc-8",
+      "locationBId": "loc-17",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-27",
+      "locationAId": "loc-8",
+      "locationBId": "loc-18",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-28",
+      "locationAId": "loc-9",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-29",
+      "locationAId": "loc-10",
+      "locationBId": "loc-15",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-30",
+      "locationAId": "loc-10",
+      "locationBId": "loc-16",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-31",
+      "locationAId": "loc-10",
+      "locationBId": "loc-21",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-32",
+      "locationAId": "loc-11",
+      "locationBId": "loc-15",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-33",
+      "locationAId": "loc-11",
+      "locationBId": "loc-16",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-34",
+      "locationAId": "loc-11",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-35",
+      "locationAId": "loc-12",
+      "locationBId": "loc-16",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-36",
+      "locationAId": "loc-12",
+      "locationBId": "loc-18",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-37",
+      "locationAId": "loc-12",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-38",
+      "locationAId": "loc-15",
+      "locationBId": "loc-16",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-39",
+      "locationAId": "loc-15",
+      "locationBId": "loc-21",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-40",
+      "locationAId": "loc-16",
+      "locationBId": "loc-18",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-41",
+      "locationAId": "loc-16",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-42",
+      "locationAId": "loc-17",
+      "locationBId": "loc-18",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-43",
+      "locationAId": "loc-18",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-44",
+      "locationAId": "loc-19",
+      "locationBId": "loc-20",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-45",
+      "locationAId": "loc-19",
+      "locationBId": "loc-21",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-46",
+      "locationAId": "loc-2",
+      "locationBId": "loc-9",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-47",
+      "locationAId": "loc-2",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-48",
+      "locationAId": "loc-2",
+      "locationBId": "loc-6",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-49",
+      "locationAId": "loc-14",
+      "locationBId": "loc-3",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-50",
+      "locationAId": "loc-2",
+      "locationBId": "loc-7",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-51",
+      "locationAId": "loc-14",
+      "locationBId": "loc-7",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-52",
+      "locationAId": "loc-14",
+      "locationBId": "loc-16",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-53",
+      "locationAId": "loc-14",
+      "locationBId": "loc-10",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-54",
+      "locationAId": "loc-14",
+      "locationBId": "loc-5",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-55",
+      "locationAId": "loc-2",
+      "locationBId": "loc-5",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-56",
+      "locationAId": "loc-2",
+      "locationBId": "loc-17",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-57",
+      "locationAId": "loc-14",
+      "locationBId": "loc-15",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-58",
+      "locationAId": "loc-19",
+      "locationBId": "loc-12",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-59",
+      "locationAId": "loc-9",
+      "locationBId": "loc-10",
+      "routeType": "Sea",
+      "controlPoints": []
+    },
+    {
+      "id": "route-60",
+      "locationAId": "loc-16",
+      "locationBId": "loc-13",
+      "routeType": "Sea",
+      "controlPoints": []
+    }
+  ]
+}

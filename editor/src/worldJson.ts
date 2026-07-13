@@ -14,14 +14,16 @@
 import type {
   Commodity, CommodityType, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity,
 } from "./types";
-import { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE } from "./types";
+import { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, sortRouteControlPoints } from "./types";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
 } from "./distance";
 import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGenerators";
+import { DEFAULT_START_DATE } from "@market-sim/shared/world";
+export { DEFAULT_START_DATE };
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"). */
-export const WORLD_JSON_VERSION = 6;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE). */
+export const WORLD_JSON_VERSION = 7;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -31,6 +33,8 @@ export interface EditorWorld {
   distanceMode: DistanceMode;
   globeRadius: number;
   globeLonSpan: number;
+  /** The in-world date/time of day 1, as an ISO 8601 string. Defaults to DEFAULT_START_DATE for files predating this field. */
+  startDate: string;
   politicalEntities: PoliticalEntity[];
   locations: EditorLocation[];
   commodities: Commodity[];
@@ -47,12 +51,27 @@ function locationsToWorld(locations: EditorLocation[], scale: number): EditorLoc
   return locations.map((loc) => ({ ...loc, x: round2(loc.x * scale), y: round2(loc.y * scale) }));
 }
 
-/** Routes with their control points' normalized x/y scaled up to world positions. */
-function routesToWorld(routes: EditorRoute[], scale: number): EditorRoute[] {
-  return routes.map((r) => ({
-    ...r,
-    controlPoints: r.controlPoints.map((p) => ({ ...p, x: round2(p.x * scale), y: round2(p.y * scale) })),
-  }));
+/**
+ * Routes with their control points' normalized x/y scaled up to world
+ * positions, and reordered origin-to-destination (locationAId -> locationBId)
+ * by projection along that line -- the store keeps them in whatever order
+ * they were added/dragged in (see useEditorStore's addRouteControlPoint),
+ * with only rendering (routeRenderPoints) sorting them on the fly. The
+ * simulation's Route reconstructs its Bezier curve directly from this
+ * exported array in order (see buildWorldFromJson.ts), so it must be sorted
+ * here rather than left however the editor happened to store it.
+ */
+function routesToWorld(routes: EditorRoute[], scale: number, locations: EditorLocation[]): EditorRoute[] {
+  const locationById = new Map(locations.map((loc) => [loc.id, loc]));
+  return routes.map((r) => {
+    const a = locationById.get(r.locationAId);
+    const b = locationById.get(r.locationBId);
+    const ordered = a !== undefined && b !== undefined ? sortRouteControlPoints(a, b, r.controlPoints) : r.controlPoints;
+    return {
+      ...r,
+      controlPoints: ordered.map((p) => ({ ...p, x: round2(p.x * scale), y: round2(p.y * scale) })),
+    };
+  });
 }
 
 export function worldToJson(world: Omit<EditorWorld, "version">): string {
@@ -61,7 +80,7 @@ export function worldToJson(world: Omit<EditorWorld, "version">): string {
     version: WORLD_JSON_VERSION,
     ...world,
     locations: locationsToWorld(world.locations, scale),
-    routes: routesToWorld(world.routes, scale),
+    routes: routesToWorld(world.routes, scale, world.locations),
   };
   return JSON.stringify(payload, null, 2);
 }
@@ -122,6 +141,7 @@ export function parseWorldJson(text: string): EditorWorld {
     distanceMode,
     globeRadius,
     globeLonSpan,
+    startDate: typeof obj.startDate === "string" && !Number.isNaN(Date.parse(obj.startDate)) ? obj.startDate : DEFAULT_START_DATE,
     // Default a missing/invalid nationality (files predating v4) to English.
     politicalEntities: asArray<PoliticalEntity>(obj.politicalEntities).map((pe) => ({
       ...pe,

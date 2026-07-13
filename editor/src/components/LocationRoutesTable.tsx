@@ -52,7 +52,6 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
             <tr>
               <th>To</th>
               <th>Type</th>
-              <th>Curve</th>
               <th>Distance</th>
               <th />
             </tr>
@@ -62,7 +61,6 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
               <tr key={route.id}>
                 <td className="routes-table-name-cell">{other.name}</td>
                 <td>{route.routeType}</td>
-                <td>{route.controlPoints.length >= 2 ? "Bezier" : "Straight"}</td>
                 <td>{routeWorldLength(location, other, route.controlPoints, config).toFixed(1)}</td>
                 <td>
                   <button type="button" onClick={() => removeRoute(route.id)}>

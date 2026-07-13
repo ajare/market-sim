@@ -4,6 +4,8 @@
  *
  * Fuel is deliberately NOT a Commodity -- see sim/worldData.ts.
  */
+import { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType } from "@market-sim/shared/commodity";
+export { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType };
 
 export const DEFAULT_PRICE_SENSITIVITY = 0.45;
 export const DEFAULT_DEFICIT_PRICE_BOOST = 1.4;
@@ -24,17 +26,6 @@ export const DEFAULT_BASE_PRICE = 1.0;
 // commodity. The default 10-commodity roster sits comfortably inside.
 export const MIN_COMMODITIES = 5;
 export const MAX_COMMODITIES = 25;
-
-/**
- * Broad category a Commodity belongs to -- purely descriptive (grouping/
- * display), doesn't feed into any pricing or simulation logic. "General" is
- * the catch-all for anything that doesn't fit the others (and the fallback
- * for a commodity with no registered type at all -- e.g. one authored in the
- * editor before this field existed).
- */
-export const COMMODITY_TYPES = ["Energy", "Metal", "Precious", "Foodstuff", "Textile", "General"] as const;
-export type CommodityType = (typeof COMMODITY_TYPES)[number];
-export const DEFAULT_COMMODITY_TYPE: CommodityType = "General";
 
 export interface EventTemplate {
   name: string;

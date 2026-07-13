@@ -3,6 +3,7 @@ import { useEditorStore } from "./state/useEditorStore";
 import { WorldCanvas } from "./components/WorldCanvas";
 import { WorldScaleControl } from "./components/WorldScaleControl";
 import { DistanceModeControl } from "./components/DistanceModeControl";
+import { StartDateControl } from "./components/StartDateControl";
 import { AutoConnectRoutesControl } from "./components/AutoConnectRoutesControl";
 import { LocationList } from "./components/LocationList";
 import { LocationInspector } from "./components/LocationInspector";
@@ -18,6 +19,7 @@ function App() {
   const distanceMode = useEditorStore((s) => s.distanceMode);
   const globeRadius = useEditorStore((s) => s.globeRadius);
   const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
+  const startDate = useEditorStore((s) => s.startDate);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const locations = useEditorStore((s) => s.locations);
   const commodities = useEditorStore((s) => s.commodities);
@@ -36,7 +38,7 @@ function App() {
 
   function currentWorldJson(): string {
     return worldToJson({
-      worldScale, distanceMode, globeRadius, globeLonSpan,
+      worldScale, distanceMode, globeRadius, globeLonSpan, startDate,
       politicalEntities, locations, commodities, companies, routes,
     });
   }
@@ -85,6 +87,8 @@ function App() {
         <WorldScaleControl />
         <span className="toolbar-divider" />
         <DistanceModeControl />
+        <span className="toolbar-divider" />
+        <StartDateControl />
         <span className="toolbar-divider" />
         <div className="toolbar-group">
           <button type="button" onClick={() => fileInputRef.current?.click()}>

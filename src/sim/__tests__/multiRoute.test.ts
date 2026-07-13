@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildWorldFromJson } from "../buildWorldFromJson";
-import { getRoutes } from "../routes";
+import { getRoute, getRoutes } from "../routes";
 import { findShortestPath } from "../pathfinding";
 
 /**
@@ -9,7 +9,7 @@ import { findShortestPath } from "../pathfinding";
  * padded with filler ports to clear World's 20-location minimum. `extraRoutes`
  * are appended after the base A<->B Sea route.
  */
-function twoParallelRouteWorld(extraRoutes: unknown[]): string {
+function twoParallelRouteWorld(extraRoutes: unknown[], baseRouteControlPoints: unknown[] = []): string {
   const locations: unknown[] = [
     {
       id: "loc-1", name: "A", x: 25, y: 50, politicalEntityId: "pe-1",
@@ -41,7 +41,7 @@ function twoParallelRouteWorld(extraRoutes: unknown[]): string {
     locations,
     companies: [],
     routes: [
-      { id: "route-1", locationAId: "loc-1", locationBId: "loc-2", routeType: "Sea", controlPoints: [] },
+      { id: "route-1", locationAId: "loc-1", locationBId: "loc-2", routeType: "Sea", controlPoints: baseRouteControlPoints },
       ...extraRoutes,
     ],
   });
@@ -77,5 +77,19 @@ describe("multiple routes between one location pair", () => {
     const routes = getRoutes("A", "B");
     expect(routes).toHaveLength(2);
     expect(routes.filter((r) => r.routeType === "Sea")).toHaveLength(1);
+  });
+});
+
+describe("imported Route control-point geometry", () => {
+  it("reconstructs a route through the exact authored control points, not a randomly bowed curve", () => {
+    // A straight A(25,50)-B(75,50) Sea leg, hand-bowed in the editor through
+    // one control point well off the line (50, 90).
+    buildWorldFromJson(twoParallelRouteWorld([], [{ id: "cp-1", x: 50, y: 90 }]));
+    const route = getRoute("A", "B")!;
+    expect(route.controlPoints).toEqual([[50, 90]]);
+    // A straight A-B leg would be exactly 50 long; bowing through (50, 90)
+    // roughly triples the arc length, so this also confirms the curve is
+    // actually built through the authored point rather than ignored.
+    expect(route.distance).toBeGreaterThan(60);
   });
 });

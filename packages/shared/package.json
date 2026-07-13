@@ -14,6 +14,10 @@
     "./nationality": "./src/nationality.ts",
     "./distance": "./src/distance.ts",
     "./terminal": "./src/terminal.ts",
-    "./routePlanning": "./src/routePlanning.ts"
+    "./routePlanning": "./src/routePlanning.ts",
+    "./commodity": "./src/commodity.ts",
+    "./politicalEntity": "./src/politicalEntity.ts",
+    "./world": "./src/world.ts",
+    "./bezier": "./src/bezier.ts"
   }
 }

@@ -5,6 +5,7 @@ import type { ContractStrategy } from "../sim/faction";
 export function ControlsPanel() {
   const playing = useSimStore((s) => s.playing);
   const day = useSimStore((s) => s.day);
+  const date = useSimStore((s) => s.date);
   const secondsPerDay = useSimStore((s) => s.secondsPerDay);
   const contractStrategy = useSimStore((s) => s.contractStrategy);
   const factions = useSimStore((s) => s.factions);
@@ -122,6 +123,11 @@ export function ControlsPanel() {
         <button type="button" onClick={removePoliceShip} disabled={policeCount === 0}>-</button>
       </label>
       <span className="stat">Day {day}</span>
+      {date !== null && (
+        <span className="stat">
+          {date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" })}
+        </span>
+      )}
       <span className="stat">{factions.length} factions</span>
       <span className="stat">{traderCount} traders</span>
       <span className="stat">{locationCount} locations</span>

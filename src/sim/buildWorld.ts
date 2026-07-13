@@ -99,6 +99,8 @@ export interface BuildWorldOptions {
    * where the "right" buffer isn't obvious upfront. Default false.
    */
   autoMinStockpileDaysFromRoutes?: boolean;
+  /** The in-world date/time of day 1, as an ISO 8601 string. Default World's own DEFAULT_START_DATE. */
+  startDate?: string;
 }
 
 /**
@@ -331,6 +333,7 @@ export function buildWorld(
     companyEventProbability: 0.005,
     seed,
     factions,
+    startDate: options.startDate,
     numPoliceShips,
     numPirateShips,
     pirateStartingCash: pirateCashPerShip * numPirateShips,

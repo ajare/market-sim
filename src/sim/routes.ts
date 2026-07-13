@@ -16,8 +16,11 @@ import type { RouteType } from "@market-sim/shared/terminal";
 import { ROUTE_TERMINAL_COMPATIBILITY, compatibleRouteTypes as sharedCompatibleRouteTypes } from "@market-sim/shared/terminal";
 export type { RouteType };
 export { ROUTE_TERMINAL_COMPATIBILITY };
-
-export type Point = readonly [number, number];
+// The De Casteljau curve math (also used by the editor's routeRenderPoints,
+// see types.ts) now lives in @market-sim/shared -- imported AND re-exported
+// so every existing `from "./routes"` import of Point keeps working.
+import { sampleBezierCurve, CURVE_SAMPLE_COUNT, type Point } from "@market-sim/shared/bezier";
+export type { Point };
 
 export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   Air: 1.0,
@@ -34,9 +37,6 @@ export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
 /** How far a control point may bow off the straight origin-destination line, as a fraction of that line's length. */
 const MAX_CONTROL_POINT_BOW_FRACTION = 0.12;
 
-/** Points sampled evenly in Bezier parameter t along a Route's curve, cached at construction. Doubles as the polyline used to draw the curve and the lookup table pointAtFraction walks to place a Transport at a constant-speed fraction of the route's actual (arc-length) distance. */
-const CURVE_SAMPLE_COUNT = 24;
-
 /** Small deterministic string hash (FNV-1a) so a Route's control points depend only on (seed, origin, destination) -- reproducible regardless of what order routes are generated in or what the route-type-selection RNG stream has already consumed. */
 function hashSeed(seed: number, a: string, b: string): number {
   let h = (seed ^ 0x9e3779b9) >>> 0;
@@ -47,19 +47,6 @@ function hashSeed(seed: number, a: string, b: string): number {
     }
   }
   return h >>> 0;
-}
-
-/** De Casteljau evaluation -- works for a Bezier curve of any degree, not just cubic, so `controlPointCount` isn't locked to 2. */
-function bezierPoint(points: readonly Point[], t: number): Point {
-  let pts: Point[] = points.slice();
-  while (pts.length > 1) {
-    const next: Point[] = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      next.push([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t]);
-    }
-    pts = next;
-  }
-  return pts[0];
 }
 
 /** `count` control points spaced evenly along the origin-destination line, each nudged sideways by a random fraction of the line's length (see MAX_CONTROL_POINT_BOW_FRACTION) so the resulting curve reads as a distinct lane rather than a straight edge. */
@@ -103,7 +90,16 @@ export class Route {
     destination: string,
     routeType: RouteType,
     seed: number = WORLD_GEN_SEED,
-    controlPointCount: number = 0,
+    /**
+     * Either a control-point COUNT (procedural generation: that many bowed
+     * Bezier points are randomly generated from `seed`, origin, and
+     * destination -- zero means a straight line, no RNG consumed) or an
+     * explicit array of (origin-to-destination-ordered) control-point
+     * coordinates to use verbatim -- the latter is how buildWorldFromJson.ts
+     * reproduces a Route exactly as bowed in the editor, rather than
+     * re-randomizing its geometry.
+     */
+    controlPoints: number | readonly Point[] = 0,
   ) {
     this.origin = origin;
     this.destination = destination;
@@ -111,30 +107,29 @@ export class Route {
 
     const originPoint = LOCATION_COORDINATES[origin];
     const destPoint = LOCATION_COORDINATES[destination];
-    // Everything about a Route's shape is derived from its control-point count:
-    // zero -> a straight line (no RNG consumed at all), otherwise that many
-    // bowed Bezier control points.
-    if (controlPointCount <= 0) {
-      this.controlPoints = [];
+    if (typeof controlPoints === "number") {
+      if (controlPoints <= 0) {
+        this.controlPoints = [];
+      } else {
+        const rng = new Rng(hashSeed(seed, origin, destination));
+        this.controlPoints = generateControlPoints(rng, originPoint, destPoint, controlPoints);
+      }
     } else {
-      const rng = new Rng(hashSeed(seed, origin, destination));
-      this.controlPoints = generateControlPoints(rng, originPoint, destPoint, controlPointCount);
+      this.controlPoints = controlPoints.map(([x, y]) => [x, y] as Point);
     }
 
     const curvePoints: Point[] = [originPoint, ...this.controlPoints, destPoint];
-    this.samplePoints = [curvePoints[0]];
+    this.samplePoints = sampleBezierCurve(curvePoints, CURVE_SAMPLE_COUNT);
     this.cumulativeDistances = [0];
     let cumulative = 0;
-    let prev = curvePoints[0];
-    for (let i = 1; i <= CURVE_SAMPLE_COUNT; i++) {
-      const point = bezierPoint(curvePoints, i / CURVE_SAMPLE_COUNT);
+    for (let i = 1; i < this.samplePoints.length; i++) {
+      const [px, py] = this.samplePoints[i - 1];
+      const [x, y] = this.samplePoints[i];
       // Each segment measured under the active distance mode (Euclidean in flat
       // mode, great-circle in globe mode -- see distance.ts), so a curved
       // Route's total length is the arc length along the surface either way.
-      cumulative += pointDistance(prev[0], prev[1], point[0], point[1]);
-      this.samplePoints.push(point);
+      cumulative += pointDistance(px, py, x, y);
       this.cumulativeDistances.push(cumulative);
-      prev = point;
     }
     this.distance = cumulative;
   }

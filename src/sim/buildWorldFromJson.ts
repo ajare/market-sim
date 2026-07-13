@@ -13,7 +13,7 @@
  */
 import { Commodity, COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType } from "./commodity";
 import { Location, type TerminalType } from "./location";
-import { Route, addRouteToNetwork, type RouteType } from "./routes";
+import { Route, addRouteToNetwork, type Point, type RouteType } from "./routes";
 import { PoliticalEntity, type PoliticalEntityType } from "./politicalEntity";
 import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
@@ -121,14 +121,30 @@ interface JsonCompany {
   homeLocationId?: string | null;
 }
 
+interface JsonRouteControlPoint {
+  x: number;
+  y: number;
+}
+
 interface JsonRoute {
   id: string;
   locationAId: string;
   locationBId: string;
   routeType: string;
-  // A Route's shape is derived from its control points (see routes.ts); the
-  // editor exports them, and we only need how many to rebuild the same curve.
-  controlPoints?: unknown[];
+  // A Route's shape comes from these control points, in world coordinates,
+  // ordered locationAId -> locationBId (see worldJson.ts's routesToWorld) --
+  // used verbatim so an editor-authored curve's geometry, length, fuel cost,
+  // and travel time match exactly in the simulation.
+  controlPoints?: JsonRouteControlPoint[];
+}
+
+function isJsonRouteControlPoint(value: unknown): value is JsonRouteControlPoint {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as JsonRouteControlPoint).x === "number" &&
+    typeof (value as JsonRouteControlPoint).y === "number"
+  );
 }
 
 interface JsonWorld {
@@ -142,6 +158,8 @@ interface JsonWorld {
   distanceMode?: string;
   globeRadius?: number;
   globeLonSpan?: number;
+  /** In-world date/time of day 1, as an ISO 8601 string. Absent in pre-startDate files, which default to World's own DEFAULT_START_DATE. */
+  startDate?: string;
   commodities?: JsonCommodity[];
   locations?: JsonLocation[];
   politicalEntities?: JsonPoliticalEntity[];
@@ -293,8 +311,10 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     const destName = idToName.get(r.locationBId);
     if (originName === undefined || destName === undefined || originName === destName) continue;
     const routeType = VALID_ROUTE_TYPES.has(r.routeType as RouteType) ? (r.routeType as RouteType) : "Sea";
-    const controlPointCount = Array.isArray(r.controlPoints) ? r.controlPoints.length : 0;
-    addRouteToNetwork(routes, new Route(originName, destName, routeType, undefined, controlPointCount));
+    const controlPoints: Point[] = Array.isArray(r.controlPoints)
+      ? r.controlPoints.filter(isJsonRouteControlPoint).map((p): Point => [p.x, p.y])
+      : [];
+    addRouteToNetwork(routes, new Route(originName, destName, routeType, undefined, controlPoints));
   }
   setRoutes(routes);
 
@@ -481,6 +501,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     locations,
     factions,
     seed: options.seed,
+    startDate: world.startDate,
     numPirateShips,
     pirateStartingCash: (options.pirateCashPerShip ?? 0) * numPirateShips,
     numPoliceShips: options.numPoliceShips ?? 0,

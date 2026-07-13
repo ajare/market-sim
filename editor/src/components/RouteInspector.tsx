@@ -1,6 +1,6 @@
 /**
  * Inspector panel for the currently selected Route (see WorldCanvas /
- * selectRoute): its two endpoints, length, curve, and a RouteType selector
+ * selectRoute): its two endpoints, length, and a RouteType selector
  * restricted to the types both endpoints' terminals actually support (see
  * compatibleRouteTypes), plus a Delete button. Renders nothing at all when no
  * Route is selected.
@@ -64,10 +64,6 @@ export function RouteInspector() {
       </label>
 
       <dl className="route-inspector-info">
-        <div>
-          <dt>Curve</dt>
-          <dd>{route.controlPoints.length >= 2 ? "Bezier" : "Straight"}</dd>
-        </div>
         <div>
           <dt>Length</dt>
           <dd>{length.toFixed(1)}</dd>

@@ -38,6 +38,15 @@ describe("buildWorld", () => {
     expect(day).toBe(1);
     expect(world.step()).toBe(2);
   });
+
+  it("advances currentDate by exactly one day per step, from a given startDate", () => {
+    const { world } = buildWorld(3000, { startDate: "2100-03-01T00:00:00.000Z" });
+    expect(world.currentDate.toISOString()).toBe("2100-03-01T00:00:00.000Z");
+    world.step();
+    expect(world.currentDate.toISOString()).toBe("2100-03-02T00:00:00.000Z");
+    world.step();
+    expect(world.currentDate.toISOString()).toBe("2100-03-03T00:00:00.000Z");
+  });
 });
 
 describe("Location", () => {

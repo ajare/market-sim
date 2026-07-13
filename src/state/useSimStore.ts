@@ -23,6 +23,8 @@ interface SimStore {
   factions: Faction[];
   politicalEntities: PoliticalEntity[];
   day: number;
+  /** The in-world calendar date as of `day` -- see World.currentDate. Null before the initial reset(). */
+  date: Date | null;
   playing: boolean;
   secondsPerDay: number;
   contractStrategy: ContractStrategy;
@@ -67,6 +69,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   factions: [],
   politicalEntities: [],
   day: 0,
+  date: null,
   playing: false,
   secondsPerDay: 1.0,
   contractStrategy: "compare",
@@ -76,7 +79,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
     const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
-    set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));
+    set((s) => ({
+      world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false, version: s.version + 1,
+    }));
   },
 
   loadWorldFromJson: (text: string) => {
@@ -86,14 +91,16 @@ export const useSimStore = create<SimStore>((set, get) => ({
     const { world, factions, politicalEntities } = buildWorldFromJson(text);
     applyContractStrategy(factions, get().contractStrategy);
     accumulator = 0;
-    set((s) => ({ world, factions, politicalEntities, day: 0, playing: false, version: s.version + 1 }));
+    set((s) => ({
+      world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false, version: s.version + 1,
+    }));
   },
 
   step: () => {
     const { world } = get();
     if (world === null) return;
     const day = world.step();
-    set((s) => ({ day, version: s.version + 1 }));
+    set((s) => ({ day, date: world.currentDate, version: s.version + 1 }));
   },
 
   tick: (deltaTimeSeconds: number) => {

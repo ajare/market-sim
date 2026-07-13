@@ -13,3 +13,7 @@ export * from "./nationality";
 export * from "./distance";
 export * from "./terminal";
 export * from "./routePlanning";
+export * from "./commodity";
+export * from "./politicalEntity";
+export * from "./world";
+export * from "./bezier";

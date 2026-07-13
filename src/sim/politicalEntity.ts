@@ -7,16 +7,13 @@
  */
 import type { Location } from "./location";
 import { DEFAULT_NATIONALITY, type Nationality } from "./nationality";
+import {
+  POLITICAL_ENTITY_TYPES, DEFAULT_POLITICAL_ENTITY_TYPE, type PoliticalEntityType,
+} from "@market-sim/shared/politicalEntity";
+export { POLITICAL_ENTITY_TYPES, DEFAULT_POLITICAL_ENTITY_TYPE, type PoliticalEntityType };
 
 /** Default starting cash for a newly built PoliticalEntity -- see PoliticalEntity's constructor. */
 export const DEFAULT_POLITICAL_ENTITY_CASH = 10_000_000_000;
-
-/** The scale a PoliticalEntity groups Locations at, from broadest to narrowest. */
-export type PoliticalEntityType = "Universal" | "Planet" | "Country" | "State";
-
-export const POLITICAL_ENTITY_TYPES: PoliticalEntityType[] = ["Universal", "Planet", "Country", "State"];
-
-export const DEFAULT_POLITICAL_ENTITY_TYPE: PoliticalEntityType = "Universal";
 
 export class PoliticalEntity {
   name: string;
