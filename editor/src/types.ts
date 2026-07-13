@@ -23,6 +23,11 @@ export type { TerminalType, RouteType, TransportType };
 /** Default base rate (units/day, at a Location whose rate modifier is the default 1.0) for a newly defined Commodity -- mirrors DEFAULT_BASE_PRODUCTION_RATE/DEFAULT_BASE_CONSUMPTION_RATE in sim/commodity.py. */
 export const DEFAULT_COMMODITY_RATE = 8;
 
+/** Broad category a Commodity belongs to -- purely descriptive, mirrors src/sim/commodity.ts's CommodityType. */
+export const COMMODITY_TYPES = ["Energy", "Metal", "Precious", "Foodstuff", "Textile", "General"] as const;
+export type CommodityType = (typeof COMMODITY_TYPES)[number];
+export const DEFAULT_COMMODITY_TYPE: CommodityType = "General";
+
 /**
  * A registered Commodity: basePrice is this commodity's world-wide reference
  * price; productionRate/consumptionRate are its units/day rate at a Location
@@ -34,6 +39,7 @@ export interface Commodity {
   basePrice: number;
   productionRate: number;
   consumptionRate: number;
+  type: CommodityType;
 }
 
 export type CommodityField =
@@ -103,28 +109,28 @@ export const FAMOUS_HISTORICAL_PORTS: string[] = [
  * Used by the "add trade good" button in the Commodities panel to seed a
  * new Commodity with a plausible name and price.
  */
-export const CARIBBEAN_COMMODITIES: { name: string; basePrice: number }[] = [
-  { name: "Salt", basePrice: 8 },
-  { name: "Rice", basePrice: 14 },
-  { name: "Molasses", basePrice: 18 },
-  { name: "Hides", basePrice: 24 },
-  { name: "Sugar", basePrice: 30 },
-  { name: "Ginger", basePrice: 34 },
-  { name: "Cotton", basePrice: 38 },
-  { name: "Pimento", basePrice: 42 },
-  { name: "Rum", basePrice: 46 },
-  { name: "Tobacco", basePrice: 52 },
-  { name: "Coffee", basePrice: 56 },
-  { name: "Cacao", basePrice: 60 },
-  { name: "Logwood", basePrice: 66 },
-  { name: "Mahogany", basePrice: 72 },
-  { name: "Indigo", basePrice: 82 },
-  { name: "Gunpowder", basePrice: 90 },
-  { name: "Cochineal", basePrice: 110 },
-  { name: "Tortoiseshell", basePrice: 125 },
-  { name: "Silver", basePrice: 210 },
-  { name: "Pearls", basePrice: 300 },
-  { name: "Gold", basePrice: 520 },
+export const CARIBBEAN_COMMODITIES: { name: string; basePrice: number; type: CommodityType }[] = [
+  { name: "Salt", basePrice: 8, type: "Foodstuff" },
+  { name: "Rice", basePrice: 14, type: "Foodstuff" },
+  { name: "Molasses", basePrice: 18, type: "Foodstuff" },
+  { name: "Hides", basePrice: 24, type: "Textile" },
+  { name: "Sugar", basePrice: 30, type: "Foodstuff" },
+  { name: "Ginger", basePrice: 34, type: "Foodstuff" },
+  { name: "Cotton", basePrice: 38, type: "Textile" },
+  { name: "Pimento", basePrice: 42, type: "Foodstuff" },
+  { name: "Rum", basePrice: 46, type: "Foodstuff" },
+  { name: "Tobacco", basePrice: 52, type: "Foodstuff" },
+  { name: "Coffee", basePrice: 56, type: "Foodstuff" },
+  { name: "Cacao", basePrice: 60, type: "Foodstuff" },
+  { name: "Logwood", basePrice: 66, type: "General" },
+  { name: "Mahogany", basePrice: 72, type: "General" },
+  { name: "Indigo", basePrice: 82, type: "Textile" },
+  { name: "Gunpowder", basePrice: 90, type: "General" },
+  { name: "Cochineal", basePrice: 110, type: "Textile" },
+  { name: "Tortoiseshell", basePrice: 125, type: "General" },
+  { name: "Silver", basePrice: 210, type: "Precious" },
+  { name: "Pearls", basePrice: 300, type: "Precious" },
+  { name: "Gold", basePrice: 520, type: "Precious" },
 ];
 
 /** A trading Faction -- mirrors src/sim/faction.ts's Company (TS-only, no Python original). The editor only needs name/starting funds/fleet/home Location; captain strategy params are a simulation-runtime concern. */
@@ -179,15 +185,7 @@ export interface RouteControlPoint {
   y: number;
 }
 
-/** Mirrors src/sim/routes.ts's RouteCurveType -- a purely derived label (see deriveRouteCurveType), never stored on a Route. */
-export type RouteCurveType = "Straight" | "Bezier";
-
-/** A Route's curveType, derived entirely from how many control points it has: 2 or more is "Bezier" (the minimum for a cubic-or-higher Bezier through both Locations and every control point), fewer is "Straight". Mirrors src/sim/routes.ts's Route.curveType getter. */
-export function deriveRouteCurveType(controlPointCount: number): RouteCurveType {
-  return controlPointCount >= 2 ? "Bezier" : "Straight";
-}
-
-/** A direct connection between two Locations -- mirrors src/sim/routes.ts's Route (distance and curveType are both derived, not stored: distance is recomputed live from the Locations' current positions, curveType from the control-point count -- see deriveRouteCurveType). Undirected: locationAId/locationBId order carries no meaning. */
+/** A direct connection between two Locations -- mirrors src/sim/routes.ts's Route (distance is derived, not stored: recomputed live from the Locations' current positions). Undirected: locationAId/locationBId order carries no meaning. */
 export interface EditorRoute {
   id: string;
   locationAId: string;
@@ -237,10 +235,8 @@ function bezierPoint(points: readonly { x: number; y: number }[], t: number): { 
  * Bezier curve through `a`, every control point, and `b` -- quadratic for
  * exactly one control point, cubic-or-higher for more, same De Casteljau
  * technique as src/sim/routes.ts's Route. Always smooth once there's at
- * least one control point, never a sharp-cornered polyline through them --
- * this is independent of the Route's curveType label (see
- * deriveRouteCurveType), which only describes whether it's *at* the
- * 2-control-point-or-more threshold, not how 0 or 1 renders.
+ * least one control point, never a sharp-cornered polyline through them,
+ * regardless of how many.
  */
 export function routeRenderPoints(
   a: { x: number; y: number },

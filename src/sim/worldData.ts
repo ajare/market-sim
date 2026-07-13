@@ -39,6 +39,7 @@ let DISTANCE_CONFIG: DistanceConfig = {
 
 export function setDistanceConfig(config: DistanceConfig): void {
   DISTANCE_CONFIG = config;
+  clearDistanceCache();
 }
 
 export function getDistanceConfig(): DistanceConfig {
@@ -273,8 +274,12 @@ export function generateLocations(
 // original values (1000/200) -- scales every generated Route's distance
 // (and therefore travel time and fuel burn, see distanceBetween) up
 // proportionally, without changing route topology (which pairs connect at
-// all is a function of relative distance, not absolute scale).
-const COORDINATE_SPREAD = 9000.0;
+// all is a function of relative distance, not absolute scale). Exported as
+// the reference map size every Transport speed default (transport.ts,
+// SHIP_CLASSES) is calibrated against -- see buildWorldFromJson's
+// transportSpeedScale, which rescales speeds for a JSON world authored at a
+// different effective map size.
+export const COORDINATE_SPREAD = 9000.0;
 const DEFAULT_MIN_LOCATION_DISTANCE = 600.0;
 
 export function generateCoordinates(
@@ -306,6 +311,19 @@ export function generateCoordinates(
 export let LOCATIONS: Location[] = [];
 export let LOCATION_COORDINATES: Record<string, [number, number]> = {};
 
+/**
+ * Per-(location pair) distanceBetween results, memoized so worldScale (baked
+ * into DISTANCE_CONFIG -- see distance.ts) is only ever read once per pair
+ * for the life of a world, not on every captain-economics/contract-scoring
+ * call each simulated day. Cleared by setGeography/setDistanceConfig, since
+ * either invalidates every previously cached distance.
+ */
+let DISTANCE_CACHE = new Map<string, number>();
+
+function clearDistanceCache(): void {
+  DISTANCE_CACHE = new Map();
+}
+
 /** Wholesale-reassign the world's geography (called once by buildWorld). */
 export function setGeography(
   locations: Location[],
@@ -313,6 +331,7 @@ export function setGeography(
 ): void {
   LOCATIONS = locations;
   LOCATION_COORDINATES = coordinates;
+  clearDistanceCache();
 }
 
 export function getLocation(name: string): Location | undefined {
@@ -361,9 +380,15 @@ export const SHIP_SPEED_UNITS_PER_DAY = 500;
 
 export function distanceBetween(locationA: string, locationB: string): number {
   if (locationA === locationB) return 0.0;
+  const key = locationA < locationB ? `${locationA}|${locationB}` : `${locationB}|${locationA}`;
+  const cached = DISTANCE_CACHE.get(key);
+  if (cached !== undefined) return cached;
+
   const [x1, y1] = LOCATION_COORDINATES[locationA];
   const [x2, y2] = LOCATION_COORDINATES[locationB];
-  return pointDistance(x1, y1, x2, y2);
+  const dist = pointDistance(x1, y1, x2, y2);
+  DISTANCE_CACHE.set(key, dist);
+  return dist;
 }
 
 /**

@@ -12,15 +12,16 @@
  * this module hands the store is always normalized.
  */
 import type {
-  Commodity, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity,
+  Commodity, CommodityType, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity,
 } from "./types";
+import { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE } from "./types";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
 } from "./distance";
 import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGenerators";
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld). */
-export const WORLD_JSON_VERSION = 5;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"). */
+export const WORLD_JSON_VERSION = 6;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -129,7 +130,13 @@ export function parseWorldJson(text: string): EditorWorld {
         : DEFAULT_NATIONALITY,
     })),
     locations: locationsToNormalized(asArray<EditorLocation>(obj.locations), worldScale),
-    commodities: asArray<Commodity>(obj.commodities),
+    // Default a missing/invalid type (files predating v6) to "General".
+    commodities: asArray<Commodity>(obj.commodities).map((c) => ({
+      ...c,
+      type: (COMMODITY_TYPES as readonly string[]).includes((c as { type?: string }).type ?? "")
+        ? ((c as unknown as { type: CommodityType }).type)
+        : DEFAULT_COMMODITY_TYPE,
+    })),
     companies: asArray<EditorCompany>(obj.companies),
     routes: routesToNormalized(asArray<EditorRoute>(obj.routes), worldScale),
   };

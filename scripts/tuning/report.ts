@@ -7,6 +7,7 @@ import type { Stage0Result } from "./stage0";
 import type { ModifierChange } from "./stage1";
 import type { Stage2Result } from "./stage2";
 import type { SwapChange } from "./stage3";
+import type { AddProducerChange } from "./stage4";
 
 function fmt(n: number): string {
   return Number.isNaN(n) ? "n/a" : n.toFixed(3);
@@ -36,6 +37,8 @@ export interface ReportInput {
   stage2: Stage2Result;
   stage3Changes: SwapChange[];
   afterStage3: AggregatedResult;
+  stage4Changes: AddProducerChange[];
+  afterStage4: AggregatedResult;
   tunedJsonPath: string | null;
   diffPath: string | null;
 }
@@ -60,9 +63,25 @@ export function buildReport(input: ReportInput): string {
   lines.push(metricsTable("After Stage 1 (consumption modifiers)", input.afterStage1));
   lines.push(metricsTable("After Stage 2 (ships per Location)", input.stage2.final));
   lines.push(metricsTable("After Stage 3 (commodity-Location swaps)", input.afterStage3));
+  lines.push(metricsTable("After Stage 4 (added producers for remaining shortages)", input.afterStage4));
   lines.push("");
 
   lines.push("## Stage 0: world-wide commodity balance");
+  lines.push("");
+  if (input.stage0.addedConsumers.length === 0) {
+    lines.push("Every produced commodity already had a consumer somewhere -- nothing added.");
+  } else {
+    lines.push(
+      `Added a first-ever consumer for ${input.stage0.addedConsumers.length} commodit${input.stage0.addedConsumers.length === 1 ? "y" : "ies"} ` +
+        "that were produced but never consumed anywhere (unsellable otherwise):",
+    );
+    lines.push("");
+    lines.push("| Commodity | New consumer | Nearest producer |");
+    lines.push("| --- | --- | --- |");
+    for (const c of input.stage0.addedConsumers) {
+      lines.push(`| ${c.commodity} | ${c.newConsumerLocation} | ${c.nearestProducerLocation} |`);
+    }
+  }
   lines.push("");
   if (input.stage0.rescaledCommodities.length === 0) {
     lines.push("No commodity had both a producer and a consumer to balance -- nothing changed.");
@@ -126,6 +145,22 @@ export function buildReport(input: ReportInput): string {
     lines.push("| --- | --- | --- | --- |");
     for (const c of input.stage3Changes) {
       lines.push(`| ${c.commodity} | ${c.fromLocation} | ${c.toLocation} | ${c.inExchangeFor} |`);
+    }
+  }
+  lines.push("");
+
+  lines.push("## Stage 4: added producers for remaining shortages");
+  lines.push("");
+  if (input.stage4Changes.length === 0) {
+    lines.push("No (Location, commodity) pair still had any zero-stock days after Stage 3 -- nothing added.");
+  } else {
+    lines.push("| Commodity | Consumer (shortage) | New producer | Producer modifier | Rebalanced against |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const c of input.stage4Changes) {
+      const rebalanced = c.rebalancedProducers.length > 0 ? c.rebalancedProducers.join(", ") : "(none -- first producer)";
+      lines.push(
+        `| ${c.commodity} | ${c.consumerLocation} | ${c.newProducerLocation} | ${c.producerModifier.toFixed(4)} | ${rebalanced} |`,
+      );
     }
   }
   lines.push("");

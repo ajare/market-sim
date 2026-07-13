@@ -70,10 +70,14 @@ export function LocationsPanel() {
                           const stock = loc.stockpiles[commodity] ?? 0;
                           const rate = loc.productionRate(commodity);
                           const note = pirateNote(market?.history[market.history.length - 1]);
+                          const discount = loc.discount(commodity);
                           return (
                             <li key={commodity}>
                               {commodity}: {stock.toFixed(1)} stock (+{rate.toFixed(1)}/d) @ $
                               {market !== undefined ? market.price.toFixed(2) : "-"}
+                              {discount > 0 && (
+                                <span className="discount-note"> (-{(discount * 100).toFixed(0)}%)</span>
+                              )}
                               {note !== null && <span className="pirate-note"> ({note})</span>}
                             </li>
                           );

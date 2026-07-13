@@ -21,6 +21,15 @@ export type MarketSide = "buy" | "sell";
 export const PIRATE_PRICE_EFFECT_PER_SHIP = 0.03;
 export const MAX_PIRATE_PRICE_EFFECT = 0.5;
 
+/**
+ * Exponential-moving-average weight applied to each day's freshly computed
+ * price against yesterday's -- `price += PRICE_SMOOTHING_FACTOR * (newPrice -
+ * price)` -- so a sharp one-day stockpile swing (or the daily gaussian
+ * noise) only partly shows up immediately, damping day-to-day price
+ * jumpiness instead of fully repricing every day. Lower = smoother/laggier.
+ */
+export const PRICE_SMOOTHING_FACTOR = 0.25;
+
 /** Composite key standing in for Python's `(location, commodity)` tuple dict key. */
 export function marketKey(location: string, commodity: string): string {
   return `${location}::${commodity}`;
@@ -42,6 +51,10 @@ export interface MarketRecord {
   activeEvents: string;
   newEvent: string;
   closed: boolean;
+  /** Produced-commodity ("buy" side) stockpile ceiling on this day -- see Location.maxStockpile. 0 on the "sell" side or for fixed-price markets. */
+  maxStockpile: number;
+  /** Whether the max-stockpile discount (Location.discount) was in effect on this day -- always false on the "sell" side or for fixed-price markets. */
+  maxStockpileDiscounted: boolean;
 }
 
 export class Market {
@@ -190,6 +203,8 @@ export class Market {
         activeEvents: "",
         newEvent: "",
         closed: !isOpen,
+        maxStockpile: 0,
+        maxStockpileDiscounted: false,
       };
       this.history.push(record);
       this.volumeTradedToday = 0.0;
@@ -213,6 +228,8 @@ export class Market {
         activeEvents: this.activeEvents.map((e) => e.name).join(", "),
         newEvent: "",
         closed: true,
+        maxStockpile: this.side === "buy" ? round2(this.location.maxStockpile(this.commodityName)) : 0,
+        maxStockpileDiscounted: this.side === "buy" && this.location.discount(this.commodityName) > 0,
       };
       this.history.push(record);
       this.updateEvents();
@@ -230,7 +247,13 @@ export class Market {
     let newPrice = this.stockpilePrice() * (demandMult / supplyMult) * pirateMult;
     const noise = randGauss(0, 0.01);
     newPrice *= 1 + noise;
+    if (this.side === "buy") {
+      newPrice *= 1 - this.location.discount(this.commodityName);
+    }
     newPrice = Math.max(0.5, newPrice);
+    // Smooth toward newPrice rather than jumping straight to it -- see
+    // PRICE_SMOOTHING_FACTOR.
+    newPrice = this.price + PRICE_SMOOTHING_FACTOR * (newPrice - this.price);
 
     const record: MarketRecord = {
       day,
@@ -248,6 +271,8 @@ export class Market {
       activeEvents: this.activeEvents.map((e) => e.name).join(", "),
       newEvent: "",
       closed: false,
+      maxStockpile: this.side === "buy" ? round2(this.location.maxStockpile(this.commodityName)) : 0,
+      maxStockpileDiscounted: this.side === "buy" && this.location.discount(this.commodityName) > 0,
     };
     this.history.push(record);
 

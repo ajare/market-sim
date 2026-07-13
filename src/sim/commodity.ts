@@ -25,6 +25,17 @@ export const DEFAULT_BASE_PRICE = 1.0;
 export const MIN_COMMODITIES = 5;
 export const MAX_COMMODITIES = 25;
 
+/**
+ * Broad category a Commodity belongs to -- purely descriptive (grouping/
+ * display), doesn't feed into any pricing or simulation logic. "General" is
+ * the catch-all for anything that doesn't fit the others (and the fallback
+ * for a commodity with no registered type at all -- e.g. one authored in the
+ * editor before this field existed).
+ */
+export const COMMODITY_TYPES = ["Energy", "Metal", "Precious", "Foodstuff", "Textile", "General"] as const;
+export type CommodityType = (typeof COMMODITY_TYPES)[number];
+export const DEFAULT_COMMODITY_TYPE: CommodityType = "General";
+
 export interface EventTemplate {
   name: string;
   demandMultiplier: number;
@@ -49,6 +60,8 @@ export class Commodity {
    */
   baseProductionRate: number;
   baseConsumptionRate: number;
+  /** Broad category (Foodstuff, Precious, ...) -- see CommodityType. Purely descriptive. */
+  type: CommodityType;
 
   constructor(
     name: string,
@@ -59,6 +72,7 @@ export class Commodity {
     eventTemplates: EventTemplate[] = [],
     baseProductionRate: number = DEFAULT_BASE_PRODUCTION_RATE,
     baseConsumptionRate: number = DEFAULT_BASE_CONSUMPTION_RATE,
+    type: CommodityType = DEFAULT_COMMODITY_TYPE,
   ) {
     this.name = name;
     this.basePrice = basePrice;
@@ -68,6 +82,7 @@ export class Commodity {
     this.eventTemplates = eventTemplates;
     this.baseProductionRate = baseProductionRate;
     this.baseConsumptionRate = baseConsumptionRate;
+    this.type = type;
   }
 }
 
@@ -175,6 +190,16 @@ const BASE_CONSUMPTION_RATE: Record<string, number> = {
   "Natural Gas": 11.0, Coffee: 6.0, Cotton: 6.0, "Iron Ore": 10.0, Aluminum: 7.0,
 };
 
+// Category for the ten default commodities. Anything not listed here (a
+// custom commodity) falls back to DEFAULT_COMMODITY_TYPE.
+const COMMODITY_TYPE: Record<string, CommodityType> = {
+  "Crude Oil": "Energy", "Natural Gas": "Energy",
+  Copper: "Metal", "Iron Ore": "Metal", Aluminum: "Metal",
+  Gold: "Precious", Silver: "Precious",
+  Wheat: "Foodstuff", Coffee: "Foodstuff",
+  Cotton: "Textile",
+};
+
 function eventTemplatesFor(name: string): EventTemplate[] {
   if (name in BESPOKE_EVENT_TEMPLATES) return BESPOKE_EVENT_TEMPLATES[name];
   const drivers = GENERATED_EVENT_DRIVERS[name] ?? GENERIC_EVENT_DRIVERS;
@@ -194,6 +219,7 @@ export function buildCommodities(
   basePrices: Record<string, number>,
   productionRates: Record<string, number> = {},
   consumptionRates: Record<string, number> = {},
+  types: Record<string, CommodityType> = {},
 ): Record<string, Commodity> {
   if (names.length < MIN_COMMODITIES || names.length > MAX_COMMODITIES) {
     throw new Error(
@@ -212,6 +238,7 @@ export function buildCommodities(
       eventTemplatesFor(name),
       productionRates[name] ?? BASE_PRODUCTION_RATE[name] ?? DEFAULT_BASE_PRODUCTION_RATE,
       consumptionRates[name] ?? BASE_CONSUMPTION_RATE[name] ?? DEFAULT_BASE_CONSUMPTION_RATE,
+      types[name] ?? COMMODITY_TYPE[name] ?? DEFAULT_COMMODITY_TYPE,
     );
   }
   return result;

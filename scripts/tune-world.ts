@@ -24,6 +24,7 @@ import { runStage0 } from "./tuning/stage0";
 import { runStage1 } from "./tuning/stage1";
 import { runStage2 } from "./tuning/stage2";
 import { runStage3 } from "./tuning/stage3";
+import { runStage4 } from "./tuning/stage4";
 import { worldJsonDiff } from "./tuning/diff";
 import { buildReport } from "./tuning/report";
 
@@ -127,14 +128,20 @@ async function main(): Promise<void> {
   const stage3 = runStage3(stage1.worldJson, stage2Config, ratioTolerance, topN, (m) => console.log(m));
   logMetrics("After Stage 3", stage3.final);
 
-  const jsonChanged = stage0.rescaledCommodities.length > 0 || stage1.changes.length > 0 || stage3.changes.length > 0;
+  console.log("\n=== Stage 4: add producers for remaining shortages ===");
+  const stage4 = runStage4(stage3.worldJson, stage2Config, (m) => console.log(m));
+  logMetrics("After Stage 4", stage4.final);
+
+  const jsonChanged =
+    stage0.rescaledCommodities.length > 0 || stage0.addedConsumers.length > 0 || stage1.changes.length > 0 ||
+    stage3.changes.length > 0 || stage4.changes.length > 0;
   let tunedJsonPath: string | null = null;
   let diffPath: string | null = null;
   if (jsonChanged) {
     tunedJsonPath = inputPath.replace(/\.json$/, "") + ".tuned.json";
     diffPath = inputPath.replace(/\.json$/, "") + ".tuned.diff";
-    writeWorldJson(tunedJsonPath, stage3.worldJson);
-    writeFileSync(diffPath, worldJsonDiff(inputPath, tunedJsonPath, worldJson, stage3.worldJson), "utf8");
+    writeWorldJson(tunedJsonPath, stage4.worldJson);
+    writeFileSync(diffPath, worldJsonDiff(inputPath, tunedJsonPath, worldJson, stage4.worldJson), "utf8");
   }
 
   const report = buildReport({
@@ -148,6 +155,8 @@ async function main(): Promise<void> {
     stage2,
     stage3Changes: stage3.changes,
     afterStage3: stage3.final,
+    stage4Changes: stage4.changes,
+    afterStage4: stage4.final,
     tunedJsonPath,
     diffPath,
   });

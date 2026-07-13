@@ -20,6 +20,10 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .speed-control {

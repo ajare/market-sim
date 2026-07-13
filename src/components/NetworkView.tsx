@@ -65,6 +65,33 @@ function captainRouteNodes(captain: Captain): string[] {
   return pathNodeSequence(captain.location, path);
 }
 
+/**
+ * The point `fraction` (0-1) of the way along a multi-hop `path` (as
+ * returned by findShortestPath, origin-to-destination edge order starting at
+ * `startNode`), by cumulative Route distance -- walks leg by leg rather than
+ * a single Route's pointAtFraction, since a reposition's `path` may span
+ * several Route edges with no single curve connecting its endpoints (see
+ * Captain.departEmptyTo's "one continuous transit" comment). Used so an
+ * in-transit ship with no direct Route between its location and destination
+ * is drawn following its actual route through every intermediate stop,
+ * rather than a straight line cutting across them.
+ */
+function pointAlongPath(path: Route[], startNode: string, fraction: number): Point {
+  const totalDistance = path.reduce((sum, r) => sum + r.distance, 0);
+  let remaining = Math.min(1, Math.max(0, fraction)) * totalDistance;
+  let node = startNode;
+  for (let i = 0; i < path.length; i++) {
+    const leg = path[i];
+    if (i === path.length - 1 || remaining <= leg.distance) {
+      const legFraction = leg.distance > 0 ? Math.min(1, remaining / leg.distance) : 1;
+      return leg.pointAtFraction(leg.origin === node ? legFraction : 1 - legFraction);
+    }
+    remaining -= leg.distance;
+    node = leg.origin === node ? leg.destination : leg.origin;
+  }
+  return LOCATION_COORDINATES[startNode];
+}
+
 /** Number of distinct hues in the --political-entity-N categorical palette (index.css) -- PoliticalEntity colors cycle through these by index if there are more political entities than slots. */
 const POLITICAL_ENTITY_PALETTE_SIZE = 8;
 
@@ -553,10 +580,21 @@ export function NetworkView() {
             const curveFraction = legRoute.origin === captain.location ? fraction : 1 - fraction;
             [baseX, baseY] = projectPoint(legRoute.pointAtFraction(curveFraction));
           } else {
-            const [cox, coy] = project(captain.location);
-            const [cdx, cdy] = project(captain.destination!);
-            baseX = cox + (cdx - cox) * fraction;
-            baseY = coy + (cdy - coy) * fraction;
+            // No single Route connects location to destination -- a
+            // multi-hop reposition (see Captain.departEmptyTo). Follow the
+            // actual shortest path's concatenated curves instead of a
+            // straight line cutting across whatever's in between.
+            const multiHopPath = findShortestPath(
+              captain.location, captain.destination!, (r) => captain.transport!.canUseRoute(r),
+            );
+            if (multiHopPath !== null && multiHopPath.length > 0) {
+              [baseX, baseY] = projectPoint(pointAlongPath(multiHopPath, captain.location, fraction));
+            } else {
+              const [cox, coy] = project(captain.location);
+              const [cdx, cdy] = project(captain.destination!);
+              baseX = cox + (cdx - cox) * fraction;
+              baseY = coy + (cdy - coy) * fraction;
+            }
           }
           const offset = (i - (n - 1) / 2) * shipSpacing;
           drawShipMarker(captain, baseX + perpX * offset, baseY + perpY * offset, false);

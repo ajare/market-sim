@@ -5,9 +5,9 @@
  * see useEditorStore.addRoute); shift-drag on a Route itself to add a
  * control point and immediately position it. Once a control point exists,
  * no shift is needed: plain-drag its handle to move it, or plain-click it
- * (no drag) to remove it (a Route's curveType is derived from its control
- * point count -- see deriveRouteCurveType -- flipping to Bezier/Straight
- * automatically as the count crosses 2 either way).
+ * (no drag) to remove it (the rendered curve -- see routeRenderPoints --
+ * follows directly from the control point count, smoothing automatically
+ * as it changes).
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";

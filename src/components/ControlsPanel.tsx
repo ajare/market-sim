@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSimStore } from "../state/useSimStore";
 import type { ContractStrategy } from "../sim/faction";
 
@@ -22,6 +22,7 @@ export function ControlsPanel() {
   const removePoliceShip = useSimStore((s) => s.removePoliceShip);
 
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handlePasteWorld() {
     setPasteError(null);
@@ -40,6 +41,15 @@ export function ControlsPanel() {
       loadWorldFromJson(text);
     } catch (err) {
       setPasteError(`Could not create a World from the clipboard: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleImportFile(file: File) {
+    setPasteError(null);
+    try {
+      loadWorldFromJson(await file.text());
+    } catch (err) {
+      setPasteError(`Could not create a World from "${file.name}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -65,6 +75,21 @@ export function ControlsPanel() {
       <button type="button" onClick={handlePasteWorld}>
         Paste World
       </button>
+      <button type="button" onClick={() => fileInputRef.current?.click()}>
+        Import World
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleImportFile(file);
+          // Reset so re-selecting the same file still fires onChange.
+          e.target.value = "";
+        }}
+      />
       <label className="speed-control">
         Speed: {secondsPerDay.toFixed(1)} s/day
         <input

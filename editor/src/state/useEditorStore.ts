@@ -6,9 +6,9 @@
 import { create } from "zustand";
 import {
   createLocation, compatibleRouteTypes, factionType,
-  DEFAULT_COMMODITY_RATE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
+  DEFAULT_COMMODITY_RATE, DEFAULT_COMMODITY_TYPE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
   ROUTE_TERMINAL_COMPATIBILITY,
-  type Commodity, type CommodityField, type EditorCompany, type EditorFleetMember, type EditorRoute,
+  type Commodity, type CommodityField, type CommodityType, type EditorCompany, type EditorFleetMember, type EditorRoute,
   type PoliticalEntity, type PoliticalEntityType, type EditorLocation, type RouteType, type TerminalType, type TransportType,
 } from "../types";
 import type { EditorWorld } from "../worldJson";
@@ -126,11 +126,11 @@ interface EditorStore {
   removeRoute: (id: string) => void;
   /** Removes every Route, clearing any selected Route. Used by the toolbar's "Delete all routes" action. */
   clearRoutes: () => void;
-  /** Adds a new control point to a Route at (x, y) and returns the point's id so the caller (WorldCanvas) can immediately start dragging it. The Route's curveType follows from the resulting count (see deriveRouteCurveType). No-ops (returning null) if the Route doesn't exist. */
+  /** Adds a new control point to a Route at (x, y) and returns the point's id so the caller (WorldCanvas) can immediately start dragging it. The Route's rendered curve follows from the resulting count (see routeRenderPoints). No-ops (returning null) if the Route doesn't exist. */
   addRouteControlPoint: (routeId: string, x: number, y: number) => string | null;
   /** Repositions an existing control point -- no-op if the Route or point doesn't exist. */
   moveRouteControlPoint: (routeId: string, pointId: string, x: number, y: number) => void;
-  /** Removes a control point -- no-op if the Route or point doesn't exist. The Route's curveType follows from the resulting (smaller) count (see deriveRouteCurveType). */
+  /** Removes a control point -- no-op if the Route or point doesn't exist. The Route's rendered curve follows from the resulting (smaller) count (see routeRenderPoints). */
   removeRouteControlPoint: (routeId: string, pointId: string) => void;
   setCommodityValue: (id: string, field: CommodityField, commodity: string, value: number) => void;
   /** Sets commodity's modifier in producedCommodities (adding it if new) and re-derives its starting stockpile from the commodity's registered production rate -- stockpiles are never hand-edited, so this is the only path that touches them. */
@@ -144,10 +144,11 @@ interface EditorStore {
 
   /** Global commodity registry, shared by every Location's dropdown-driven commodity fields. */
   commodities: Commodity[];
-  addCommodity: (name: string, basePrice?: number) => void;
+  addCommodity: (name: string, basePrice?: number, type?: CommodityType) => void;
   updateCommodityBasePrice: (name: string, basePrice: number) => void;
   updateCommodityProductionRate: (name: string, productionRate: number) => void;
   updateCommodityConsumptionRate: (name: string, consumptionRate: number) => void;
+  updateCommodityType: (name: string, type: CommodityType) => void;
   removeCommodity: (name: string) => void;
 
   /** Companies defined for this World -- captain strategy params and home location aren't modeled in the editor, just name, starting funds, and a fleet of (Transport type/name, Captain name) pairs. */
@@ -582,13 +583,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   commodities: [],
   companies: [],
 
-  addCommodity: (name: string, basePrice = 0) =>
+  addCommodity: (name: string, basePrice = 0, type = DEFAULT_COMMODITY_TYPE) =>
     set((s) => {
       const trimmed = name.trim();
       if (trimmed === "" || s.commodities.some((c) => c.name === trimmed)) return s;
       return {
         commodities: [...s.commodities, {
-          name: trimmed, basePrice,
+          name: trimmed, basePrice, type,
           productionRate: DEFAULT_COMMODITY_RATE, consumptionRate: DEFAULT_COMMODITY_RATE,
         }],
       };
@@ -597,6 +598,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   updateCommodityBasePrice: (name, basePrice) =>
     set((s) => ({
       commodities: s.commodities.map((c) => (c.name === name ? { ...c, basePrice } : c)),
+    })),
+
+  updateCommodityType: (name, type) =>
+    set((s) => ({
+      commodities: s.commodities.map((c) => (c.name === name ? { ...c, type } : c)),
     })),
 
   // Stockpiles are never hand-edited (see addProducedCommodity/

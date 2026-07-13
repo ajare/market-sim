@@ -1,7 +1,7 @@
 /** Defines the global commodity registry -- name, base price, and base production/consumption rate -- that every Location's commodity dropdowns draw from. */
 import { useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
-import { CARIBBEAN_COMMODITIES } from "../types";
+import { CARIBBEAN_COMMODITIES, COMMODITY_TYPES } from "../types";
 
 export function CommoditiesPanel() {
   const commodities = useEditorStore((s) => s.commodities);
@@ -9,6 +9,7 @@ export function CommoditiesPanel() {
   const updateCommodityBasePrice = useEditorStore((s) => s.updateCommodityBasePrice);
   const updateCommodityProductionRate = useEditorStore((s) => s.updateCommodityProductionRate);
   const updateCommodityConsumptionRate = useEditorStore((s) => s.updateCommodityConsumptionRate);
+  const updateCommodityType = useEditorStore((s) => s.updateCommodityType);
   const removeCommodity = useEditorStore((s) => s.removeCommodity);
   const [newName, setNewName] = useState("");
   const [expandedNames, setExpandedNames] = useState<Set<string>>(new Set());
@@ -38,7 +39,7 @@ export function CommoditiesPanel() {
   function handleAddTradeGood() {
     if (availableTradeGoods.length === 0) return;
     const good = availableTradeGoods[Math.floor(Math.random() * availableTradeGoods.length)];
-    addCommodity(good.name, good.basePrice);
+    addCommodity(good.name, good.basePrice, good.type);
   }
 
   return (
@@ -61,7 +62,9 @@ export function CommoditiesPanel() {
                 </button>
                 <span className="commodity-name-label">{commodity.name}</span>
                 {!expanded && (
-                  <span className="rollup-summary">${commodity.basePrice.toLocaleString()}</span>
+                  <span className="rollup-summary">
+                    {commodity.type} · ${commodity.basePrice.toLocaleString()}
+                  </span>
                 )}
                 <button type="button" onClick={() => removeCommodity(commodity.name)}>
                   &times;
@@ -69,6 +72,19 @@ export function CommoditiesPanel() {
               </div>
               {expanded && (
                 <div className="commodity-card-fields">
+                  <label className="commodity-field">
+                    Type
+                    <select
+                      value={commodity.type}
+                      onChange={(e) => updateCommodityType(commodity.name, e.target.value as typeof commodity.type)}
+                    >
+                      {COMMODITY_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label className="commodity-field">
                     Base price
                     <input

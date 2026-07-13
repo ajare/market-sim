@@ -19,9 +19,6 @@ export { ROUTE_TERMINAL_COMPATIBILITY };
 
 export type Point = readonly [number, number];
 
-/** Whether a Route's geometry is a plain straight line between its endpoints, or a bowed Bezier curve through generated control points (see Route.controlPoints). */
-export type RouteCurveType = "Straight" | "Bezier";
-
 export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   Air: 1.0,
   Sea: 0.8,
@@ -87,15 +84,15 @@ export class Route {
   origin: string;
   destination: string;
   routeType: RouteType;
-  /** Interior Bezier control points between origin and destination, in the same coordinate space as LOCATION_COORDINATES -- empty for a straight Route, `controlPointCount` long for a curved one. The Route's curveType is derived from how many there are (see the curveType getter). */
+  /** Interior Bezier control points between origin and destination, in the same coordinate space as LOCATION_COORDINATES -- empty for a straight Route, `controlPointCount` long for a curved one. */
   controlPoints: Point[];
   /**
    * Arc length of this Route's curve through origin, controlPoints, and
-   * destination -- the plain Euclidean distance for a "Straight" Route
-   * (controlPoints is empty), or the Bezier curve's arc length otherwise.
-   * Computed once here (control points never change afterward) and used
-   * everywhere a Route's distance matters: fuel cost, travel time (see
-   * routeTravelDays), and pathfinding edge weight.
+   * destination -- the plain Euclidean distance when there are no control
+   * points, or the Bezier curve's arc length otherwise. Computed once here
+   * (control points never change afterward) and used everywhere a Route's
+   * distance matters: fuel cost, travel time (see routeTravelDays), and
+   * pathfinding edge weight.
    */
   distance: number;
   private samplePoints: Point[];
@@ -116,7 +113,7 @@ export class Route {
     const destPoint = LOCATION_COORDINATES[destination];
     // Everything about a Route's shape is derived from its control-point count:
     // zero -> a straight line (no RNG consumed at all), otherwise that many
-    // bowed Bezier control points. See the curveType getter.
+    // bowed Bezier control points.
     if (controlPointCount <= 0) {
       this.controlPoints = [];
     } else {
@@ -140,11 +137,6 @@ export class Route {
       prev = point;
     }
     this.distance = cumulative;
-  }
-
-  /** Derived from the control-point count (never stored): "Bezier" once there are two or more, "Straight" otherwise -- the two-point threshold being the minimum for a cubic-or-higher Bezier through both endpoints and every control point. */
-  get curveType(): RouteCurveType {
-    return this.controlPoints.length >= 2 ? "Bezier" : "Straight";
   }
 
   /** Points sampled along this Route's Bezier curve, origin to destination -- for drawing the curve on a map. */

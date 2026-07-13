@@ -9,7 +9,7 @@
  * read/delete-only.
  */
 import { useEditorStore } from "../state/useEditorStore";
-import { deriveRouteCurveType, type EditorLocation } from "../types";
+import type { EditorLocation } from "../types";
 import { routeWorldLength } from "../distance";
 
 export function LocationRoutesTable({ locationId }: { locationId: string }) {
@@ -62,7 +62,7 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
               <tr key={route.id}>
                 <td className="routes-table-name-cell">{other.name}</td>
                 <td>{route.routeType}</td>
-                <td>{deriveRouteCurveType(route.controlPoints.length)}</td>
+                <td>{route.controlPoints.length >= 2 ? "Bezier" : "Straight"}</td>
                 <td>{routeWorldLength(location, other, route.controlPoints, config).toFixed(1)}</td>
                 <td>
                   <button type="button" onClick={() => removeRoute(route.id)}>

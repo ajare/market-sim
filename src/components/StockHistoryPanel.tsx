@@ -132,8 +132,13 @@ export function StockHistoryPanel() {
 
       // A produced commodity's "reference" is just its frozen starting
       // stockpile, not a real floor -- only a consumed commodity's minimum
-      // target is worth drawing as a threshold.
-      const values = side === "sell" ? history.flatMap((r) => [r.stockpile, r.referenceStockpile]) : history.map((r) => r.stockpile);
+      // target is worth drawing as a threshold. A produced commodity does
+      // get its own ceiling worth drawing: maxStockpile, the level a
+      // discount kicks in past (see Location.maxStockpile/discount).
+      const values =
+        side === "sell"
+          ? history.flatMap((r) => [r.stockpile, r.referenceStockpile])
+          : history.flatMap((r) => [r.stockpile, r.maxStockpile]);
       const rawMax = Math.max(...values, 1);
       yMax = niceStep(rawMax * 1.1);
       const yStep = niceStep(yMax / 4);
@@ -181,14 +186,47 @@ export function StockHistoryPanel() {
         ctx.setLineDash([]);
       }
 
+      // Max-stockpile ceiling: only meaningful for a produced commodity
+      // (see Location.maxStockpile) -- dashed like the sell-side reference
+      // line, but in the discount color since crossing it is what triggers
+      // Location.discount.
+      const discountColor = cssVar("--event-closure", "#c2410c");
+      if (side === "buy") {
+        ctx.strokeStyle = discountColor;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        history.forEach((r, i) => {
+          const x = px(r.day);
+          const y = py(r.maxStockpile);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
       // Stockpile bars -- the primary series. The most recent bar gets a
       // solid outline so the current value stands out among the rest.
       const baseline = py(0);
-      ctx.fillStyle = lineColor;
       history.forEach((r) => {
         const x = px(r.day);
         const y = py(r.stockpile);
+        ctx.fillStyle = lineColor;
         ctx.fillRect(x - barWidth / 2, y, barWidth, baseline - y);
+        // Mark the days the max-stockpile discount was actually in effect,
+        // rather than just letting the bar touching the ceiling line imply
+        // it -- the discount only kicks in after several consecutive days
+        // at the max (see Location.updateDiscount), so it's not the same
+        // day the bar first reaches the ceiling.
+        if (r.maxStockpileDiscounted) {
+          ctx.fillStyle = discountColor;
+          ctx.beginPath();
+          ctx.arc(x, y - 6, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
       });
       const last = history[history.length - 1];
       ctx.strokeStyle = cssVar("--text-h", "#08060d");
@@ -283,6 +321,7 @@ export function StockHistoryPanel() {
   if (world === null) return null;
 
   const referenceLabel = side === "sell" ? "Minimum stockpile target" : "Reference (starting) stockpile";
+  const maxStockpileLabel = "Max stockpile";
   const history = market?.history ?? [];
   const lineColorVar = side === "sell" ? "var(--consumed)" : "var(--accent)";
   const roleLabel = side === "sell" ? "Consumed" : side === "buy" ? "Produced" : "";
@@ -333,7 +372,8 @@ export function StockHistoryPanel() {
               <tr>
                 <th>Day</th>
                 <th>Stockpile</th>
-                <th>{referenceLabel}</th>
+                <th>{side === "buy" ? maxStockpileLabel : referenceLabel}</th>
+                {side === "buy" && <th>Discount</th>}
               </tr>
             </thead>
             <tbody>
@@ -341,7 +381,8 @@ export function StockHistoryPanel() {
                 <tr key={r.day}>
                   <td>{r.day}</td>
                   <td>{r.stockpile.toFixed(1)}</td>
-                  <td>{r.referenceStockpile.toFixed(1)}</td>
+                  <td>{(side === "buy" ? r.maxStockpile : r.referenceStockpile).toFixed(1)}</td>
+                  {side === "buy" && <td>{r.maxStockpileDiscounted ? "Yes" : ""}</td>}
                 </tr>
               ))}
             </tbody>
@@ -358,6 +399,18 @@ export function StockHistoryPanel() {
               <span>
                 <i className="legend-line legend-line-dashed" />
                 {referenceLabel}
+              </span>
+            )}
+            {side === "buy" && (
+              <span>
+                <i className="legend-line legend-line-dashed" style={{ borderBottomColor: "var(--event-closure)" }} />
+                {maxStockpileLabel}
+              </span>
+            )}
+            {side === "buy" && (
+              <span>
+                <i className="legend-swatch" style={{ background: "var(--event-closure)" }} />
+                Discount applied
               </span>
             )}
             {markerCategories.map((category) => (
@@ -380,6 +433,17 @@ export function StockHistoryPanel() {
                   <div>
                     <i className="legend-line legend-line-dashed" /> {referenceLabel}:{" "}
                     <strong>{hover.record.referenceStockpile.toFixed(1)}</strong>
+                  </div>
+                )}
+                {side === "buy" && (
+                  <div>
+                    <i className="legend-line legend-line-dashed" style={{ borderBottomColor: "var(--event-closure)" }} />{" "}
+                    {maxStockpileLabel}: <strong>{hover.record.maxStockpile.toFixed(1)}</strong>
+                  </div>
+                )}
+                {side === "buy" && hover.record.maxStockpileDiscounted && (
+                  <div>
+                    <i className="legend-swatch" style={{ background: "var(--event-closure)" }} /> Discount applied
                   </div>
                 )}
               </div>

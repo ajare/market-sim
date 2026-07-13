@@ -6,7 +6,7 @@
  * Route is selected.
  */
 import { useEditorStore } from "../state/useEditorStore";
-import { compatibleRouteTypes, deriveRouteCurveType, sortRouteControlPoints, type RouteType } from "../types";
+import { compatibleRouteTypes, sortRouteControlPoints, type RouteType } from "../types";
 import { routeWorldLength } from "../distance";
 
 export function RouteInspector() {
@@ -66,7 +66,7 @@ export function RouteInspector() {
       <dl className="route-inspector-info">
         <div>
           <dt>Curve</dt>
-          <dd>{deriveRouteCurveType(route.controlPoints.length)}</dd>
+          <dd>{route.controlPoints.length >= 2 ? "Bezier" : "Straight"}</dd>
         </div>
         <div>
           <dt>Length</dt>

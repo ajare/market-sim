@@ -11,7 +11,7 @@
  * message so the caller can surface it (see ControlsPanel's "Paste World"
  * button) rather than the paste silently doing nothing.
  */
-import { Commodity } from "./commodity";
+import { Commodity, COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType } from "./commodity";
 import { Location, type TerminalType } from "./location";
 import { Route, addRouteToNetwork, type RouteType } from "./routes";
 import { PoliticalEntity, type PoliticalEntityType } from "./politicalEntity";
@@ -19,10 +19,10 @@ import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, SHIP_CLASSES, 
 import { Captain } from "./captain";
 import { Company, SoloTrader, type Faction, type FleetCrew } from "./faction";
 import { World } from "./world";
-import { setCommodities, setGeography, setDistanceConfig, getLocation } from "./worldData";
+import { setCommodities, setGeography, setDistanceConfig, getLocation, COORDINATE_SPREAD } from "./worldData";
 import { locationSupportsFleet, locationSupportsTransport, defaultCompanyHomeLocation } from "./companyHome";
 import { setRoutes } from "./routes";
-import { DEFAULT_GLOBE_LON_SPAN, type DistanceMode } from "./distance";
+import { DEFAULT_GLOBE_LON_SPAN, type DistanceConfig, type DistanceMode } from "./distance";
 import { Rng } from "./rng";
 import { randomName } from "./names";
 import { randomShipName } from "./shipNames";
@@ -71,6 +71,8 @@ interface JsonCommodity {
   basePrice: number;
   productionRate: number;
   consumptionRate: number;
+  /** Absent in pre-type-field files, which default to DEFAULT_COMMODITY_TYPE. */
+  type?: string;
 }
 
 interface JsonLocation {
@@ -161,22 +163,31 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
-/** Instantiates the Transport subclass named by the editor's TransportType. Defaults to a Ship for an unrecognized type rather than failing the whole load. */
-function makeTransport(transportType: string, name: string): Transport {
+/** Instantiates the Transport subclass named by the editor's TransportType. Defaults to a Ship for an unrecognized type rather than failing the whole load. `speedScale` rescales the class default speed for this world's effective map size -- see transportSpeedScale below. */
+function makeTransport(transportType: string, name: string, speedScale: number): Transport {
+  let transport: Transport;
   switch (transportType) {
     case "WagonTrain":
-      return new WagonTrain({ name });
+      transport = new WagonTrain({ name });
+      break;
     case "Plane":
-      return new Plane({ name });
+      transport = new Plane({ name });
+      break;
     case "Spaceship":
-      return new Spaceship({ name });
+      transport = new Spaceship({ name });
+      break;
     case "Lorry":
-      return new Lorry({ name });
+      transport = new Lorry({ name });
+      break;
     case "FreightTrain":
-      return new FreightTrain({ name });
+      transport = new FreightTrain({ name });
+      break;
     default:
-      return new Ship({ name });
+      transport = new Ship({ name });
+      break;
   }
+  transport.speedUnitsPerDay *= speedScale;
+  return transport;
 }
 
 /**
@@ -212,8 +223,11 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   // resolve against the authored rates and prices, not the defaults.
   const commodityRecord: Record<string, Commodity> = {};
   for (const c of jsonCommodities) {
+    const type: CommodityType = COMMODITY_TYPES.includes(c.type as CommodityType)
+      ? (c.type as CommodityType)
+      : DEFAULT_COMMODITY_TYPE;
     commodityRecord[c.name] = new Commodity(
-      c.name, c.basePrice, undefined, undefined, undefined, [], c.productionRate, c.consumptionRate,
+      c.name, c.basePrice, undefined, undefined, undefined, [], c.productionRate, c.consumptionRate, type,
     );
   }
   setCommodities(commodityRecord);
@@ -245,7 +259,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   const worldScale =
     typeof world.worldScale === "number" && world.worldScale > 0 ? world.worldScale : 1;
   const distanceMode: DistanceMode = world.distanceMode === "globe" ? "globe" : "flat";
-  setDistanceConfig({
+  const distanceConfig: DistanceConfig = {
     mode: distanceMode,
     radius: typeof world.globeRadius === "number" && world.globeRadius > 0 ? world.globeRadius : 1,
     lonSpan:
@@ -253,7 +267,20 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
         ? world.globeLonSpan
         : DEFAULT_GLOBE_LON_SPAN,
     worldScale,
-  });
+  };
+  setDistanceConfig(distanceConfig);
+
+  // Every Transport speed default (transport.ts, SHIP_CLASSES) is calibrated
+  // against the procedural world's COORDINATE_SPREAD-unit flat map (see
+  // buildWorld.ts). A JSON world's effective map size instead comes from its
+  // own worldScale (flat mode) or radius * PI, the antipodal distance (globe
+  // mode -- exactly worldScale under the editor's own default radius, see
+  // defaultGlobeRadius). Rescale every fleet Transport's speed by the ratio
+  // of the two below, so a tiny or huge authored map doesn't make ships
+  // cross it in a fraction of a day or crawl for years.
+  const effectiveMapScale =
+    distanceConfig.mode === "globe" ? distanceConfig.radius * Math.PI : distanceConfig.worldScale;
+  const transportSpeedScale = effectiveMapScale / COORDINATE_SPREAD;
 
   // 3. Build the route network (Route's constructor reads LOCATION_COORDINATES,
   // so this must run after setGeography). A route referencing a missing
@@ -314,6 +341,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
       name: randomShipName(fleetRng, pools.ships),
       crewRequirement: fleetRng.randint(1, 5),
     });
+    transport.speedUnitsPerDay *= transportSpeedScale;
     const captain = new Captain(
       randomName(fleetRng, pools.names), homeLocation, null, 1.25, 0.012 + 0.002 * (genShipIndex % 5),
     );
@@ -350,7 +378,9 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   }
   const pending: PendingFaction[] = [];
   for (const company of jsonCompanies) {
-    const transports = company.fleet.map((member) => makeTransport(member.transportType, member.transportName));
+    const transports = company.fleet.map(
+      (member) => makeTransport(member.transportType, member.transportName, transportSpeedScale),
+    );
     const entity = company.politicalEntityId != null
       ? entityByJsonId.get(company.politicalEntityId) ?? null
       : null;

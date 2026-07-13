@@ -140,6 +140,12 @@ tbody tr:nth-child(even) {
   font-size: 12px;
 }
 
+.discount-note {
+  color: var(--event-closure);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 button, select {
   font: inherit;
   padding: 6px 14px;

@@ -24,6 +24,11 @@ export type { TerminalType };
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
 
+/** Discount applied to a produced commodity's selling price once its stockpile has sat at maxStockpile for more than MAX_STOCKPILE_DISCOUNT_STREAK_DAYS days -- see Location.updateDiscount. */
+export const MAX_STOCKPILE_DISCOUNT = 0.2;
+/** Consecutive days a produced commodity's stockpile must sit at (or below, to remove) maxStockpile before its discount toggles -- see Location.updateDiscount. */
+export const MAX_STOCKPILE_DISCOUNT_STREAK_DAYS = 3;
+
 /** Posts Contracts to a BulletinBoard -- see Location.tenderContracts for the only current implementation. */
 export class ContractIssuer {
   protected postContract(board: BulletinBoard, contract: Contract): void {
@@ -59,6 +64,12 @@ export class Location extends ContractIssuer {
   basePriceModifiers: Record<string, number>;
   fuelPrice: number;
   terminalTypes: ReadonlySet<TerminalType>;
+  /**
+   * Per-produced-commodity discount, as a fraction of the final price this
+   * Location sells that commodity for -- 0 (no discount) for every produced
+   * commodity when a World is created or loaded. See discount()/setDiscount().
+   */
+  discounts: Record<string, number>;
   /** Fraction of a commodity's live sell price recovered when stolen goods are fenced here. */
   fenceFraction: number;
   /** Multiple of minStockpiles at which a Contract is proactively tendered -- see needsContractRestock. */
@@ -72,6 +83,10 @@ export class Location extends ContractIssuer {
    * `stockpiles` value moves every day via production/consumption/trading.
    */
   private readonly frozenReferenceStockpiles: Record<string, number>;
+  /** Consecutive days (so far) a produced commodity's stockpile has sat at maxStockpile -- see updateDiscount. */
+  private readonly daysAtMaxStockpile: Record<string, number> = {};
+  /** Consecutive days (so far) a produced commodity's stockpile has sat below maxStockpile -- see updateDiscount. */
+  private readonly daysBelowMaxStockpile: Record<string, number> = {};
 
   constructor(init: LocationInit) {
     super();
@@ -83,6 +98,7 @@ export class Location extends ContractIssuer {
     this.basePriceModifiers = init.basePriceModifiers;
     this.fuelPrice = init.fuelPrice;
     this.terminalTypes = init.terminalTypes;
+    this.discounts = Object.fromEntries(Object.keys(this.producedCommodities).map((c) => [c, 0]));
     this.fenceFraction = init.fenceFraction ?? 0.5;
     this._ownCash = init.cash ?? 10_000_000_000;
     this.contractThresholdFraction = init.contractThresholdFraction ?? DEFAULT_CONTRACT_THRESHOLD_FRACTION;
@@ -201,10 +217,56 @@ export class Location extends ContractIssuer {
     return base * modifier;
   }
 
+  /**
+   * The ceiling a PRODUCED commodity's stockpile is allowed to reach: twice
+   * its frozen starting level (see frozenReferenceStockpiles). Production
+   * halts for a day once the stockpile is at or above this.
+   */
+  maxStockpile(commodityName: string): number {
+    return (this.frozenReferenceStockpiles[commodityName] ?? 0) * 2;
+  }
+
+  /** This Location's current discount on commodityName's selling price (0 if unset/not produced here). */
+  discount(commodityName: string): number {
+    return this.discounts[commodityName] ?? 0;
+  }
+
+  /**
+   * Tracks how long commodityName's stockpile has sat at (vs below)
+   * maxStockpile and toggles its discount accordingly: more than
+   * MAX_STOCKPILE_DISCOUNT_STREAK_DAYS consecutive days at max applies
+   * MAX_STOCKPILE_DISCOUNT, and the same number of consecutive days back
+   * below max removes it. Called once per simulated day from dailyUpdate,
+   * after that day's production has been applied.
+   */
+  private updateDiscount(commodityName: string): void {
+    const max = this.maxStockpile(commodityName);
+    const current = this.stockpiles[commodityName] ?? 0;
+    if (max > 0 && current >= max) {
+      this.daysBelowMaxStockpile[commodityName] = 0;
+      const streak = (this.daysAtMaxStockpile[commodityName] ?? 0) + 1;
+      this.daysAtMaxStockpile[commodityName] = streak;
+      if (streak > MAX_STOCKPILE_DISCOUNT_STREAK_DAYS) {
+        this.discounts[commodityName] = MAX_STOCKPILE_DISCOUNT;
+      }
+    } else {
+      this.daysAtMaxStockpile[commodityName] = 0;
+      const streak = (this.daysBelowMaxStockpile[commodityName] ?? 0) + 1;
+      this.daysBelowMaxStockpile[commodityName] = streak;
+      if (streak > MAX_STOCKPILE_DISCOUNT_STREAK_DAYS) {
+        this.discounts[commodityName] = 0;
+      }
+    }
+  }
+
   /** Apply one day of production/consumption to stockpiles (floored at 0). */
   dailyUpdate(): void {
     for (const commodity of Object.keys(this.producedCommodities)) {
-      this.stockpiles[commodity] = (this.stockpiles[commodity] ?? 0) + this.productionRate(commodity);
+      const current = this.stockpiles[commodity] ?? 0;
+      if (current < this.maxStockpile(commodity)) {
+        this.stockpiles[commodity] = current + this.productionRate(commodity);
+      }
+      this.updateDiscount(commodity);
     }
     for (const commodity of Object.keys(this.consumedCommodities)) {
       this.stockpiles[commodity] = Math.max(0, (this.stockpiles[commodity] ?? 0) - this.consumptionRate(commodity));
