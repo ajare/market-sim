@@ -18,7 +18,7 @@ import type { Location } from "../sim/location";
 import type { PoliticalEntity } from "../sim/politicalEntity";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 import type { Transport } from "../sim/transport";
-import type { Crew } from "../sim/crew";
+import type { Sailor } from "../sim/sailor";
 import type { Captain } from "../sim/captain";
 
 interface SimStore {
@@ -67,7 +67,7 @@ interface SimStore {
    * replacement for free next time it's docked at a Port (see
    * Captain.hireCrewIfPossible). No-op if the transport isn't InTransit.
    */
-  killCrewMember: (transport: Transport, member: Crew) => void;
+  killCrewMember: (transport: Transport, member: Sailor) => void;
 }
 
 let accumulator = 0;

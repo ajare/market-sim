@@ -73,8 +73,8 @@ describe("World.addLocation", () => {
       // Every new ship starts at its OWN Company's home Location, never the
       // brand-new one (per the grilled spec).
       expect(company.homeLocation).not.toBeNull();
-      expect(captain.location).toBe(company.homeLocation);
-      expect(captain.location).not.toBe(location.name);
+      expect(captain.locationName).toBe(company.homeLocation);
+      expect(captain.locationName).not.toBe(location.name);
     }
   });
 

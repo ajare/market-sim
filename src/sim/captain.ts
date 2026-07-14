@@ -5,7 +5,7 @@
  * the economic reasoning; comments here are kept light since the logic is
  * transcribed 1:1.
  */
-import { Crew, Sailor } from "./crew";
+import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
 import { Ship, crewSpeedFraction, type TransportStatus } from "./transport";
@@ -16,10 +16,12 @@ import { Market, marketKey } from "./markets";
 import { randChoice, randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
 import { round2 } from "./utils";
-import type { NameRng } from "./names";
-import { randomSailorNickname } from "./sailorNicknames";
+import { randomPersonName, type NameRng } from "./names";
+import { randomBirthDate, type PersonInit } from "./person";
+import type { Location } from "./location";
+import { NATIONALITY_POOLS, randomNationality } from "./nationality";
 
-/** Adapts the global sim RNG to the NameRng surface randomSailorNickname needs, so a Ship's newly hired Sailors draw off the same seeded stream as the rest of the simulation. */
+/** Adapts the global sim RNG to the NameRng surface randomPersonName needs, so a Ship's newly hired Sailors draw off the same seeded stream as the rest of the simulation. */
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 
 export interface CargoState {
@@ -138,7 +140,17 @@ function excludeRouteKey(commodity: string, location: string): string {
   return `${commodity}||${location}`;
 }
 
-export class Captain extends Crew {
+export interface CaptainInit extends Omit<PersonInit, "location" | "transport" | "dailyWage"> {
+  homeLocation: Location;
+  startingCash?: number | null;
+  repositionReturnMultiplier?: number;
+  minDailyReturnPct?: number;
+  priceImpact?: number;
+  agentEventProbability?: number;
+  carousing?: number;
+}
+
+export class Captain extends Sailor {
   carousing: number;
   private _ownCash: number;
   startingCash: number | null;
@@ -148,8 +160,6 @@ export class Captain extends Crew {
   agentEventProbability: number;
   company: Faction | null = null;
 
-  location: string;
-  currentNode: string;
   destination: string | null = null;
   daysRemaining = 0;
   cargo: CargoState | null = null;
@@ -169,26 +179,21 @@ export class Captain extends Crew {
   totalRepositions = 0;
   portfolioHistory: PortfolioSnapshot[] = [];
 
-  constructor(
-    name: string,
-    homeLocation: string,
-    startingCash: number | null = null,
-    repositionReturnMultiplier: number = 1.25,
-    minDailyReturnPct: number = 0.02,
-    priceImpact: number = 0.01,
-    agentEventProbability: number = 0.005,
-    carousing: number = 0.0,
-  ) {
-    super(name);
-    this.carousing = carousing;
-    this._ownCash = startingCash ?? 0.0;
-    this.startingCash = startingCash;
-    this.repositionReturnMultiplier = repositionReturnMultiplier;
-    this.minDailyReturnPct = minDailyReturnPct;
-    this.priceImpact = priceImpact;
-    this.agentEventProbability = agentEventProbability;
-    this.location = homeLocation;
-    this.currentNode = homeLocation;
+  constructor(init: CaptainInit) {
+    // dailyWage forced to 0 -- Captains are unpaid, unlike a plain Sailor's
+    // DEFAULT_SAILOR_DAILY_WAGE (see sailor.ts). location (not transport) is
+    // set to homeLocation here, matching Person's AT/ON invariant for a
+    // freshly constructed, not-yet-crewed Captain; Faction.crewTransport
+    // moves it onto the Transport (see Person.boardTransport) once assigned.
+    super({ ...init, dailyWage: 0.0, location: init.homeLocation });
+    this.rank = "Captain";
+    this.carousing = init.carousing ?? 0.0;
+    this._ownCash = init.startingCash ?? 0.0;
+    this.startingCash = init.startingCash ?? null;
+    this.repositionReturnMultiplier = init.repositionReturnMultiplier ?? 1.25;
+    this.minDailyReturnPct = init.minDailyReturnPct ?? 0.02;
+    this.priceImpact = init.priceImpact ?? 0.01;
+    this.agentEventProbability = init.agentEventProbability ?? 0.005;
   }
 
   /** Funds live on whichever Faction owns this transport (if it pools cash), else this Captain's own balance. */
@@ -220,6 +225,18 @@ export class Captain extends Crew {
     this.transport!.status = value;
   }
 
+  /**
+   * The name of wherever this Captain's Transport currently is (docked, or
+   * mid-multi-hop-transit's last waypoint) -- see Transport.currentNode.
+   * Every pathfinding/market-key/log-entry site (in this file and beyond --
+   * see faction.ts/NetworkView.tsx/FleetPanel.tsx) reads this, not the
+   * inherited Person location field, which stays null the whole time a
+   * Captain has a Transport (see Person.boardTransport), by design.
+   */
+  get locationName(): string {
+    return this.transport!.currentNode!;
+  }
+
   private applyPriceImpact(market: Market, units: number, direction: "buy" | "sell"): void {
     if (market.fixedPrice) return;
     const magnitude = (this.priceImpact * units) / (units + 50.0);
@@ -248,7 +265,7 @@ export class Captain extends Crew {
   }
 
   private dailyCrewCost(): number {
-    return this.transport!.crew.reduce((sum, member) => sum + member.dailyWages, 0);
+    return this.transport!.crew.reduce((sum, member) => sum + member.dailyWage, 0);
   }
 
   /**
@@ -270,19 +287,26 @@ export class Captain extends Crew {
    * day. Hiring itself is free -- the only cost is the upfront wage the
    * next time this Ship actually departs (see routeEconomics/
    * dailyCrewCost). No-op for every other Transport type.
+   *
+   * Each new Sailor gets a full name from a uniformly randomly chosen
+   * nationality (not tied to this Ship's own Company/nationality), a birth
+   * date 18-50 years before the World's start date, and nickname left null
+   * -- see person.ts/sailor.ts.
    */
   private hireCrewIfPossible(): void {
     const transport = this.transport!;
     if (!(transport instanceof Ship)) return;
     const seatsOpen = transport.crewRequirement - transport.crew.length;
     if (seatsOpen <= 0) return;
-    const location = getLocation(this.location);
-    if (location === undefined || !location.terminalTypes.has("Port")) return;
-    const existingNames = new Set(transport.crew.map((member) => member.name));
+    const location = transport.location;
+    if (location === null || !location.terminalTypes.has("Port")) return;
     for (let i = 0; i < seatsOpen; i++) {
-      const name = randomSailorNickname(globalNameRng, existingNames);
-      existingNames.add(name);
-      transport.crew.push(new Sailor(name, transport));
+      const nationality = randomNationality(globalNameRng);
+      const { name, gender } = randomPersonName(globalNameRng, NATIONALITY_POOLS[nationality].names);
+      const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
+      const sailor = new Sailor({ name, gender, dateOfBirth });
+      sailor.boardTransport(transport);
+      transport.crew.push(sailor);
     }
   }
 
@@ -389,7 +413,7 @@ export class Captain extends Crew {
       pirateBrigade?.maybeAttackOnArrival(day, this, sellMarkets);
     }
 
-    if (closedLocations.has(this.location)) {
+    if (closedLocations.has(this.locationName)) {
       if (this.cargo !== null && this.company?.canSmuggle === true) {
         this.maybeSmuggle(day, sellMarkets);
       }
@@ -429,12 +453,11 @@ export class Captain extends Crew {
 
   /** Returns true for a genuine arrival at the final destination; false if only an intermediate refueling stop. */
   private arrive(day: number, buyMarkets: Map<string, Market>, closedLocations: ReadonlySet<string>): boolean {
-    this.location = this.destination!;
-    this.currentNode = this.location;
+    this.transport!.arriveAt(getLocation(this.destination!)!);
 
     if (this.cargo !== null && this.path.length > 0) {
       const nextRoute = this.path.shift()!;
-      const nextNode = nextRoute.origin === this.currentNode ? nextRoute.destination : nextRoute.origin;
+      const nextNode = nextRoute.origin === this.locationName ? nextRoute.destination : nextRoute.origin;
       const legFuelUnits = this.refuelAtStop(day, buyMarkets, nextRoute.distance, closedLocations);
       this.transport!.refuel(legFuelUnits);
       this.destination = nextNode;
@@ -455,10 +478,10 @@ export class Captain extends Crew {
     nextLegDistance: number,
     closedLocations: ReadonlySet<string>,
   ): number {
-    if (closedLocations.has(this.location)) return 0.0;
+    if (closedLocations.has(this.locationName)) return 0.0;
     const fuelUnits = nextLegDistance * this.currentFuelConsumptionRate() * this.cargo!.quantity;
     if (fuelUnits <= 0) return 0.0;
-    const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+    const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
     const fuelCost = fuelUnits * fuelPrice;
 
@@ -474,7 +497,7 @@ export class Captain extends Crew {
       day,
       action: "REFUEL",
       commodity: this.cargo!.commodity,
-      location: this.location,
+      location: this.locationName,
       destination: this.cargo!.destination,
       quantity: 0.0,
       price: null,
@@ -495,7 +518,7 @@ export class Captain extends Crew {
       this.status === "AtLocation" &&
       this.cargo === null &&
       this.groundedDaysRemaining === 0 &&
-      !closedLocations.has(this.location)
+      !closedLocations.has(this.locationName)
     );
   }
 
@@ -505,7 +528,7 @@ export class Captain extends Crew {
       this.fulfillContract(day, sellMarkets);
       return;
     }
-    const market = sellMarkets.get(marketKey(this.location, this.cargo.commodity));
+    const market = sellMarkets.get(marketKey(this.locationName, this.cargo.commodity));
     if (market === undefined || !market.isAvailable) return;
 
     const sellPrice = market.price;
@@ -522,7 +545,7 @@ export class Captain extends Crew {
       day,
       action: "SELL",
       commodity: this.cargo.commodity,
-      location: this.location,
+      location: this.locationName,
       destination: null,
       quantity: round2(this.cargo.quantity),
       price: round2(sellPrice),
@@ -554,7 +577,7 @@ export class Captain extends Crew {
   private maybeSmuggle(day: number, sellMarkets: Map<string, Market>): void {
     if (this.cargo === null) return;
     if (this.cargo.contract !== null) return; // SoloTrader never accepts Contracts to begin with
-    const market = sellMarkets.get(marketKey(this.location, this.cargo.commodity));
+    const market = sellMarkets.get(marketKey(this.locationName, this.cargo.commodity));
     if (market === undefined || !market.isAvailable) return;
 
     const cargo = this.cargo;
@@ -566,7 +589,7 @@ export class Captain extends Crew {
         day,
         action: "SMUGGLE",
         commodity: cargo.commodity,
-        location: this.location,
+        location: this.locationName,
         destination: null,
         quantity: round2(cargo.quantity),
         price: null,
@@ -594,7 +617,7 @@ export class Captain extends Crew {
       day,
       action: "SMUGGLE",
       commodity: cargo.commodity,
-      location: this.location,
+      location: this.locationName,
       destination: null,
       quantity: round2(cargo.quantity),
       price: round2(blackMarketPrice),
@@ -621,7 +644,7 @@ export class Captain extends Crew {
   private fulfillContract(day: number, sellMarkets: Map<string, Market>): void {
     const cargo = this.cargo!;
     const contract = cargo.contract!;
-    if (this.location !== contract.location) return;
+    if (this.locationName !== contract.location) return;
 
     const proceeds = cargo.fuelCostTotal + contract.deliveryFee;
     const profit = proceeds - cargo.totalCost;
@@ -631,7 +654,7 @@ export class Captain extends Crew {
     contract.fulfilled = true;
     contract.inFlightCaptain = null;
 
-    const market = sellMarkets.get(marketKey(this.location, cargo.commodity));
+    const market = sellMarkets.get(marketKey(this.locationName, cargo.commodity));
     if (market !== undefined) market.applyTrade(cargo.quantity);
     const issuingLocation = getLocation(contract.location)!;
     issuingLocation.cash -= proceeds;
@@ -640,7 +663,7 @@ export class Captain extends Crew {
       day,
       action: "SELL",
       commodity: cargo.commodity,
-      location: this.location,
+      location: this.locationName,
       destination: null,
       quantity: round2(cargo.quantity),
       price: null,
@@ -669,14 +692,14 @@ export class Captain extends Crew {
   ): TradeDirective | null {
     let best: TradeDirective | null = null;
     for (const commodity of commodities) {
-      const buyMarket = buyMarkets.get(marketKey(this.location, commodity));
+      const buyMarket = buyMarkets.get(marketKey(this.locationName, commodity));
       if (buyMarket === undefined || !buyMarket.isAvailable) continue;
 
       const sellCandidates: Market[] = [];
       for (const m of sellMarkets.values()) {
         if (
           m.commodityName === commodity &&
-          m.locationName !== this.location &&
+          m.locationName !== this.locationName &&
           !closedLocations.has(m.locationName) &&
           !excludeRoutes.has(excludeRouteKey(commodity, m.locationName)) &&
           m.isAvailable
@@ -693,12 +716,12 @@ export class Captain extends Crew {
       );
       if (trialQuantity < 1) continue;
 
-      const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+      const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
       const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
 
       for (const sellMarket of sellCandidates) {
         const econ = this.routeEconomics(
-          this.location, sellMarket.locationName, buyMarket.price, sellMarket.price,
+          this.locationName, sellMarket.locationName, buyMarket.price, sellMarket.price,
           trialQuantity, fuelPrice, buyMarkets,
         );
         if (econ.expectedProfit <= 0 || econ.dailyReturnPct < this.minDailyReturnPct) continue;
@@ -743,13 +766,13 @@ export class Captain extends Crew {
 
     let repositionDays = 0;
     let repositionFuelCost = 0;
-    if (producer !== this.location) {
-      const repositionPath = findShortestPath(this.location, producer, canUse);
+    if (producer !== this.locationName) {
+      const repositionPath = findShortestPath(this.locationName, producer, canUse);
       if (repositionPath === null) return null;
-      repositionDays = travelDaysBetween(this.location, producer, this.currentSpeedUnitsPerDay());
-      const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+      repositionDays = travelDaysBetween(this.locationName, producer, this.currentSpeedUnitsPerDay());
+      const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
       const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
-      repositionFuelCost = distanceBetween(this.location, producer) * this.currentRepositionFuelRate() * fuelPrice;
+      repositionFuelCost = distanceBetween(this.locationName, producer) * this.currentRepositionFuelRate() * fuelPrice;
     }
 
     const totalDays = repositionDays + deliveryDays;
@@ -766,7 +789,7 @@ export class Captain extends Crew {
     sellMarkets: Map<string, Market>,
   ): void {
     const { commodity, destination } = route;
-    const originMarket = buyMarkets.get(marketKey(this.location, commodity));
+    const originMarket = buyMarkets.get(marketKey(this.locationName, commodity));
     const sellMarket = sellMarkets.get(marketKey(destination, commodity));
     if (originMarket === undefined || sellMarket === undefined) return;
     if (!originMarket.isAvailable || !sellMarket.isAvailable) return;
@@ -778,10 +801,10 @@ export class Captain extends Crew {
     );
     if (quantity < 1) return;
 
-    const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+    const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
     const econ = this.routeEconomics(
-      this.location, destination, originMarket.price, sellMarket.price, quantity, fuelPrice, buyMarkets,
+      this.locationName, destination, originMarket.price, sellMarket.price, quantity, fuelPrice, buyMarkets,
     );
     if (econ.expectedProfit <= 0 || econ.dailyReturnPct < this.minDailyReturnPct) return;
     if (econ.totalCost > this.cash) return;
@@ -790,7 +813,7 @@ export class Captain extends Crew {
     if (path === null || path.length === 0) return;
 
     const firstLeg = path[0];
-    const originLocation = this.location;
+    const originLocation = this.locationName;
     const leg1FuelUnits = firstLeg.distance * this.currentFuelConsumptionRate() * quantity;
     const leg1FuelCost = leg1FuelUnits * fuelPrice;
     // Crew wages for the WHOLE trip (every leg, see routeEconomics) are paid
@@ -827,7 +850,6 @@ export class Captain extends Crew {
     this.status = "InTransit";
     this.transport!.refuel(leg1FuelUnits);
 
-    this.currentNode = originLocation;
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
@@ -868,17 +890,17 @@ export class Captain extends Crew {
    * goods themselves.
    */
   private executeContractDelivery(contract: Contract, day: number, buyMarkets: Map<string, Market>): void {
-    const originMarket = buyMarkets.get(marketKey(this.location, contract.commodity));
+    const originMarket = buyMarkets.get(marketKey(this.locationName, contract.commodity));
     if (originMarket === undefined || !originMarket.isAvailable) return;
 
-    const path = findShortestPath(this.location, contract.location, (r) => this.transport!.canUseRoute(r));
+    const path = findShortestPath(this.locationName, contract.location, (r) => this.transport!.canUseRoute(r));
     if (path === null || path.length === 0) return;
 
     const issuingLocation = getLocation(contract.location)!;
-    const fuelMarket = buyMarkets.get(marketKey(this.location, "Fuel"));
+    const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
     const firstLeg = path[0];
-    const originLocation = this.location;
+    const originLocation = this.locationName;
 
     // Distance/duration for the WHOLE path -- computed before the quantity/
     // affordability gates below since crew cost doesn't depend on cargo
@@ -945,7 +967,6 @@ export class Captain extends Crew {
     this.status = "InTransit";
     this.transport!.refuel(leg1FuelUnits);
 
-    this.currentNode = originLocation;
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
@@ -999,9 +1020,9 @@ export class Captain extends Crew {
       for (const m of buyMarkets.values()) {
         if (
           m.commodityName === commodity &&
-          m.locationName !== this.location &&
+          m.locationName !== this.locationName &&
           !closedLocations.has(m.locationName) &&
-          getRoutes(this.location, m.locationName).some((r) => this.transport!.canUseRoute(r)) &&
+          getRoutes(this.locationName, m.locationName).some((r) => this.transport!.canUseRoute(r)) &&
           m.isAvailable
         ) {
           buyCandidates.push(m);
@@ -1045,10 +1066,10 @@ export class Captain extends Crew {
 
     if (best === null) return;
 
-    const fuelMarketHere = buyMarkets.get(marketKey(this.location, "Fuel"));
+    const fuelMarketHere = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
-    const repositionDistance = distanceBetween(this.location, best.targetLoc);
-    const repositionDays = travelDaysBetween(this.location, best.targetLoc, this.currentSpeedUnitsPerDay());
+    const repositionDistance = distanceBetween(this.locationName, best.targetLoc);
+    const repositionDays = travelDaysBetween(this.locationName, best.targetLoc, this.currentSpeedUnitsPerDay());
     const repositionFuelUnits = repositionDistance * this.currentRepositionFuelRate();
     const repositionFuelCost = repositionFuelUnits * fuelPriceHere;
     const repositionCrewCost = this.dailyCrewCost() * repositionDays;
@@ -1072,18 +1093,18 @@ export class Captain extends Crew {
     buyMarkets: Map<string, Market>,
     reasonCommodity: string | null = null,
   ): boolean {
-    if (destination === this.location) return false;
+    if (destination === this.locationName) return false;
     // Reachability allows a multi-hop path, not just a direct edge -- the
     // distance/time below are coordinate-based (not edge-based), so a
     // multi-hop reposition is simulated the same way a direct one already
     // was: one continuous transit, no intermediate-stop bookkeeping needed.
-    const path = findShortestPath(this.location, destination, (r) => this.transport!.canUseRoute(r));
+    const path = findShortestPath(this.locationName, destination, (r) => this.transport!.canUseRoute(r));
     if (path === null || path.length === 0) return false;
 
-    const fuelMarketHere = buyMarkets.get(marketKey(this.location, "Fuel"));
+    const fuelMarketHere = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
-    const repositionDistance = distanceBetween(this.location, destination);
-    const repositionDays = travelDaysBetween(this.location, destination, this.currentSpeedUnitsPerDay());
+    const repositionDistance = distanceBetween(this.locationName, destination);
+    const repositionDays = travelDaysBetween(this.locationName, destination, this.currentSpeedUnitsPerDay());
     const repositionRouteTypes: RouteType[] = [];
     for (const leg of path) if (!repositionRouteTypes.includes(leg.routeType)) repositionRouteTypes.push(leg.routeType);
     const repositionRouteType: string = repositionRouteTypes.join("+");
@@ -1100,7 +1121,7 @@ export class Captain extends Crew {
     this.totalRepositions += 1;
     if (fuelMarketHere !== undefined) this.applyPriceImpact(fuelMarketHere, repositionFuelUnits, "buy");
 
-    const originLocation = this.location;
+    const originLocation = this.locationName;
     this.status = "InTransit";
     this.transport!.refuel(repositionFuelUnits);
     this.destination = destination;
@@ -1136,7 +1157,7 @@ export class Captain extends Crew {
     // Company (see executeContractDelivery), so it's excluded from portfolio
     // value the same way Faction.netWorth excludes it.
     if (this.cargo !== null && this.cargo.contract === null) {
-      const markLocation = this.status === "AtLocation" ? this.location : this.cargo.destination;
+      const markLocation = this.status === "AtLocation" ? this.locationName : this.cargo.destination;
       const market = sellMarkets.get(marketKey(markLocation, this.cargo.commodity));
       cargoValue =
         market !== undefined ? market.price * this.cargo.quantity : this.cargo.unitCost * this.cargo.quantity;
@@ -1145,7 +1166,7 @@ export class Captain extends Crew {
     const totalValue = this.cash + cargoValue;
     this.portfolioHistory.push({
       day,
-      location: this.location,
+      location: this.locationName,
       status: this.status,
       cash: round2(this.cash),
       cargoValue: round2(cargoValue),

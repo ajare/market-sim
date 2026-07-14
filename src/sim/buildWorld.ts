@@ -9,19 +9,22 @@ import {
   ALL_LOCATION_NAMES, COMMODITIES, FUEL_DEPOT_NAMES, WORLD_GEN_SEED,
   DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR, DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY,
   generateLocations, generateCoordinates, setGeography, assignPoliticalEntities, setDistanceConfig,
+  setWorldStartDate, getLocation,
 } from "./worldData";
-import { DEFAULT_GLOBE_LON_SPAN } from "./distance";
+import { DEFAULT_GLOBE_LON_SPAN, DEFAULT_START_DATE } from "@market-sim/shared";
 import type { Commodity } from "./commodity";
 import type { PoliticalEntity } from "./politicalEntity";
 import { generateRoutes, setRoutes, ROUTES } from "./routes";
 import { SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
-import { DUTCH_NAMES, randomName } from "./names";
+import { DUTCH_NAMES, randomPersonName } from "./names";
 import { DUTCH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { DUTCH_COMPANY_NAMES, randomCompanyName } from "./companyNames";
 import { Faction, Company, SoloTrader } from "./faction";
 import { World } from "./world";
 import type { TenderContractsOptions } from "./contracts";
+import { randomBirthDate } from "./person";
+import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 
 export interface BuiltWorld {
   world: World;
@@ -190,6 +193,11 @@ export function buildWorld(
   }
   const locationNames = options.locationNames ?? ALL_LOCATION_NAMES;
   const commodities = options.commodities ?? COMMODITIES;
+  // Set before the fleet is generated below (not just later inside `new
+  // World(...)`) -- every Sailor/Captain's birth date is drawn relative to
+  // this (see randomBirthDate), so it needs to be live before any of them
+  // are constructed, not just by the time World's own constructor runs.
+  setWorldStartDate(new Date(options.startDate ?? DEFAULT_START_DATE));
   const [minPerRole, maxPerRole] = options.commodityCountRange ?? [2, 4];
   let minStockpileDays = options.minStockpileDays ?? DEFAULT_MIN_STOCKPILE_DAYS;
   const consumedStockpileFactor = options.consumedStockpileFactor ?? DEFAULT_CONSUMED_STOCKPILE_FACTOR;
@@ -279,13 +287,16 @@ export function buildWorld(
     // own fixed value (see SHIP_CLASSES in transport.ts), so crew size depends
     // on which class this ship is, not a random roll.
     const transport = shipClass.clone({ name: randomShipName(fleetRng, DUTCH_SHIP_NAMES) });
-    const captain = new Captain(
-      randomName(fleetRng, DUTCH_NAMES),
-      homePort,
-      null,
-      1.25,
-      0.012 + 0.002 * (i % 5),
-    );
+    const { name, gender } = randomPersonName(fleetRng, DUTCH_NAMES);
+    const dateOfBirth = randomBirthDate(() => fleetRng.random(), SAILOR_MIN_AGE, SAILOR_MAX_AGE);
+    const captain = new Captain({
+      name,
+      gender,
+      dateOfBirth,
+      homeLocation: getLocation(homePort)!,
+      repositionReturnMultiplier: 1.25,
+      minDailyReturnPct: 0.012 + 0.002 * (i % 5),
+    });
     return [transport, captain, homePort];
   });
 

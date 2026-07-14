@@ -14,7 +14,7 @@
  * dynamically (like Python's MRO), so it works correctly here.
  */
 import { Captain, type Directive, type TradeDirective } from "./captain";
-import { Sailor } from "./crew";
+import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 import { Ship, type Transport } from "./transport";
 import { getRoutes } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
@@ -25,12 +25,13 @@ import type { BulletinBoard, Contract, ContractType } from "./contracts";
 import type { PoliticalEntity } from "./politicalEntity";
 import { locationSupportsTransport } from "./companyHome";
 import { round2 } from "./utils";
-import type { NameRng } from "./names";
-import { randomSailorNickname } from "./sailorNicknames";
+import { randomGender, randomPersonName, type NameRng } from "./names";
+import { randomBirthDate } from "./person";
+import { NATIONALITY_POOLS, randomNationality } from "./nationality";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
-/** Adapts the global sim RNG to the NameRng surface randomSailorNickname needs, so Sailor nicknames draw off the same seeded stream as the rest of the simulation. */
+/** Adapts the global sim RNG to the NameRng surface randomPersonName/randomGender need, so a newly crewed Sailor's name/gender/birth date draw off the same seeded stream as the rest of the simulation. */
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 
 /** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see Faction.dedupeCaptainName. */
@@ -93,8 +94,8 @@ export class Faction {
   constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
     this.name = name;
     for (const [transport, captain, homeLocation] of crew) {
-      captain.transport = transport;
-      captain.location = homeLocation;
+      transport.arriveAt(getLocation(homeLocation)!);
+      captain.boardTransport(transport);
       this.captains.push(captain);
       this.dedupeTransportName(transport);
       this.dedupeCaptainName(captain);
@@ -163,26 +164,34 @@ export class Faction {
     this.captainNames.add(captain.name);
   }
 
+  /** A freshly generated Sailor with a full name/gender from a uniformly randomly chosen nationality and a plausible birth date -- a Ship's crew (see crewTransport). Nickname stays null. */
+  private randomShipSailor(): Sailor {
+    const nationality = randomNationality(globalNameRng);
+    const { name, gender } = randomPersonName(globalNameRng, NATIONALITY_POOLS[nationality].names);
+    const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
+    return new Sailor({ name, gender, dateOfBirth });
+  }
+
+  /** A Sailor with the old placeholder "${transport.name} Sailor N" name -- every non-Ship Transport type's crew (the nickname/hiring/speed mechanic in captain.ts is Ship-specific, so these keep the plain placeholder rather than a generated name). Still needs a gender/birth date to satisfy Person's fields, so those are still rolled. */
+  private placeholderSailor(transport: Transport, seatIndex: number): Sailor {
+    const gender = randomGender(globalNameRng);
+    const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
+    return new Sailor({ name: `${transport.name} Sailor ${seatIndex + 2}`, gender, dateOfBirth });
+  }
+
   /**
    * Fills a Transport's `.crew` (the captain plus Sailors for any extra
    * crewRequirement seats) -- shared by the constructor's initial fleet and
-   * addTransport's single-recruit path. A Ship's Sailors draw a sailor
-   * nickname (see sailorNicknames.ts), deduped within this one ship's crew
-   * only; every other Transport type keeps the placeholder
-   * "${transport.name} Sailor N" name, since the crew-nickname/hiring/speed
-   * mechanic (see Captain.act) is Ship-specific.
+   * addTransport's single-recruit path.
    */
   private crewTransport(transport: Transport, captain: Captain): void {
     transport.crew = [captain];
     const extraSeats = Math.max(0, transport.crewRequirement - 1);
     const isShip = transport instanceof Ship;
-    const usedNicknames = new Set<string>();
     for (let i = 0; i < extraSeats; i++) {
-      const name = isShip
-        ? randomSailorNickname(globalNameRng, usedNicknames)
-        : `${transport.name} Sailor ${i + 2}`;
-      usedNicknames.add(name);
-      transport.crew.push(new Sailor(name, transport));
+      const sailor = isShip ? this.randomShipSailor() : this.placeholderSailor(transport, i);
+      sailor.boardTransport(transport);
+      transport.crew.push(sailor);
     }
   }
 
@@ -195,8 +204,8 @@ export class Faction {
    * balance otherwise. Returns `captain` for convenience.
    */
   addTransport(transport: Transport, captain: Captain, homeLocation: string, startingCash: number = 0.0): Captain {
-    captain.transport = transport;
-    captain.location = homeLocation;
+    transport.arriveAt(getLocation(homeLocation)!);
+    captain.boardTransport(transport);
     this.captains.push(captain);
     this.dedupeTransportName(transport);
     this.dedupeCaptainName(captain);
@@ -232,7 +241,7 @@ export class Faction {
       // the Company (see Captain.executeContractDelivery) -- the Company only
       // fronts fuel -- so it's not a Company asset and is excluded here.
       if (t.cargo !== null && t.cargo.contract === null) {
-        const markLocation = t.status === "AtLocation" ? t.location : t.cargo.destination;
+        const markLocation = t.status === "AtLocation" ? t.locationName : t.cargo.destination;
         const market = sellMarkets.get(marketKey(markLocation, t.cargo.commodity));
         const unitValue = market !== undefined ? market.price : t.cargo.unitCost;
         total += unitValue * t.cargo.quantity;
@@ -492,7 +501,7 @@ export class Company extends ContractFulfiller {
       }
       const readyCaptain = idle.find((c) => {
         if (assigned.has(c)) return false;
-        const market = buyMarkets.get(marketKey(c.location, contract.commodity));
+        const market = buyMarkets.get(marketKey(c.locationName, contract.commodity));
         return market !== undefined && market.isAvailable;
       });
       if (readyCaptain !== undefined) {
@@ -524,10 +533,10 @@ export class Company extends ContractFulfiller {
         for (const market of buyMarkets.values()) {
           if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
           if (closedLocations.has(market.locationName)) continue;
-          const path = findShortestPath(captain.location, market.locationName, (r) => captain.transport!.canUseRoute(r));
+          const path = findShortestPath(captain.locationName, market.locationName, (r) => captain.transport!.canUseRoute(r));
           if (path === null) continue;
           const deliverable = Math.min(captain.transport!.cargoCapacity, contract.quantity, market.availableQuantity);
-          const dist = distanceBetween(captain.location, market.locationName);
+          const dist = distanceBetween(captain.locationName, market.locationName);
           const better =
             best === null ||
             deliverable > best.deliverable ||
@@ -589,11 +598,11 @@ export class Company extends ContractFulfiller {
       }
       for (const captain of idle) {
         if (assigned.has(captain)) continue;
-        const readyMarket = buyMarkets.get(marketKey(captain.location, contract.commodity));
+        const readyMarket = buyMarkets.get(marketKey(captain.locationName, contract.commodity));
         let producer: string | null;
         let ready = false;
-        if (readyMarket !== undefined && readyMarket.isAvailable && !closedLocations.has(captain.location)) {
-          producer = captain.location;
+        if (readyMarket !== undefined && readyMarket.isAvailable && !closedLocations.has(captain.locationName)) {
+          producer = captain.locationName;
           ready = true;
         } else {
           producer = this.bestProducer(captain, contract, buyMarkets, closedLocations);
@@ -645,10 +654,10 @@ export class Company extends ContractFulfiller {
     for (const market of buyMarkets.values()) {
       if (market.commodityName !== contract.commodity || !market.isAvailable) continue;
       if (closedLocations.has(market.locationName)) continue;
-      const path = findShortestPath(captain.location, market.locationName, (r) => captain.transport!.canUseRoute(r));
+      const path = findShortestPath(captain.locationName, market.locationName, (r) => captain.transport!.canUseRoute(r));
       if (path === null) continue;
       const deliverable = Math.min(captain.transport!.cargoCapacity, contract.quantity, market.availableQuantity);
-      const dist = distanceBetween(captain.location, market.locationName);
+      const dist = distanceBetween(captain.locationName, market.locationName);
       const better =
         best === null ||
         deliverable > best.deliverable ||
@@ -771,7 +780,7 @@ export class PirateBrigade extends Faction {
     const counts = new Map<string, number>();
     for (const company of this.targets) {
       for (const captain of company.captains) {
-        const loc = captain.status === "AtLocation" ? captain.location : captain.destination;
+        const loc = captain.status === "AtLocation" ? captain.locationName : captain.destination;
         if (loc === null) continue;
         counts.set(loc, (counts.get(loc) ?? 0) + 1);
       }
@@ -783,7 +792,7 @@ export class PirateBrigade extends Faction {
   private pirateShipCountsByLocation(): Map<string, number> {
     const counts = new Map<string, number>();
     for (const captain of this.captains) {
-      const loc = captain.status === "AtLocation" ? captain.location : captain.destination;
+      const loc = captain.status === "AtLocation" ? captain.locationName : captain.destination;
       if (loc === null) continue;
       counts.set(loc, (counts.get(loc) ?? 0) + 1);
     }
@@ -793,7 +802,7 @@ export class PirateBrigade extends Faction {
   private policePresentAt(location: string): boolean {
     for (const policeFleet of this.policeFleets) {
       for (const captain of policeFleet.captains) {
-        if (captain.status === "AtLocation" && captain.location === location) return true;
+        if (captain.status === "AtLocation" && captain.locationName === location) return true;
       }
     }
     return false;
@@ -804,7 +813,7 @@ export class PirateBrigade extends Faction {
     return (
       pirateCaptain.groundedDaysRemaining === 0 &&
       pirateCaptain.carousing <= this.maxCarousingToAttack &&
-      !this.policePresentAt(pirateCaptain.location)
+      !this.policePresentAt(pirateCaptain.locationName)
     );
   }
 
@@ -823,7 +832,7 @@ export class PirateBrigade extends Faction {
     for (const company of this.targets) {
       for (const captain of company.captains) {
         if (this.victimsHitToday.has(captain)) continue;
-        if (captain.location === pirateCaptain.location) return captain;
+        if (captain.locationName === pirateCaptain.locationName) return captain;
       }
     }
     return null;
@@ -844,7 +853,7 @@ export class PirateBrigade extends Faction {
     if (this.victimsHitToday.has(victimCaptain)) return;
     for (const pirateCaptain of this.captains) {
       if (this.attackersUsedToday.has(pirateCaptain)) continue;
-      if (pirateCaptain.location !== victimCaptain.location) continue;
+      if (pirateCaptain.locationName !== victimCaptain.locationName) continue;
       if (!this.isEligibleAttacker(pirateCaptain)) continue;
       this.attack(day, pirateCaptain, victimCaptain, sellMarkets);
       this.attackersUsedToday.add(pirateCaptain);
@@ -876,9 +885,9 @@ export class PirateBrigade extends Faction {
     let fencedProceeds = 0.0;
     if (victimCaptain.cargo !== null) {
       const cargo = victimCaptain.cargo;
-      const market = sellMarkets.get(marketKey(pirateCaptain.location, cargo.commodity));
+      const market = sellMarkets.get(marketKey(pirateCaptain.locationName, cargo.commodity));
       const unitValue = market !== undefined ? market.price : cargo.unitCost;
-      const location = getLocation(pirateCaptain.location);
+      const location = getLocation(pirateCaptain.locationName);
       const fenceFraction = location !== undefined ? location.fenceFraction : 0.5;
       seizedCommodity = cargo.commodity;
       seizedQuantity = cargo.quantity;
@@ -925,7 +934,7 @@ export class PirateBrigade extends Faction {
       day,
       action: "ATTACK",
       commodity: seizedCommodity,
-      location: pirateCaptain.location,
+      location: pirateCaptain.locationName,
       destination: victimCaptain.name,
       quantity: round2(seizedQuantity),
       price: fencePrice,
@@ -943,7 +952,7 @@ export class PirateBrigade extends Faction {
     }
     victimCaptain.agentEventLog.push({
       day,
-      location: victimCaptain.location,
+      location: victimCaptain.locationName,
       name: `Pirate attack by ${pirateCaptain.name} (${this.name})`,
       kind: "cash_loss",
       detail,
@@ -1015,11 +1024,11 @@ export class PirateBrigade extends Faction {
         .sort((a, b) => b.deficit - a.deficit);
 
       for (const { loc } of ranked) {
-        if (loc === captain.location || closedLocations.has(loc)) continue;
-        if (!getRoutes(captain.location, loc).some((r) => captain.transport!.canUseRoute(r))) continue;
+        if (loc === captain.locationName || closedLocations.has(loc)) continue;
+        if (!getRoutes(captain.locationName, loc).some((r) => captain.transport!.canUseRoute(r))) continue;
         directives.set(captain, { action: "REPOSITION", destination: loc });
         pirateCounts.set(loc, (pirateCounts.get(loc) ?? 0) + 1);
-        pirateCounts.set(captain.location, Math.max(0, (pirateCounts.get(captain.location) ?? 0) - 1));
+        pirateCounts.set(captain.locationName, Math.max(0, (pirateCounts.get(captain.locationName) ?? 0) - 1));
         break;
       }
     }
@@ -1058,9 +1067,9 @@ export class PoliceFleet extends Faction {
   ): string | null {
     const candidates = [...allLocations].filter(
       (loc) =>
-        loc !== captain.location &&
+        loc !== captain.locationName &&
         !closedLocations.has(loc) &&
-        getRoutes(captain.location, loc).some((r) => captain.transport!.canUseRoute(r)),
+        getRoutes(captain.locationName, loc).some((r) => captain.transport!.canUseRoute(r)),
     );
     if (candidates.length === 0) return null;
     return randChoice(candidates);

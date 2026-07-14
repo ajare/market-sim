@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { Location, type TerminalType } from "../location";
-import { setGeography } from "../worldData";
+import { setGeography, getLocation } from "../worldData";
 import { PoliticalEntity } from "../politicalEntity";
 import { Company, SoloTrader } from "../faction";
 import { Captain } from "../captain";
@@ -20,6 +20,13 @@ function makeLocation(name: string, terminalTypes: TerminalType[]): Location {
   });
 }
 
+/** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
+function makeCaptain(name: string, homeLocationName: string): Captain {
+  return new Captain({
+    name, gender: "Male", dateOfBirth: new Date("1980-01-01"), homeLocation: getLocation(homeLocationName)!,
+  });
+}
+
 describe("Company home Location", () => {
   beforeEach(() => {
     const port = makeLocation("Alpha Port", ["Port"]);
@@ -29,14 +36,14 @@ describe("Company home Location", () => {
 
   it("constructs successfully and reports homeLocation when it supports the fleet", () => {
     const ship = new Ship({ name: "Victory", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Alpha Port");
+    const captain = makeCaptain("Cap", "Alpha Port");
     const company = new Company("Acme", [[ship, captain, "Alpha Port"]], 0, "Alpha Port");
     expect(company.homeLocation).toBe("Alpha Port");
   });
 
   it("throws at construction when homeLocation lacks a TerminalType the initial fleet needs", () => {
     const ship = new Ship({ name: "Victory", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Beta Inland");
+    const captain = makeCaptain("Cap", "Beta Inland");
     expect(() => new Company("Acme", [[ship, captain, "Beta Inland"]], 0, "Beta Inland")).toThrow();
   });
 
@@ -47,16 +54,16 @@ describe("Company home Location", () => {
   it("throws when addTransport adds a Transport incompatible with the existing home Location", () => {
     const company = new Company("Acme", [], 0, "Beta Inland"); // Wagon-yard-only -- no Ship allowed
     const ship = new Ship({ name: "Victory", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Beta Inland");
+    const captain = makeCaptain("Cap", "Beta Inland");
     expect(() => company.addTransport(ship, captain, "Beta Inland")).toThrow();
   });
 
   it("addTransport places the new Captain at the Company's home Location, ignoring the passed-in location", () => {
     const company = new Company("Acme", [], 0, "Alpha Port");
     const ship = new Ship({ name: "Victory", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Beta Inland"); // deliberately wrong
+    const captain = makeCaptain("Cap", "Beta Inland"); // deliberately wrong
     company.addTransport(ship, captain, "Beta Inland");
-    expect(captain.location).toBe("Alpha Port");
+    expect(captain.locationName).toBe("Alpha Port");
   });
 
   it("SoloTrader always reports homeLocation null and never applies the compatibility check", () => {
@@ -64,7 +71,7 @@ describe("Company home Location", () => {
     // needs "Wagon yard" -- SoloTraders have no home Location, so nothing
     // validates this.
     const wagonTrain = new WagonTrain({ name: "Wagon" });
-    const captain = new Captain("Cap", "Alpha Port");
+    const captain = makeCaptain("Cap", "Alpha Port");
     const solo = new SoloTrader("Solo", [[wagonTrain, captain, "Alpha Port"]], 0);
     expect(solo.homeLocation).toBeNull();
   });

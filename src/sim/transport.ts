@@ -5,7 +5,8 @@
  * Ported from sim/transport.py.
  */
 import type { Route, RouteType } from "./routes";
-import type { Crew } from "./crew";
+import type { Sailor } from "./sailor";
+import type { Location } from "./location";
 
 export type TransportStatus = "AtLocation" | "InTransit" | "Inactive";
 
@@ -34,7 +35,20 @@ export class Transport {
   /** Live fuel gauge; null means this Transport doesn't track fuel and never needs refueling. */
   currentFuel: number | null;
   crewRequirement: number;
-  crew: Crew[] = [];
+  crew: Sailor[] = [];
+  /**
+   * Where this Transport currently is -- the settled Location once docked,
+   * or the last node it passed through mid-multi-hop-transit (kept live at
+   * every intermediate stop, not just on final arrival -- see arriveAt).
+   * Every crewing Person's own `location` is null while aboard (see
+   * Person.boardTransport), so this is what Person.currentLocation() falls
+   * back to for anyone crewing this Transport. Null only before this
+   * Transport has ever been placed anywhere (a freshly constructed, not yet
+   * homed Transport).
+   */
+  location: Location | null = null;
+  /** `location`'s name, kept in sync by arriveAt -- a plain string for the many call sites (pathfinding, market lookups) that key off a location name rather than the object itself. */
+  currentNode: string | null = null;
 
   constructor(init: TransportInit = {}) {
     this.name = init.name ?? "Generic Transport";
@@ -47,6 +61,12 @@ export class Transport {
     this.status = init.status ?? "AtLocation";
     this.currentFuel = init.currentFuel ?? null;
     this.crewRequirement = init.crewRequirement ?? 1;
+  }
+
+  /** Marks this Transport as currently at/passing through `location` -- keeps `location` (object) and `currentNode` (its name) in sync in one place, called on initial homing and every arrival (including intermediate multi-hop stops). */
+  arriveAt(location: Location): void {
+    this.location = location;
+    this.currentNode = location.name;
   }
 
   /** null (the default) means unrestricted -- any RouteType is usable. */
@@ -73,7 +93,7 @@ export class Transport {
    * open; for a Ship, the next time it's docked at a Port,
    * Captain.hireCrewIfPossible tops it back up with a freshly hired Sailor.
    */
-  removeCrewMember(member: Crew): void {
+  removeCrewMember(member: Sailor): void {
     const idx = this.crew.indexOf(member);
     if (idx !== -1) this.crew.splice(idx, 1);
   }

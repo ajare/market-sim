@@ -1,12 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { Company } from "../faction";
 import { Captain } from "../captain";
 import { Ship } from "../transport";
+import { Location } from "../location";
+import { setGeography, getLocation } from "../worldData";
+
+beforeAll(() => {
+  setGeography(
+    [new Location({
+      name: "Testville", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    })],
+    { Testville: [0, 0] },
+  );
+});
+
+/** A Captain at "Testville" -- gender/birth date are test-irrelevant fixed values. */
+function makeCaptain(name: string): Captain {
+  return new Captain({
+    name, gender: "Male", dateOfBirth: new Date("1980-01-01"), homeLocation: getLocation("Testville")!,
+  });
+}
 
 function makeCrew(names: string[]): Array<[Ship, Captain, string]> {
   return names.map((name) => [
     new Ship({ name, crewRequirement: 1 }),
-    new Captain(`Captain ${name}`, "Testville"),
+    makeCaptain(`Captain ${name}`),
     "Testville",
   ]);
 }
@@ -22,7 +41,7 @@ describe("Faction ship-name deduplication", () => {
   it("disambiguates a Transport added later via addTransport against the existing fleet", () => {
     const company = new Company("Acme Traders", makeCrew(["Victory"]), 0);
     const ship = new Ship({ name: "Victory", crewRequirement: 1 });
-    const captain = new Captain("Captain New", "Testville");
+    const captain = makeCaptain("Captain New");
     company.addTransport(ship, captain, "Testville");
     const names = company.captains.map((c) => c.transport!.name);
     expect(new Set(names).size).toBe(names.length);
@@ -39,7 +58,7 @@ describe("Faction ship-name deduplication", () => {
 function makeCrewWithCaptains(names: string[]): Array<[Ship, Captain, string]> {
   return names.map((name, i) => [
     new Ship({ name: `Ship ${i}`, crewRequirement: 1 }),
-    new Captain(name, "Testville"),
+    makeCaptain(name),
     "Testville",
   ]);
 }
@@ -67,7 +86,7 @@ describe("Faction captain-name deduplication", () => {
   it("disambiguates a Captain added later via addTransport against the existing fleet", () => {
     const company = new Company("Acme Traders", makeCrewWithCaptains(["John Smith"]), 0);
     const ship = new Ship({ name: "New Ship", crewRequirement: 1 });
-    const captain = new Captain("John Smith", "Testville");
+    const captain = makeCaptain("John Smith");
     company.addTransport(ship, captain, "Testville");
     expect(company.captains.map((c) => c.name)).toEqual(["John Smith", "John A. Smith"]);
   });

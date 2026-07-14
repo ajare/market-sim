@@ -12,7 +12,7 @@ import { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
 import { Ship } from "./transport";
 import { Captain, type Directive } from "./captain";
-import { ENGLISH_NAMES, SPANISH_NAMES, randomName, type NameRng } from "./names";
+import { ENGLISH_NAMES, SPANISH_NAMES, randomPersonName, type Gender, type NamePool, type NameRng } from "./names";
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { randomLocationName } from "./locationNames";
 import { NATIONALITY_POOLS, randomNationality } from "./nationality";
@@ -21,17 +21,27 @@ import { locationSupportsTransport } from "./companyHome";
 import type { PoliticalEntity } from "./politicalEntity";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randChoice, randInt, randRandom, randShuffle, seedSimRandom, randSample, randUniform } from "./simRandom";
+import { randomBirthDate } from "./person";
+import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 import {
   LOCATIONS, LOCATION_COORDINATES, COMMODITIES, setGeography, getLocation, getDistanceConfig, FUEL_BASE_PRICE,
+  setWorldStartDate,
 } from "./worldData";
 import { Route, ROUTES, setRoutes, addRouteToNetwork, routeKey } from "./routes";
 import {
   planSeaRoutes, seaRoutesBlockedBy, DEFAULT_START_DATE, type RoutePlannerLocation, type RoutePlannerRoute,
 } from "@market-sim/shared";
 
-/** Adapts the global sim RNG to the NameRng surface randomName needs, so pirate/police captains draw names off the same live stream as the rest of the simulation. */
+/** Adapts the global sim RNG to the NameRng surface randomPersonName needs, so pirate/police captains draw names off the same live stream as the rest of the simulation. */
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
+
+/** A freshly rolled name/gender (from `pool`) plus a plausible birth date -- the Person fields every new Captain constructed directly in this file (pirate/police fleets, addPirateShip/addPoliceShip, addLocation's fleet top-up) needs alongside its homeLocation. */
+function randomCaptainPersonFields(pool: NamePool): { name: string; gender: Gender; dateOfBirth: Date } {
+  const { name, gender } = randomPersonName(globalNameRng, pool);
+  const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
+  return { name, gender, dateOfBirth };
+}
 import { round2 } from "./utils";
 
 // Locations must fall within this range. Calibrated via seed-averaged
@@ -185,6 +195,7 @@ export class World {
     const localEventProbability = init.localEventProbability ?? 0.008;
     this.localEventProbability = localEventProbability;
     this.startDate = new Date(init.startDate ?? DEFAULT_START_DATE);
+    setWorldStartDate(this.startDate);
 
     this.factions = init.factions ? [...init.factions] : [];
 
@@ -197,11 +208,10 @@ export class World {
     if (numPirateShips > 0) {
       const pirateCrew: Array<[Ship, Captain, string]> = [];
       for (let i = 0; i < numPirateShips; i++) {
-        const homeLocation = randChoice(init.locations).name;
+        const homeLocation = randChoice(init.locations);
         const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-        const captainName = randomName(globalNameRng, SPANISH_NAMES);
-        const captain = new Captain(captainName, homeLocation);
-        pirateCrew.push([ship, captain, homeLocation]);
+        const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES), homeLocation });
+        pirateCrew.push([ship, captain, homeLocation.name]);
       }
       this.pirateBrigade = new PirateBrigade(
         "Pirate Brigade",
@@ -218,11 +228,10 @@ export class World {
     if (numPoliceShips > 0) {
       const policeCrew: Array<[Ship, Captain, string]> = [];
       for (let i = 0; i < numPoliceShips; i++) {
-        const homeLocation = randChoice(init.locations).name;
+        const homeLocation = randChoice(init.locations);
         const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-        const captainName = randomName(globalNameRng, ENGLISH_NAMES);
-        const captain = new Captain(captainName, homeLocation);
-        policeCrew.push([ship, captain, homeLocation]);
+        const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES), homeLocation });
+        policeCrew.push([ship, captain, homeLocation.name]);
       }
       this.policeFleet = new PoliceFleet(
         "Coast Guard",
@@ -276,10 +285,10 @@ export class World {
       this.factions.push(this.pirateBrigade);
       if (this.policeFleet !== null) this.policeFleet.targets.push(this.pirateBrigade);
     }
-    const homeLocation = randChoice(this.locations).name;
+    const homeLocationObj = randChoice(this.locations);
     const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-    const captain = new Captain(randomName(globalNameRng, SPANISH_NAMES), homeLocation);
-    this.pirateBrigade.addTransport(ship, captain, homeLocation, this.pirateShipStartingCash);
+    const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES), homeLocation: homeLocationObj });
+    this.pirateBrigade.addTransport(ship, captain, homeLocationObj.name, this.pirateShipStartingCash);
     this.captains.push(captain);
     return captain;
   }
@@ -307,10 +316,10 @@ export class World {
         if (faction instanceof PirateBrigade) faction.policeFleets.push(this.policeFleet);
       }
     }
-    const homeLocation = randChoice(this.locations).name;
+    const homeLocationObj = randChoice(this.locations);
     const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-    const captain = new Captain(randomName(globalNameRng, ENGLISH_NAMES), homeLocation);
-    this.policeFleet.addTransport(ship, captain, homeLocation);
+    const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES), homeLocation: homeLocationObj });
+    this.policeFleet.addTransport(ship, captain, homeLocationObj.name);
     this.captains.push(captain);
     return captain;
   }
@@ -451,7 +460,7 @@ export class World {
         const nationality = target.politicalEntity?.nationality ?? randomNationality(globalNameRng);
         const pools = NATIONALITY_POOLS[nationality];
         const ship = new Ship({ name: randomShipName(globalNameRng, pools.ships), crewRequirement: randInt(1, 5) });
-        const captain = new Captain(randomName(globalNameRng, pools.names), home);
+        const captain = new Captain({ ...randomCaptainPersonFields(pools.names), homeLocation: getLocation(home)! });
         target.addTransport(ship, captain, home, 0);
         this.captains.push(captain);
       }
@@ -607,7 +616,9 @@ export class World {
     if (this.pirateBrigade !== null) {
       for (const captain of this.pirateBrigade.captains) {
         if (captain.status !== "AtLocation") continue;
-        this.pirateCountsByLocation.set(captain.location, (this.pirateCountsByLocation.get(captain.location) ?? 0) + 1);
+        this.pirateCountsByLocation.set(
+          captain.locationName, (this.pirateCountsByLocation.get(captain.locationName) ?? 0) + 1,
+        );
       }
     }
 

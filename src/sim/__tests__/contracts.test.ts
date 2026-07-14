@@ -5,7 +5,7 @@ import {
 } from "../contracts";
 import { Commodity } from "../commodity";
 import { Location, type LocationInit } from "../location";
-import { COMMODITIES, setCommodities, setGeography } from "../worldData";
+import { COMMODITIES, setCommodities, setGeography, getLocation } from "../worldData";
 import { generateRoutes, setRoutes } from "../routes";
 import { Market, marketKey } from "../markets";
 import { Company, SoloTrader } from "../faction";
@@ -42,6 +42,24 @@ function makeLocation(overrides: Partial<LocationInit> = {}): Location {
     terminalTypes: new Set(["Port"]),
     ...overrides,
   });
+}
+
+/** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
+function makeCaptain(name: string, homeLocationName: string): Captain {
+  return new Captain({
+    name, gender: "Male", dateOfBirth: new Date("1980-01-01"), homeLocation: getLocation(homeLocationName)!,
+  });
+}
+
+/** Registers a plain "Testport" Port Location -- several tests below construct a Company/SoloTrader home-ported there without needing any other geography set up. */
+function registerTestport(): void {
+  setGeography(
+    [new Location({
+      name: "Testport", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    })],
+    { Testport: [0, 0] },
+  );
 }
 
 function makeContract(overrides: Partial<Contract> = {}): Contract {
@@ -215,8 +233,9 @@ describe("BulletinBoard.prune", () => {
 
 describe("ContractFulfiller.pruneFulfilled (exercised via Company.directFleet)", () => {
   it("drops an already-fulfilled contract from its own list on the next servicing pass", () => {
+    registerTestport();
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Testport");
+    const captain = makeCaptain("Cap", "Testport");
     const company = new Company("Acme", [[transport, captain, "Testport"]], 100_000);
     const fulfilledContract = makeContract({ fulfiller: company, fulfilled: true });
     company.contracts.push(fulfilledContract);
@@ -228,9 +247,10 @@ describe("ContractFulfiller.pruneFulfilled (exercised via Company.directFleet)",
 
 describe("Contract acceptance (location-funded design)", () => {
   it("a broke Company can still accept a contract -- goods affordability is no longer its problem", () => {
+    registerTestport();
     const homeLocation = "Testport";
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain = new Captain("Cap", homeLocation);
+    const captain = makeCaptain("Cap", homeLocation);
     const company = new Company("Broke Co", [[transport, captain, homeLocation]], 0);
     // "prioritise" accepts eagerly regardless of servicing viability -- this
     // test is specifically about that acceptance behaviour (see
@@ -271,7 +291,7 @@ describe("serviceContracts producer selection", () => {
     setRoutes(generateRoutes(locations, 12345, undefined));
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Home");
+    const captain = makeCaptain("Cap", "Home");
     const company = new Company("Acme", [[transport, captain, "Home"]], 100_000);
 
     const contract = makeContract({ location: "Dest", commodity: "Gold", quantity: 100, fulfiller: company });
@@ -313,7 +333,7 @@ describe("serviceContracts producer selection", () => {
     setRoutes(generateRoutes(locations, 12345, undefined));
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Home");
+    const captain = makeCaptain("Cap", "Home");
     const company = new Company("Acme", [[transport, captain, "Home"]], 100_000);
 
     const contract = makeContract({ location: "Dest", commodity: "Gold", quantity: 100, fulfiller: company });
@@ -357,7 +377,7 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
     setRoutes(generateRoutes(locations, 12345, undefined));
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Home");
+    const captain = makeCaptain("Cap", "Home");
     const company = new Company("Acme", [[transport, captain, "Home"]], 100_000);
 
     const buyMarkets = new Map([
@@ -412,8 +432,9 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
 
 describe("SoloTrader never accepts a Contract", () => {
   it("has no contractTypes, so it ignores every board posting regardless of profitability", () => {
+    registerTestport();
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain = new Captain("Cap", "Testport");
+    const captain = makeCaptain("Cap", "Testport");
     const solo = new SoloTrader("Loner", [[transport, captain, "Testport"]], 100_000);
     expect(solo.contractTypes).toHaveLength(0);
 

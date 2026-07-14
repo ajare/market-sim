@@ -59,10 +59,10 @@ function deriveDefaultThresholds(): { maxDistance: number; detourDistance: numbe
 function captainRouteNodes(captain: Captain): string[] {
   if (captain.transport === null || captain.destination === null) return [];
   const finalDestination = captain.cargo !== null ? captain.cargo.destination : captain.destination;
-  if (finalDestination === captain.location) return [];
-  const path = findShortestPath(captain.location, finalDestination, (r) => captain.transport!.canUseRoute(r));
-  if (path === null) return [captain.location, finalDestination];
-  return pathNodeSequence(captain.location, path);
+  if (finalDestination === captain.locationName) return [];
+  const path = findShortestPath(captain.locationName, finalDestination, (r) => captain.transport!.canUseRoute(r));
+  if (path === null) return [captain.locationName, finalDestination];
+  return pathNodeSequence(captain.locationName, path);
 }
 
 /**
@@ -352,8 +352,8 @@ export function NetworkView() {
     const captainsByLocation = new Map<string, Captain[]>();
     for (const captain of world.captains) {
       if (captain.transport === null) continue;
-      const list = captainsByLocation.get(captain.location);
-      if (list === undefined) captainsByLocation.set(captain.location, [captain]);
+      const list = captainsByLocation.get(captain.locationName);
+      if (list === undefined) captainsByLocation.set(captain.locationName, [captain]);
       else list.push(captain);
     }
 
@@ -565,14 +565,14 @@ export function NetworkView() {
       const inTransitGroups = new Map<string, Captain[]>();
       for (const captain of world!.captains) {
         if (captain.transport === null || captain.status !== "InTransit" || captain.destination === null) continue;
-        const key = [captain.location, captain.destination].sort().join("||");
+        const key = [captain.locationName, captain.destination].sort().join("||");
         const list = inTransitGroups.get(key);
         if (list === undefined) inTransitGroups.set(key, [captain]);
         else list.push(captain);
       }
       const shipSpacing = 6;
       for (const group of inTransitGroups.values()) {
-        const [ox, oy] = project(group[0].location);
+        const [ox, oy] = project(group[0].locationName);
         const [dx, dy] = project(group[0].destination!);
         const lineDx = dx - ox;
         const lineDy = dy - oy;
@@ -581,16 +581,16 @@ export function NetworkView() {
         const perpY = lineDx / lineLen;
         const n = group.length;
         group.forEach((captain, i) => {
-          const legRoute = getRoute(captain.location, captain.destination!);
+          const legRoute = getRoute(captain.locationName, captain.destination!);
           const totalDays = legRoute !== undefined
             ? routeTravelDays(legRoute, captain.transport!.speedUnitsPerDay)
-            : travelDaysBetween(captain.location, captain.destination!, captain.transport!.speedUnitsPerDay);
+            : travelDaysBetween(captain.locationName, captain.destination!, captain.transport!.speedUnitsPerDay);
           const fraction = totalDays > 0 ? Math.min(1, Math.max(0, (totalDays - captain.daysRemaining) / totalDays)) : 0;
 
           let baseX: number;
           let baseY: number;
           if (legRoute !== undefined) {
-            const curveFraction = legRoute.origin === captain.location ? fraction : 1 - fraction;
+            const curveFraction = legRoute.origin === captain.locationName ? fraction : 1 - fraction;
             [baseX, baseY] = projectPoint(legRoute.pointAtFraction(curveFraction));
           } else {
             // No single Route connects location to destination -- a
@@ -598,12 +598,12 @@ export function NetworkView() {
             // actual shortest path's concatenated curves instead of a
             // straight line cutting across whatever's in between.
             const multiHopPath = findShortestPath(
-              captain.location, captain.destination!, (r) => captain.transport!.canUseRoute(r),
+              captain.locationName, captain.destination!, (r) => captain.transport!.canUseRoute(r),
             );
             if (multiHopPath !== null && multiHopPath.length > 0) {
-              [baseX, baseY] = projectPoint(pointAlongPath(multiHopPath, captain.location, fraction));
+              [baseX, baseY] = projectPoint(pointAlongPath(multiHopPath, captain.locationName, fraction));
             } else {
-              const [cox, coy] = project(captain.location);
+              const [cox, coy] = project(captain.locationName);
               const [cdx, cdy] = project(captain.destination!);
               baseX = cox + (cdx - cox) * fraction;
               baseY = coy + (cdy - coy) * fraction;
@@ -805,7 +805,7 @@ export function NetworkView() {
               {hover.captain.status}
               {hover.captain.status === "InTransit" && hover.captain.destination !== null
                 ? ` → ${hover.captain.destination}`
-                : ` @ ${hover.captain.location}`}
+                : ` @ ${hover.captain.locationName}`}
             </div>
             {hover.captain.cargo !== null && (
               <div>

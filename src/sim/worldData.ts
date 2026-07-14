@@ -17,6 +17,7 @@ import { round2 } from "./utils";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, worldDistance, type DistanceConfig,
 } from "./distance";
+import { DEFAULT_START_DATE } from "@market-sim/shared/world";
 
 export const FUEL_BASE_PRICE = 1.25;
 
@@ -44,6 +45,25 @@ export function setDistanceConfig(config: DistanceConfig): void {
 
 export function getDistanceConfig(): DistanceConfig {
   return DISTANCE_CONFIG;
+}
+
+/**
+ * The live World's day-1 calendar date -- module-level (like DISTANCE_CONFIG)
+ * because it's needed by captain.ts/faction.ts (a Sailor's birth date is
+ * generated relative to it), which can't import world.ts directly (world.ts
+ * imports them, and a reverse import would be circular). Set once by World's
+ * constructor via setWorldStartDate; defaults to the same fallback World
+ * itself uses so a birth date generated before any World exists (e.g. in a
+ * test building Sailors directly) still gets a sane reference point.
+ */
+let WORLD_START_DATE: Date = new Date(DEFAULT_START_DATE);
+
+export function setWorldStartDate(date: Date): void {
+  WORLD_START_DATE = date;
+}
+
+export function getWorldStartDate(): Date {
+  return WORLD_START_DATE;
 }
 
 export let COMMODITIES: Record<string, Commodity> = buildCommodities(

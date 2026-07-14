@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { buildWorld } from "../buildWorld";
 import { Location } from "../location";
 import { World } from "../world";
@@ -6,7 +6,7 @@ import { Company, SoloTrader, PirateBrigade } from "../faction";
 import { Captain } from "../captain";
 import { Ship, WagonTrain, SHIP_CLASSES } from "../transport";
 import { buildCommodities } from "../commodity";
-import { generateLocations, COMMODITIES } from "../worldData";
+import { generateLocations, COMMODITIES, setGeography, getLocation } from "../worldData";
 
 describe("buildWorld", () => {
   it("builds the default procedural world and runs 60 days without throwing", () => {
@@ -110,8 +110,17 @@ describe("World location-count validation", () => {
   });
 
   it("does not throw at the 20 and 50 boundaries", () => {
-    expect(() => new World({ locations: makeLocations(20) })).not.toThrow();
-    expect(() => new World({ locations: makeLocations(50) })).not.toThrow();
+    // Unlike the throws-first cases above, a valid location count actually
+    // proceeds far enough to build the default 3-ship PoliceFleet, which
+    // needs every location resolvable via getLocation -- so geography must
+    // be registered first here (the throws-first tests never get that far).
+    const locs20 = makeLocations(20);
+    setGeography(locs20, Object.fromEntries(locs20.map((l, i) => [l.name, [i, 0]])));
+    expect(() => new World({ locations: locs20 })).not.toThrow();
+
+    const locs50 = makeLocations(50);
+    setGeography(locs50, Object.fromEntries(locs50.map((l, i) => [l.name, [i, 0]])));
+    expect(() => new World({ locations: locs50 })).not.toThrow();
   });
 });
 
@@ -151,12 +160,33 @@ describe("commodity roster / per-location spread validation", () => {
 
 describe("Faction cash pooling", () => {
   const homeLocation = "Testport";
+  // The "buildWorld" describe block's tests overwrite LOCATIONS via their own
+  // setGeography calls, and describe() bodies (unlike beforeAll) run once at
+  // collection time, before any test actually executes -- so this must be a
+  // beforeAll, not a plain call here, to still be registered by the time
+  // these tests run (which may be after buildWorld's).
+  beforeAll(() => {
+    setGeography(
+      [new Location({
+        name: homeLocation, producedCommodities: {}, consumedCommodities: {},
+        stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+      })],
+      { [homeLocation]: [0, 0] },
+    );
+  });
+
+  /** A Captain at `homeLocation` -- gender/birth date are test-irrelevant fixed values. */
+  function makeCaptain(name: string): Captain {
+    return new Captain({
+      name, gender: "Male", dateOfBirth: new Date("1980-01-01"), homeLocation: getLocation(homeLocation)!,
+    });
+  }
 
   function makeCrew(): { crew: Array<[Ship, Captain, string]>; captain1: Captain; captain2: Captain } {
     const transport1 = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
     const transport2 = SHIP_CLASSES.Speedster.clone({ name: "T2", crewRequirement: 1 });
-    const captain1 = new Captain("Cap One", homeLocation);
-    const captain2 = new Captain("Cap Two", homeLocation);
+    const captain1 = makeCaptain("Cap One");
+    const captain2 = makeCaptain("Cap Two");
     return {
       crew: [
         [transport1, captain1, homeLocation],
@@ -195,7 +225,7 @@ describe("Faction cash pooling", () => {
 
   it("PirateBrigade rejects a non-Ship transport", () => {
     const train = new WagonTrain({ name: "Landlocked" });
-    const captain = new Captain("Rejected", homeLocation);
+    const captain = makeCaptain("Rejected");
     expect(
       () => new PirateBrigade("Doomed Brigade", [[train, captain, homeLocation]], []),
     ).toThrow();
@@ -203,7 +233,7 @@ describe("Faction cash pooling", () => {
 
   it("PirateBrigade accepts Ship transports", () => {
     const ship = new Ship({ name: "Raider" });
-    const captain = new Captain("Pirate Pete", homeLocation);
+    const captain = makeCaptain("Pirate Pete");
     expect(
       () => new PirateBrigade("Fine Brigade", [[ship, captain, homeLocation]], []),
     ).not.toThrow();

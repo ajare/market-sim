@@ -5,6 +5,14 @@ import { Company, SoloTrader } from "../faction";
 import { Captain, type CargoState } from "../captain";
 import { SHIP_CLASSES } from "../transport";
 import { seedSimRandom } from "../simRandom";
+import { setGeography, getLocation } from "../worldData";
+
+/** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
+function makeCaptain(name: string, homeLocationName: string): Captain {
+  return new Captain({
+    name, gender: "Male", dateOfBirth: new Date("1980-01-01"), homeLocation: getLocation(homeLocationName)!,
+  });
+}
 
 function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) {
   const location = new Location({
@@ -17,13 +25,16 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
     fuelPrice: 1.0,
     terminalTypes: new Set(["Port"]),
   });
+  setGeography([location], { "Blockaded Port": [0, 0] });
   const market = new Market("Wheat", "Blockaded Port", location, 20, 10, "sell");
   const sellMarkets = new Map([[marketKey("Blockaded Port", "Wheat"), market]]);
 
   const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner", crewRequirement: 1 });
-  const captain = new Captain("Cap", "Blockaded Port");
+  const captain = makeCaptain("Cap", "Blockaded Port");
   const faction = new FactionCls("Acme", [[transport, captain, "Blockaded Port"]], 100_000);
-  captain.location = "Blockaded Port";
+  // Transport.arriveAt (called by the Faction constructor above, from the
+  // FleetCrew tuple's homeLocation) already put the ship at "Blockaded Port"
+  // -- no separate location assignment needed (Captain no longer owns one).
   captain.status = "AtLocation";
 
   const cargo: CargoState = {
@@ -50,13 +61,19 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
 
 describe("Faction.canSmuggle", () => {
   it("is false by default and for a plain Company, true only for SoloTrader", () => {
+    const home = new Location({
+      name: "Home", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([home], { Home: [0, 0] });
+
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
-    const captain1 = new Captain("Cap1", "Home");
+    const captain1 = makeCaptain("Cap1", "Home");
     const company = new Company("Acme", [[transport, captain1, "Home"]], 0);
     expect(company.canSmuggle).toBe(false);
 
     const transport2 = SHIP_CLASSES.Speedster.clone({ name: "T2", crewRequirement: 1 });
-    const captain2 = new Captain("Cap2", "Home");
+    const captain2 = makeCaptain("Cap2", "Home");
     const solo = new SoloTrader("Loner", [[transport2, captain2, "Home"]], 0);
     expect(solo.canSmuggle).toBe(true);
   });

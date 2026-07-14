@@ -4,7 +4,6 @@ import { Market, marketKey } from "../markets";
 import { Company } from "../faction";
 import { Captain } from "../captain";
 import { Ship, SHIP_CLASSES } from "../transport";
-import { Sailor } from "../crew";
 import { setGeography, getLocation } from "../worldData";
 import { Route, addRouteToNetwork, setRoutes } from "../routes";
 import { buildWorld } from "../buildWorld";
@@ -43,10 +42,17 @@ function makeTradeWorld() {
   return { home, dest, buyMarkets, sellMarkets };
 }
 
+/** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
+function makeCaptain(name: string, homeLocationName: string): Captain {
+  return new Captain({
+    name, gender: "Male", dateOfBirth: new Date("1980-01-01"), homeLocation: getLocation(homeLocationName)!,
+  });
+}
+
 /** A Speedster (crewRequirement 4) crewed by Captain + Sailors, then optionally stripped down to the Captain alone. */
 function makeSpeedsterCompany(fullCrew: boolean): { transport: Ship; captain: Captain; company: Company } {
   const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
-  const captain = new Captain("Cap", "Home");
+  const captain = makeCaptain("Cap", "Home");
   const company = new Company("Acme", [[transport, captain, "Home"]], 1_000_000);
   if (!fullCrew) transport.crew = transport.crew.filter((member) => member === captain);
   return { transport, captain, company };
@@ -91,7 +97,7 @@ describe("upfront crew wages", () => {
 
     captain.act(1, buyMarkets, sellMarkets, ["Gold"], new Set());
     const cargo = captain.cargo!;
-    const dailyWagesSum = transport.crew.reduce((sum, member) => sum + member.dailyWages, 0);
+    const dailyWagesSum = transport.crew.reduce((sum, member) => sum + member.dailyWage, 0);
     const goodsCost = cargo.unitCost * cargo.quantity;
     const expectedCrewCost = dailyWagesSum * cargo.travelDays;
     expect(cargo.totalCost).toBeCloseTo(goodsCost + cargo.fuelCostTotal + transport.fixedShipmentCost + expectedCrewCost, 5);
@@ -105,7 +111,7 @@ describe("upfront crew wages", () => {
   it("won't depart at all if the upfront crew wages (plus goods/fuel) aren't affordable", () => {
     const { buyMarkets, sellMarkets } = makeTradeWorld();
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
-    const captain = new Captain("Cap", "Home");
+    const captain = makeCaptain("Cap", "Home");
     // Barely enough for goods + fuel, nowhere near enough for 4 days of a
     // full 4-person crew's wages on top.
     new Company("Acme", [[transport, captain, "Home"]], 50);
@@ -127,7 +133,7 @@ describe("hiring crew at a Port (not a Platform)", () => {
     setRoutes(new Map());
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
-    const captain = new Captain("Cap", "Dock");
+    const captain = makeCaptain("Cap", "Dock");
     new Company("Acme", [[transport, captain, "Dock"]], 100_000);
     transport.crew = transport.crew.filter((member) => member === captain);
     return { transport, captain };
@@ -137,7 +143,7 @@ describe("hiring crew at a Port (not a Platform)", () => {
     const { transport, captain } = makeDockedShip("Port");
     captain.act(1, new Map(), new Map(), [], new Set());
     expect(transport.crew.length).toBe(transport.crewRequirement);
-    const sailors = transport.crew.filter((member) => member instanceof Sailor);
+    const sailors = transport.crew.filter((member) => member.rank === "Able Seaman");
     expect(sailors).toHaveLength(3);
     // Distinct nicknames within this one ship's crew.
     expect(new Set(sailors.map((s) => s.name)).size).toBe(3);
@@ -151,12 +157,16 @@ describe("hiring crew at a Port (not a Platform)", () => {
 });
 
 describe("Sailor naming", () => {
-  it("gives a Ship's Sailors nicknames, not the old placeholder name", () => {
+  it("gives a Ship's Sailors a full generated name (not the old placeholder), a gender, and a null nickname", () => {
+    makeTradeWorld(); // registers "Home" via setGeography
     const { transport } = makeSpeedsterCompany(true);
-    const sailors = transport.crew.filter((member) => member instanceof Sailor);
+    const sailors = transport.crew.filter((member) => member.rank === "Able Seaman");
     expect(sailors).toHaveLength(3);
     for (const sailor of sailors) {
       expect(sailor.name).not.toMatch(/Sailor \d/);
+      expect(["Male", "Female"]).toContain(sailor.gender);
+      expect(sailor.nickname).toBeNull();
+      expect(sailor.dateOfBirth).toBeInstanceOf(Date);
     }
   });
 });
@@ -172,11 +182,11 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
     setRoutes(new Map());
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
-    const captain = new Captain("Cap", "Dock");
+    const captain = makeCaptain("Cap", "Dock");
     new Company("Acme", [[transport, captain, "Dock"]], 100_000);
     expect(transport.crew.length).toBe(4);
 
-    const sailor = transport.crew.find((member) => member instanceof Sailor)!;
+    const sailor = transport.crew.find((member) => member.rank === "Able Seaman")!;
     transport.removeCrewMember(sailor);
     expect(transport.crew.length).toBe(3);
     expect(transport.crew).not.toContain(sailor);
@@ -187,12 +197,22 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
   });
 
   it("is a no-op for a member that isn't (or is no longer) part of this Transport's crew", () => {
+    const nowhere = new Location({
+      name: "Nowhere", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    const elsewhere = new Location({
+      name: "Elsewhere", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([nowhere, elsewhere], { Nowhere: [0, 0], Elsewhere: [1, 1] });
+
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
-    const captain = new Captain("Cap", "Nowhere");
+    const captain = makeCaptain("Cap", "Nowhere");
     new Company("Acme", [[transport, captain, "Nowhere"]], 0);
     expect(transport.crew.length).toBe(4);
 
-    const strayCaptain = new Captain("Ghost", "Elsewhere");
+    const strayCaptain = makeCaptain("Ghost", "Elsewhere");
     expect(() => transport.removeCrewMember(strayCaptain)).not.toThrow();
     expect(transport.crew.length).toBe(4);
   });
@@ -210,7 +230,7 @@ describe("a Ship arriving under-crewed at a Port always hires before it can leav
 
     // A Sailor is lost mid-voyage (e.g. the Transports panel's Kill button) --
     // travel time already locked in at departure isn't affected.
-    const sailor = transport.crew.find((member) => member instanceof Sailor)!;
+    const sailor = transport.crew.find((member) => member.rank === "Able Seaman")!;
     transport.removeCrewMember(sailor);
     expect(transport.crew.length).toBe(3);
 
@@ -218,7 +238,7 @@ describe("a Ship arriving under-crewed at a Port always hires before it can leav
     for (let day = 2; day <= 1 + travelDays; day++) {
       captain.act(day, buyMarkets, sellMarkets, ["Gold"], new Set());
     }
-    expect(captain.location).toBe("Dest"); // arrived
+    expect(captain.locationName).toBe("Dest"); // arrived
     expect(captain.status).toBe("AtLocation");
     // Hiring runs on the arrival day itself (Dest is a Port) -- fully crewed
     // again the same day it docks, before any new departure is even
@@ -244,7 +264,7 @@ describe("crew refilling in the real default World (not a hand-built fixture)", 
     const visitedLocations = new Set<string>();
     for (let day = 1; day <= 365 && refilledOnDay === null; day++) {
       world.step();
-      visitedLocations.add(shipCaptain!.location);
+      visitedLocations.add(shipCaptain!.locationName);
       if (transport.crew.length === required) refilledOnDay = day;
     }
 
@@ -333,7 +353,7 @@ describe("crew refilling in an editor-authored (buildWorldFromJson) World", () =
     }
     expect(
       refilledOnDay,
-      `never refilled after 100 days; ended at ${shipCaptain.location} (status ${shipCaptain.status}); ` +
+      `never refilled after 100 days; ended at ${shipCaptain.locationName} (status ${shipCaptain.status}); ` +
         `crew: ${transport.crew.length}/${required}`,
     ).not.toBeNull();
   });

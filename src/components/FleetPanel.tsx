@@ -32,7 +32,7 @@ export function FleetPanel() {
               const netWorth = snapshot !== undefined ? snapshot.totalValue : captain.cash;
               const totalDays =
                 captain.destination !== null && captain.transport !== null
-                  ? travelDaysBetween(captain.currentNode, captain.destination, captain.transport.speedUnitsPerDay)
+                  ? travelDaysBetween(captain.locationName, captain.destination, captain.transport.speedUnitsPerDay)
                   : null;
               // Captain names aren't unique across the fleet (the procedural
               // world reuses first/last names), so key by index -- the fleet is
@@ -49,7 +49,7 @@ export function FleetPanel() {
                   <td>{captain.transport?.name ?? "-"}</td>
                   <td>{captain.company?.name ?? "(independent)"}</td>
                   <td>{captain.company?.politicalEntity?.name ?? "Independent"}</td>
-                  <td>{captain.location}</td>
+                  <td>{captain.locationName}</td>
                   <td>{captain.destination ?? "-"}</td>
                   <td>{totalDays !== null ? `${captain.daysRemaining}d of ${totalDays}d` : "-"}</td>
                   <td>{captain.status}</td>

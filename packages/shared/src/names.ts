@@ -126,3 +126,18 @@ export function randomName(rng: NameRng, pool: NamePool): string {
   const firstNames = rng.random() < MALE_FIRST_NAME_FRACTION ? pool.maleFirstNames : pool.femaleFirstNames;
   return `${rng.choice(firstNames)} ${rng.choice(pool.lastNames)}`;
 }
+
+/** A Person's gender, as rolled by randomGender/randomPersonName -- the only two values name-pool generation distinguishes (see MALE_FIRST_NAME_FRACTION). */
+export type Gender = "Male" | "Female";
+
+/** The same roll randomName makes internally, exposed on its own for callers (e.g. sim/person.ts) that need to know which way it went, not just the resulting first-name pool. */
+export function randomGender(rng: NameRng): Gender {
+  return rng.random() < MALE_FIRST_NAME_FRACTION ? "Male" : "Female";
+}
+
+/** Like randomName, but also returns which gender was rolled -- for callers building a Person that needs both (see sim/person.ts's Gender field). */
+export function randomPersonName(rng: NameRng, pool: NamePool): { name: string; gender: Gender } {
+  const gender = randomGender(rng);
+  const firstNames = gender === "Male" ? pool.maleFirstNames : pool.femaleFirstNames;
+  return { name: `${rng.choice(firstNames)} ${rng.choice(pool.lastNames)}`, gender };
+}

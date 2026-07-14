@@ -19,18 +19,22 @@ import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, SHIP_CLASSES, 
 import { Captain } from "./captain";
 import { Company, SoloTrader, type Faction, type FleetCrew } from "./faction";
 import { World } from "./world";
-import { setCommodities, setGeography, setDistanceConfig, getLocation, COORDINATE_SPREAD } from "./worldData";
+import {
+  setCommodities, setGeography, setDistanceConfig, getLocation, COORDINATE_SPREAD, setWorldStartDate,
+} from "./worldData";
 import { locationSupportsFleet, locationSupportsTransport, defaultCompanyHomeLocation } from "./companyHome";
 import { setRoutes } from "./routes";
-import { DEFAULT_GLOBE_LON_SPAN, type DistanceConfig, type DistanceMode } from "./distance";
+import { DEFAULT_GLOBE_LON_SPAN, DEFAULT_START_DATE, type DistanceConfig, type DistanceMode } from "@market-sim/shared";
 import { Rng } from "./rng";
-import { randomName } from "./names";
+import { randomGender, randomPersonName } from "./names";
 import { randomShipName } from "./shipNames";
 import { randomCompanyName } from "./companyNames";
 import {
   NATIONALITY_POOLS, randomNationality, isNationality, DEFAULT_NATIONALITY, type Nationality,
 } from "./nationality";
 import { DEFAULT_TARGET_SHIPS_PER_LOCATION, type BuiltWorld } from "./buildWorld";
+import { randomBirthDate } from "./person";
+import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 
 /**
  * Optional fleet overrides for buildWorldFromJson -- all default to today's
@@ -227,6 +231,12 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   }
   const world = raw as JsonWorld;
 
+  // Set before the fleet is generated below (not just later inside `new
+  // World(...)`) -- every Sailor/Captain's birth date is drawn relative to
+  // this (see randomBirthDate), so it needs to be live before any of them
+  // are constructed, not just by the time World's own constructor runs.
+  setWorldStartDate(new Date(world.startDate ?? DEFAULT_START_DATE));
+
   const jsonCommodities = asArray<JsonCommodity>(world.commodities);
   const jsonLocations = asArray<JsonLocation>(world.locations);
   const jsonPoliticalEntities = asArray<JsonPoliticalEntity>(world.politicalEntities);
@@ -361,9 +371,16 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     // own fixed value (see SHIP_CLASSES in transport.ts).
     const transport = shipClass.clone({ name: randomShipName(fleetRng, pools.ships) });
     transport.speedUnitsPerDay *= transportSpeedScale;
-    const captain = new Captain(
-      randomName(fleetRng, pools.names), homeLocation, null, 1.25, 0.012 + 0.002 * (genShipIndex % 5),
-    );
+    const { name, gender } = randomPersonName(fleetRng, pools.names);
+    const dateOfBirth = randomBirthDate(() => fleetRng.random(), SAILOR_MIN_AGE, SAILOR_MAX_AGE);
+    const captain = new Captain({
+      name,
+      gender,
+      dateOfBirth,
+      homeLocation: getLocation(homeLocation)!,
+      repositionReturnMultiplier: 1.25,
+      minDailyReturnPct: 0.012 + 0.002 * (genShipIndex % 5),
+    });
     genShipIndex += 1;
     return [transport, captain, homeLocation];
   };
@@ -381,6 +398,15 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   // synthesized Ship" (every SHIP_CLASSES entry is a Ship, so one instance's
   // allowedRouteTypes() speaks for all of them) -- never added to a fleet.
   const probeShip = new Ship({ name: "_ProbeShip" });
+
+  /** An authored Captain: the JSON already supplies `captainName`, so only gender/birth date need rolling (no name pool to draw from -- the editor doesn't model nationality per-Captain). */
+  const makeAuthoredCaptain = (captainName: string, homeLocation: string): Captain =>
+    new Captain({
+      name: captainName,
+      gender: randomGender(fleetRng),
+      dateOfBirth: randomBirthDate(() => fleetRng.random(), SAILOR_MIN_AGE, SAILOR_MAX_AGE),
+      homeLocation: getLocation(homeLocation)!,
+    });
 
   const soloFactions: SoloTrader[] = [];
   // The authored real Companies: their JSON-defined ships (kept in order),
@@ -409,7 +435,9 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
       // Location, no bulking-up-into-a-Company later; its one ship starts
       // somewhere random and compatible.
       const homeLocation = randomCompatibleLocation(transports);
-      const crew: FleetCrew = [[transports[0], new Captain(company.fleet[0].captainName, homeLocation), homeLocation]];
+      const crew: FleetCrew = [
+        [transports[0], makeAuthoredCaptain(company.fleet[0].captainName, homeLocation), homeLocation],
+      ];
       const solo = new SoloTrader(company.name, crew, company.startingFunds);
       solo.politicalEntity = entity;
       soloFactions.push(solo);
@@ -423,7 +451,9 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
         ? authoredLocation.name
         : defaultCompanyHomeLocation(entity, transports);
 
-    const crew: FleetCrew = company.fleet.map((member, i) => [transports[i], new Captain(member.captainName, homeLocation), homeLocation]);
+    const crew: FleetCrew = company.fleet.map(
+      (member, i) => [transports[i], makeAuthoredCaptain(member.captainName, homeLocation), homeLocation],
+    );
     const nationality = entity !== null ? entity.nationality : randomNationality(fleetRng);
     pending.push({ name: company.name, startingFunds: company.startingFunds, entity, nationality, homeLocation, crew });
   }

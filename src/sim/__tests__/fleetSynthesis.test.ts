@@ -127,7 +127,7 @@ describe("fleet synthesis on JSON load", () => {
     const company = factions.find((f) => f.name === "Grand Compagnie") as Company;
     expect(company.homeLocation).toBe("Port 7");
     for (const captain of company.captains) {
-      expect(captain.location).toBe("Port 7");
+      expect(captain.locationName).toBe("Port 7");
     }
   });
 

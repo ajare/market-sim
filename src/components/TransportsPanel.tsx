@@ -1,6 +1,5 @@
 import { useSimStore } from "../state/useSimStore";
 import { Ship, crewSpeedFraction } from "../sim/transport";
-import { Sailor } from "../sim/crew";
 
 /** Ships only -- crew, hiring, and crew-fullness speed scaling are Ship-specific (see Captain.hireCrewIfPossible/crewSpeedFraction); every other Transport type has no crew composition worth listing here. */
 export function TransportsPanel() {
@@ -43,10 +42,13 @@ export function TransportsPanel() {
                       <tr key={j}>
                         <td>{member.name}</td>
                         <td>
-                          {/* The Captain isn't hired/rehired the way a Sailor
-                              is (see Faction.crewTransport/hireCrewIfPossible),
-                              so only Sailors get a Kill button. */}
-                          {member instanceof Sailor && (
+                          {/* The Captain isn't hired/rehired the way a plain
+                              Sailor is (see Faction.crewTransport/
+                              hireCrewIfPossible), so only Able Seamen get a
+                              Kill button -- Captain extends Sailor now, so
+                              `instanceof Sailor` alone would wrongly include
+                              it too; rank is the actual discriminator. */}
+                          {member.rank === "Able Seaman" && (
                             <button
                               type="button"
                               disabled={ship.status !== "InTransit"}
