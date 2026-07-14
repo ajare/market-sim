@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildWorldFromJson } from "../buildWorldFromJson";
 import { NATIONALITY_POOLS } from "../nationality";
+import { DEFAULT_NUM_PIRATE_SHIPS, DEFAULT_NUM_POLICE_SHIPS } from "../buildWorld";
 import type { Faction, Company } from "../faction";
 
 const FRENCH_SHIPS = new Set(NATIONALITY_POOLS.French.ships);
@@ -161,11 +162,17 @@ describe("fleet synthesis on JSON load", () => {
     expect(nationalitiesSeen.size).toBeGreaterThan(1);
   });
 
-  it("adds no pirates/police/fleet-density change by default, but honors the new options when given", () => {
-    const withoutOptions = buildWorldFromJson(world([]));
-    expect(withoutOptions.world.pirateBrigade).toBeNull();
-    expect(withoutOptions.world.policeFleet).toBeNull();
-    expect(ships(withoutOptions.factions)).toBe(REQUIRED);
+  it("adds pirates/police at buildWorld's calibrated defaults unless overridden, and honors explicit options/opting out", () => {
+    const withDefaults = buildWorldFromJson(world([]));
+    expect(withDefaults.world.pirateBrigade).not.toBeNull();
+    expect(withDefaults.world.pirateBrigade!.captains.length).toBe(DEFAULT_NUM_PIRATE_SHIPS);
+    expect(withDefaults.world.policeFleet).not.toBeNull();
+    expect(withDefaults.world.policeFleet!.captains.length).toBe(DEFAULT_NUM_POLICE_SHIPS);
+    expect(ships(withDefaults.factions)).toBe(REQUIRED);
+
+    const withoutPiratesOrPolice = buildWorldFromJson(world([]), { numPirateShips: 0, numPoliceShips: 0 });
+    expect(withoutPiratesOrPolice.world.pirateBrigade).toBeNull();
+    expect(withoutPiratesOrPolice.world.policeFleet).toBeNull();
 
     const withOptions = buildWorldFromJson(world([]), {
       numPirateShips: 4, pirateCashPerShip: 1000, numPoliceShips: 3, targetShipsPerLocation: 2,

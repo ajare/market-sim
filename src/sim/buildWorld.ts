@@ -147,11 +147,11 @@ export const DEFAULT_NUM_PIRATE_SHIPS = 20;
  * Starting cash given to each PirateBrigade ship (its own captain's private
  * balance -- PirateBrigade.poolsCash is false). Unlike a Company/SoloTrader,
  * a broke pirate captain can't even afford the fuel to reposition toward a
- * target (departEmptyTo bails if repositionFuelCost > cash) or the daily
- * carousing cost, so a $0 start (the old default before this constant was
- * added) left most of the fleet stranded at its home port for good stretches
- * of a run, only earning anything when a victim happened to wander in --
- * see the 365-day activity-report investigation this constant came out of.
+ * target (departEmptyTo bails if repositionFuelCost > cash), so a $0 start
+ * (the old default before this constant was added) left most of the fleet
+ * stranded at its home port for good stretches of a run, only earning
+ * anything when a victim happened to wander in -- see the 365-day
+ * activity-report investigation this constant came out of.
  */
 export const DEFAULT_PIRATE_CASH_PER_SHIP = 5_000.0;
 

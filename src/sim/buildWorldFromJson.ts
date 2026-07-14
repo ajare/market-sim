@@ -32,17 +32,21 @@ import { randomCompanyName } from "./companyNames";
 import {
   NATIONALITY_POOLS, randomNationality, isNationality, DEFAULT_NATIONALITY, type Nationality,
 } from "./nationality";
-import { DEFAULT_TARGET_SHIPS_PER_LOCATION, type BuiltWorld } from "./buildWorld";
+import {
+  DEFAULT_TARGET_SHIPS_PER_LOCATION, DEFAULT_NUM_PIRATE_SHIPS, DEFAULT_NUM_POLICE_SHIPS,
+  DEFAULT_PIRATE_CASH_PER_SHIP, type BuiltWorld,
+} from "./buildWorld";
 import { randomBirthDate } from "./person";
 import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 
 /**
- * Optional fleet overrides for buildWorldFromJson -- all default to today's
- * behavior (no pirates/police, the calibrated ships-per-location ratio) when
- * omitted, so the editor's own "paste world" flow is completely unaffected.
- * Added for tooling (see scripts/tune-world.ts) that needs a JSON-authored
- * World to run with a real pirate/police presence and/or a different fleet
- * density, without hand-editing the JSON itself.
+ * Optional fleet overrides for buildWorldFromJson -- all default to
+ * buildWorld's own calibrated values (pirates, police, ships-per-location
+ * ratio) when omitted, so a pasted World runs with the same economy-shaping
+ * fleet presence as the procedurally generated one. Pass 0 for
+ * numPirateShips/numPoliceShips for a pirate-/police-free World, or override
+ * any of these for tooling (see scripts/tune-world.ts) that needs a
+ * different fleet density without hand-editing the JSON itself.
  */
 export interface BuildWorldFromJsonOptions {
   /**
@@ -55,11 +59,11 @@ export interface BuildWorldFromJsonOptions {
    * simRandom stream's current state is), matching today's behavior.
    */
   seed?: number;
-  /** Ships for the single World-wide PirateBrigade -- forwarded to World's numPirateShips. Default 0 (the editor doesn't model pirates). */
+  /** Ships for the single World-wide PirateBrigade -- forwarded to World's numPirateShips. Default DEFAULT_NUM_PIRATE_SHIPS (the same calibrated count buildWorld itself uses) -- pass 0 to build a pirate-free World. */
   numPirateShips?: number;
-  /** Starting cash per PirateBrigade ship, only meaningful when numPirateShips > 0 -- forwarded to World's pirateStartingCash (as pirateCashPerShip * numPirateShips). Default 0. */
+  /** Starting cash per PirateBrigade ship, only meaningful when numPirateShips > 0 -- forwarded to World's pirateStartingCash (as pirateCashPerShip * numPirateShips). Default DEFAULT_PIRATE_CASH_PER_SHIP. */
   pirateCashPerShip?: number;
-  /** Ships for the Coast Guard PoliceFleet -- forwarded to World's numPoliceShips. Default 0 (the editor doesn't model police). */
+  /** Ships for the Coast Guard PoliceFleet -- forwarded to World's numPoliceShips. Default DEFAULT_NUM_POLICE_SHIPS -- pass 0 to build a police-free World. */
   numPoliceShips?: number;
   /** Overrides the ships-per-location ratio the fleet-synthesis step (see step 5b below) sizes the fleet against. Default DEFAULT_TARGET_SHIPS_PER_LOCATION (the calibrated default buildWorld itself uses). */
   targetShipsPerLocation?: number;
@@ -524,18 +528,22 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   }
   factions.push(...soloFactions, ...newSoloTraders);
 
-  // 6. Assemble the World. No pirates/police by default (the editor doesn't
-  // model them) -- overridable via options (see BuildWorldFromJsonOptions).
-  // Event probabilities are irrelevant since random events are disabled.
-  const numPirateShips = options.numPirateShips ?? 0;
+  // 6. Assemble the World. Pirates/police default to the same calibrated
+  // counts buildWorld itself uses (the editor doesn't author them, but a
+  // loaded World should still run with the same economy-shaping presence) --
+  // overridable via options (see BuildWorldFromJsonOptions), including down
+  // to 0 for a pirate-/police-free World. Event probabilities are irrelevant
+  // since random events are disabled.
+  const numPirateShips = options.numPirateShips ?? DEFAULT_NUM_PIRATE_SHIPS;
+  const pirateCashPerShip = options.pirateCashPerShip ?? DEFAULT_PIRATE_CASH_PER_SHIP;
   const builtWorld = new World({
     locations,
     factions,
     seed: options.seed,
     startDate: world.startDate,
     numPirateShips,
-    pirateStartingCash: (options.pirateCashPerShip ?? 0) * numPirateShips,
-    numPoliceShips: options.numPoliceShips ?? 0,
+    pirateStartingCash: pirateCashPerShip * numPirateShips,
+    numPoliceShips: options.numPoliceShips ?? DEFAULT_NUM_POLICE_SHIPS,
   });
 
   return { world: builtWorld, factions, politicalEntities };

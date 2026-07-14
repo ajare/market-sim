@@ -54,6 +54,13 @@ interface SimStore {
   addPoliceShip: () => void;
   removePoliceShip: () => void;
   /**
+   * Manual "Buy Ship" panel action -- see World.buyShipForCompany. Throws
+   * (propagated to the caller, which surfaces the message) if the Company
+   * can't afford the class, the class/Location is invalid, or there's no
+   * live World.
+   */
+  buyShip: (company: Company, locationName: string, shipClassName: string) => void;
+  /**
    * Adds a brand-new Location at (x, y) (world-unit coordinates) affiliated
    * with `politicalEntity` -- see World.addLocation. Returns null (no-op) if
    * there is no live World.
@@ -168,6 +175,13 @@ export const useSimStore = create<SimStore>((set, get) => ({
     const { world } = get();
     if (world === null) return;
     world.removePoliceShip();
+    set((s) => ({ version: s.version + 1 }));
+  },
+
+  buyShip: (company, locationName, shipClassName) => {
+    const { world } = get();
+    if (world === null) return;
+    world.buyShipForCompany(company, locationName, shipClassName);
     set((s) => ({ version: s.version + 1 }));
   },
 

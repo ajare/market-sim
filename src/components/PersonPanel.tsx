@@ -259,7 +259,8 @@ export function PersonPanel() {
                   </tr>
                   <tr>
                     <th>Status</th>
-                    <td>{captain.status}</td>
+                    {/* A benched (sank in port) or dead (sank at sea) Captain has no Transport left -- captain.status reads it unconditionally, so guard here rather than let a stale selection crash the render. */}
+                    <td>{captain.transport !== null ? captain.status : "Lost ship"}</td>
                   </tr>
                   <tr>
                     <th>Cash</th>
@@ -292,10 +293,6 @@ export function PersonPanel() {
                   <tr>
                     <th>Total repositions</th>
                     <td>{captain.totalRepositions}</td>
-                  </tr>
-                  <tr>
-                    <th>Carousing</th>
-                    <td>{captain.carousing.toFixed(1)}</td>
                   </tr>
                   <tr>
                     <th>Grounded days remaining</th>

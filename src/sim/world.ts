@@ -10,20 +10,22 @@
 import { type Event, MarketEvent, LocationClosure } from "./events";
 import { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
-import { Ship } from "./transport";
-import { Captain, type Directive } from "./captain";
+import { Ship, SHIP_CLASSES } from "./transport";
+import { Captain, isRepairDirective, type Directive } from "./captain";
 import { ENGLISH_NAMES, SPANISH_NAMES, randomPersonName, type Gender, type NamePool, type NameRng } from "./names";
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { randomLocationName } from "./locationNames";
 import { NATIONALITY_POOLS, randomNationality, type Nationality } from "./nationality";
-import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
-import { generateSailorPool } from "./sailorPool";
+import { Faction, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
+import { generateSailorPool, addToSailorPool, tickPoolPiracy } from "./sailorPool";
 import { locationSupportsTransport } from "./companyHome";
 import type { PoliticalEntity } from "./politicalEntity";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randChoice, randInt, randRandom, randShuffle, seedSimRandom, randSample, randUniform } from "./simRandom";
 import { randomBirthDate } from "./person";
-import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
+import {
+  SAILOR_MIN_AGE, SAILOR_MAX_AGE, PIRACY_INCREASE_PER_DAY, PIRACY_DECAY_PER_DAY, SHORE_LEAVE_PROBABILITY,
+} from "./sailor";
 import {
   LOCATIONS, LOCATION_COORDINATES, COMMODITIES, setGeography, getLocation, getDistanceConfig, FUEL_BASE_PRICE,
   setWorldStartDate,
@@ -46,7 +48,7 @@ function randomCaptainPersonFields(
   const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
   return { name, gender, nationality, dateOfBirth };
 }
-import { round2 } from "./utils";
+import { round2, clamp01 } from "./utils";
 
 // Locations must fall within this range. Calibrated via seed-averaged
 // stockpile-ratio sweeps (see analysis.ts / npm run sweep): below ~20 total
@@ -348,6 +350,169 @@ export class World {
   }
 
   /**
+   * Manual "Buy Ship" action (see BuyShipPanel) -- a Company spends its own
+   * funds on a brand-new Ship of `shipClassName` (a SHIP_CLASSES key),
+   * starting at `locationName` (validated as Port/Platform-compatible by
+   * Company.buyShipAt, which also places the ship there instead of the
+   * Company's fixed homeLocation). The new Captain draws its name/ship name
+   * from the Company's own politicalEntity nationality, same as addLocation's
+   * fleet top-up. Crew fills for free from that Location's Sailor pool (see
+   * Faction.addTransport/fillExtraSeats) -- only the hull itself costs cash.
+   * Throws if shipClassName is unknown, the Company can't afford it, or the
+   * Location doesn't exist/support a Ship. Not available for a SoloTrader
+   * (its own ship replacement is automatic -- see the private
+   * buySoloTraderReplacement, triggered by Captain.act's condition-decay
+   * check/PirateBrigade.attack, never this manual entry point).
+   */
+  buyShipForCompany(company: Company, locationName: string, shipClassName: string): Captain {
+    if (company instanceof SoloTrader) {
+      throw new Error(`'${company.name}' is a SoloTrader -- capped at one Ship, and its replacement is automatic, not a manual purchase.`);
+    }
+    const shipClass = SHIP_CLASSES[shipClassName];
+    if (shipClass === undefined) {
+      throw new Error(`Unknown ship class '${shipClassName}'.`);
+    }
+    if (company.cash < shipClass.purchasePrice) {
+      throw new Error(
+        `'${company.name}' cannot afford a ${shipClassName} ($${shipClass.purchasePrice.toLocaleString()}, has $${company.cash.toLocaleString()}).`,
+      );
+    }
+    const location = getLocation(locationName);
+    if (location === undefined) {
+      throw new Error(`Location '${locationName}' does not exist.`);
+    }
+
+    company.cash -= shipClass.purchasePrice;
+    return this.acquireShip(company, location, shipClass, false);
+  }
+
+  /**
+   * Picks the Captain for a freshly bought Ship (manual Company purchase,
+   * the SoloTrader auto-replacement, or the PoliceFleet auto-replacement):
+   * if an inactive Captain (see Faction.inactiveCaptains/sinkInPort) is
+   * sitting right at `location`, they become the new Captain -- longest-
+   * benched first -- instead of generating a fresh one, per the grilled
+   * spec. Otherwise generates a new Captain from `nationality`'s name pool,
+   * same as addLocation's fleet top-up. `Faction`-typed (not `Company`) so
+   * PoliceFleet -- which doesn't extend Company -- can use this too.
+   */
+  private captainForNewShip(faction: Faction, location: Location, nationality: Nationality): Captain {
+    const idx = faction.inactiveCaptains.findIndex((c) => c.location?.name === location.name);
+    if (idx !== -1) return faction.inactiveCaptains.splice(idx, 1)[0];
+    const pools = NATIONALITY_POOLS[nationality];
+    return new Captain({ ...randomCaptainPersonFields(pools.names, nationality), homeLocation: location });
+  }
+
+  /**
+   * Shared by buyShipForCompany (manual, always crews for free), the
+   * SoloTrader auto-replacement, and the PoliceFleet auto-replacement
+   * (`noCrew`, per the grilled spec -- the new Ship starts with nobody but
+   * its Captain aboard, for both). Registers the new Captain in
+   * `this.captains` either way (a reused inactive Captain was removed from
+   * it when benched -- see sinkInPort -- so it always needs re-adding, same
+   * as a brand new one). `Faction`-typed (not `Company`) so PoliceFleet can
+   * use this too -- see Faction.buyShipAt for how a Faction with no
+   * home-location-forcing `addTransport` override (PirateBrigade/
+   * PoliceFleet) still places the Ship at exactly `location`.
+   */
+  private acquireShip(faction: Faction, location: Location, shipClass: Ship, noCrew: boolean): Captain {
+    const nationality = faction.politicalEntity?.nationality ?? randomNationality(globalNameRng);
+    const ship = shipClass.clone({ name: randomShipName(globalNameRng, NATIONALITY_POOLS[nationality].ships) });
+    const captain = this.captainForNewShip(faction, location, nationality);
+
+    faction.buyShipAt(ship, captain, location.name);
+    if (noCrew) {
+      for (const member of [...ship.crew]) {
+        if (member === captain) continue;
+        ship.removeCrewMember(member);
+        member.disembarkAt(location);
+        addToSailorPool(location.name, member);
+      }
+    }
+    this.captains.push(captain);
+    return captain;
+  }
+
+  /**
+   * Triggered immediately (same day, same turn) when a SoloTrader's Captain
+   * survives its Ship sinking in port (see World.runDay's post-act() check,
+   * the only caller). Tries the cheapest SHIP_CLASSES entry, at the
+   * sinking's own Location, with no crew -- per the grilled spec, this is
+   * NOT a manual purchase (buyShipForCompany refuses a SoloTrader outright)
+   * and doesn't check `targetShipsPerLocation` or any other gate, just raw
+   * affordability. `captain` is already sitting in `soloTrader.
+   * inactiveCaptains` (pushed there by sinkInPort) and at `captain.location`
+   * -- acquireShip's own captainForNewShip lookup will find and reuse this
+   * SAME Captain (a SoloTrader only ever has one). If even the cheapest
+   * Ship is unaffordable, the SoloTrader is dissolved outright instead.
+   *
+   * NOTE: sinkInPort (the only caller's caller) already zeroes `captain`'s
+   * own cash as part of the sinking itself (see Company.loseCargoAndCash --
+   * "no cash survives a sinking" applies here too, deliberately, per the
+   * grilled spec). That means the affordability check below is, under
+   * today's SHIP_CLASSES prices, effectively unreachable -- a freshly-sunk
+   * SoloTrader Captain always has $0 the instant this runs, so dissolution
+   * is the only outcome that ever actually fires in practice. This is
+   * intentional, not a bug: the branch stays here, correctly implemented,
+   * for whatever future mechanic might leave a survivor with cash (a $0
+   * Ship class, a windfall between sinking and this check, etc.).
+   */
+  private buySoloTraderReplacementIfPossible(soloTrader: SoloTrader, captain: Captain): void {
+    const cheapest = Object.values(SHIP_CLASSES).reduce((a, b) => (a.purchasePrice <= b.purchasePrice ? a : b));
+    const location = captain.location;
+    // SoloTrader.poolsCash is false -- its real money lives on the
+    // Captain's OWN balance (captain.cash resolves to captain.ownCash),
+    // never on the Faction-level `cash` field a pooling Company would use.
+    if (location !== null && captain.cash >= cheapest.purchasePrice) {
+      captain.cash -= cheapest.purchasePrice;
+      this.acquireShip(soloTrader, location, cheapest, true);
+    } else {
+      this.dissolveSoloTrader(soloTrader, captain);
+    }
+  }
+
+  /**
+   * A SoloTrader whose Captain survived a sinking but can't afford even the
+   * cheapest replacement Ship (see buySoloTraderReplacementIfPossible) is
+   * dissolved outright -- removed from `this.factions` entirely (nothing
+   * else currently does this to a Faction mid-simulation). All cash is
+   * lost -- zeroed on `captain` directly (SoloTrader.poolsCash is false, so
+   * that's where its real money lives, not the unused Faction-level `cash`
+   * field), not returned anywhere. The Captain disappears for good --
+   * already out of `this.captains` (see World.runDay) and now dropped from
+   * `inactiveCaptains` too, so nothing references it anymore.
+   */
+  private dissolveSoloTrader(soloTrader: SoloTrader, captain: Captain): void {
+    const idx = this.factions.indexOf(soloTrader);
+    if (idx !== -1) this.factions.splice(idx, 1);
+    soloTrader.inactiveCaptains = [];
+    captain.cash = 0.0;
+  }
+
+  /**
+   * Triggered immediately (same day, same turn) whenever a Police Ship
+   * sinks -- UNCONDITIONALLY, unlike the SoloTrader case, which only fires
+   * if the Captain survived. Buys the cheapest SHIP_CLASSES entry, at the
+   * sinking's own Location, with no crew -- same purchase mechanics as the
+   * SoloTrader auto-replacement, just always taken. `captain` is either
+   * still around (benched in `policeFleet.inactiveCaptains`, sunk in port --
+   * acquireShip's captainForNewShip lookup reuses it) or already fully
+   * discarded (dead, sunk at sea -- a fresh Captain is generated instead);
+   * either way `captain.location` is set (see Faction.sinkAtSea, which
+   * disembarks even a fatally-lost Captain purely so this has somewhere to
+   * spawn the replacement). No affordability check or dissolution fallback
+   * -- PoliceFleet is hardcoded to Infinity cash (see its constructor), so
+   * this always succeeds.
+   */
+  private buyPoliceReplacementImmediately(policeFleet: PoliceFleet, captain: Captain): void {
+    const location = captain.location;
+    if (location === null) return; // defensive; should always be set per sinkAtSea/sinkInPort
+    const cheapest = Object.values(SHIP_CLASSES).reduce((a, b) => (a.purchasePrice <= b.purchasePrice ? a : b));
+    policeFleet.cash -= cheapest.purchasePrice;
+    this.acquireShip(policeFleet, location, cheapest, true);
+  }
+
+  /**
    * Adds a brand-new Location at (x, y) (world-unit coordinates), affiliated
    * with `politicalEntity` -- the live-simulation counterpart of the editor's
    * click-to-place (see NetworkView.tsx). Named from the entity's
@@ -590,8 +755,22 @@ export class World {
     this.tickLocationClosures();
     this.tickBroadEvents();
 
-    // Traders act first, against the previous day's closing prices.
     const closedLocations = new Set(this.closedLocations.keys());
+
+    // Formal day-order step 2 (see CLAUDE.md): crew hiring for every ship
+    // ALREADY sitting in port -- a global pass over the whole fleet, before
+    // any Faction plans (step 3) or any Captain acts today, so directFleet's
+    // route-economics see this crew, not yesterday's. A ship that instead
+    // arrives (or finishes a crew rotation) today gets its hire folded into
+    // its own act() call instead -- see Captain.act's justArrived handling.
+    for (const captain of this.captains) {
+      if (captain.status !== "AtLocation") continue;
+      if (closedLocations.has(captain.locationName)) continue;
+      if (captain.groundedDaysRemaining > 0) continue;
+      captain.hireCrewIfPossible();
+    }
+
+    // Traders act first, against the previous day's closing prices.
     const directedRoutes = new Map<Captain, Directive>();
     for (const faction of this.factions) {
       const directives = faction.directFleet(
@@ -609,6 +788,28 @@ export class World {
       );
       for (const e of trader.eventLog) {
         if (e.day === day) this.eventLog.push(e);
+      }
+
+      // A Ship sinking this turn (see Faction.sinkAtSea/sinkInPort) leaves
+      // its Captain transport-less -- either dead (at sea) or benched (in
+      // port, pushed onto Faction.inactiveCaptains). Either way it no
+      // longer belongs in the daily loop's own captains list. A benched
+      // SoloTrader Captain gets an immediate shot at a replacement Ship
+      // (see buySoloTraderReplacementIfPossible) if it survived; a sunk
+      // PoliceFleet Ship gets one UNCONDITIONALLY, survived or not (see
+      // buyPoliceReplacementImmediately) -- a benched regular Company
+      // Captain, or a PirateBrigade Captain (dead or benched), just leaves
+      // a gap (regular-Company reactivation only happens later, via a fresh
+      // Ship purchase at the same Location -- see acquireShip; PirateBrigade
+      // has no replacement mechanism at all).
+      if (trader.transport === null) {
+        const idx = this.captains.indexOf(trader);
+        if (idx !== -1) this.captains.splice(idx, 1);
+        if (trader.company instanceof SoloTrader && trader.company.inactiveCaptains.includes(trader)) {
+          this.buySoloTraderReplacementIfPossible(trader.company, trader);
+        } else if (trader.company instanceof PoliceFleet) {
+          this.buyPoliceReplacementImmediately(trader.company, trader);
+        }
       }
     }
 
@@ -643,5 +844,36 @@ export class World {
 
     for (const trader of this.captains) trader.recordPortfolioSnapshot(day, this.sellMarkets);
     for (const faction of this.factions) faction.recordNetWorthSnapshot(day, this.sellMarkets);
+
+    // Daily piracy tick (see Sailor.piracy/Faction.hirePiracyThreshold): every
+    // currently-crewing Sailor (including the Captain -- Captain extends
+    // Sailor) rises if the Ship it's aboard belongs to a PirateBrigade, falls
+    // otherwise; every pool Sailor (not aboard anything) falls too. A single
+    // pass at the end of the day, once every Ship's crew is settled, rather
+    // than folded into any one Faction's own turn.
+    for (const captain of this.captains) {
+      if (captain.transport === null) continue;
+      const delta = captain.company instanceof PirateBrigade ? PIRACY_INCREASE_PER_DAY : -PIRACY_DECAY_PER_DAY;
+      for (const member of captain.transport.crew) member.piracy = clamp01(member.piracy + delta);
+    }
+    tickPoolPiracy();
+
+    // Shore Leave -- the final act of the day (see World.runDay's own doc
+    // comment on the formal day order): a single per-ship coin flip for
+    // every Ship still docked tonight, skipping Factions that don't grant it
+    // (PoliceFleet -- see Faction.grantsShoreLeave) and any Ship that spent
+    // today repairing (see isRepairDirective/Company.directFleet's
+    // partitionForRepair) -- a repairing crew never gets leave, roll or not.
+    for (const captain of this.captains) {
+      if (captain.status !== "AtLocation") continue;
+      if (!captain.company?.grantsShoreLeave) continue;
+      const directive = directedRoutes.get(captain);
+      if (directive !== undefined && isRepairDirective(directive)) continue;
+      if (randRandom() >= SHORE_LEAVE_PROBABILITY) continue;
+      for (const member of captain.transport!.crew) {
+        if (member === captain) continue;
+        member.shoreLeave();
+      }
+    }
   }
 }

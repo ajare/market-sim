@@ -15,7 +15,9 @@
  */
 import { Captain, type Directive, type TradeDirective } from "./captain";
 import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE, JOURNEYS_PER_HIRE } from "./sailor";
-import { Ship, type Transport } from "./transport";
+import {
+  Ship, MIN_ATTACK_CONDITION_DAMAGE, MAX_ATTACK_CONDITION_DAMAGE, CONDITION_REPAIR_THRESHOLD, type Transport,
+} from "./transport";
 import { getRoutes } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
 import { findShortestPath } from "./pathfinding";
@@ -27,7 +29,7 @@ import { locationSupportsTransport } from "./companyHome";
 import { round2 } from "./utils";
 import { randomGender, type NameRng } from "./names";
 import { randomBirthDate } from "./person";
-import { hireFromSailorPool } from "./sailorPool";
+import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
 import { randomNationality } from "./nationality";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
@@ -84,8 +86,163 @@ export class Faction {
     return false;
   }
 
+  /** Whether this Faction's Captains fence cargo (seized in a raid, at a Location's discounted fenceFraction) rather than sell it at the live market price -- see Captain.act/fenceCargoIfPossible. False by default; only PirateBrigade overrides it. */
+  get fencesCargo(): boolean {
+    return false;
+  }
+
+  /** Whether this Faction's Ships accumulate condition decay/damage and can sink (see Transport.condition, Captain.act, PirateBrigade.attack, Faction.sinkAtSea/sinkInPort). False here in the base class; every concrete Faction (Company, inherited by SoloTrader; PirateBrigade; PoliceFleet) overrides it to true -- there is currently no Faction kind that actually leaves this false. */
+  get decaysCondition(): boolean {
+    return false;
+  }
+
+  /** Whether a docked Ship's crew can be granted Shore Leave overnight (see World.runDay's end-of-day Shore Leave step). True by default; only PoliceFleet overrides it. */
+  get grantsShoreLeave(): boolean {
+    return true;
+  }
+
+  /**
+   * The most `Sailor.piracy` a candidate can have and still be hired by this
+   * Faction (see sailorPool.hireFromSailorPool, called from both
+   * Captain.hireCrewIfPossible and Faction.fillExtraSeats) -- 0 (maximally
+   * strict) by default here and on PoliceFleet, 0.1 on Company (inherited by
+   * SoloTrader), 1 (accepts anyone, since piracy never exceeds 1) on
+   * PirateBrigade.
+   */
+  get hirePiracyThreshold(): number {
+    return 0.0;
+  }
+
+  /**
+   * Cargo and cash are ALWAYS lost when a Ship sinks -- at sea or in port,
+   * survived or not (per the grilled spec, no partial retention either way).
+   * "Cash on board" only has a literal meaning for a non-pooling Captain
+   * (SoloTrader) -- their own balance is wiped; a pooling Faction's shared
+   * purse isn't "on" any one Ship, so it's untouched by a single Ship's
+   * loss (mirroring how a pirate attack already only ever steals from a
+   * non-pooling victim -- see PirateBrigade.attack). Shared by sinkAtSea and
+   * sinkInPort, both below.
+   */
+  private loseCargoAndCash(captain: Captain): void {
+    if (captain.cargo !== null) {
+      if (captain.cargo.contract !== null) {
+        captain.cargo.contract.cancelled = true;
+        captain.cargo.contract.inFlightCaptain = null;
+      }
+      captain.cargo = null;
+    }
+    if (!this.poolsCash) captain.ownCash = 0.0;
+  }
+
+  /**
+   * A Ship sinking while genuinely InTransit, from unrepaired condition
+   * decay (see Captain.act) -- pirates can never cause this, since an attack
+   * only ever lands on an already-AtLocation victim (see maybeAttackOnArrival
+   * / sinkInPort). Fatal: the crew AND the Captain die, permanently -- this
+   * only removes `captain` from THIS Faction's own `captains`; the caller
+   * (World.runDay) still has to splice it out of `world.captains` too.
+   * Never actually reached unless decaysCondition is true (checked by every
+   * caller -- Captain.act's InTransit decay, PirateBrigade.attack), so a
+   * Faction where decaysCondition stays false never sinks at all. Declared
+   * here (not just on the Factions that enable it) so callers holding only
+   * a `Faction`-typed reference (e.g. Captain.company) can invoke it
+   * without a value import of any specific subclass.
+   */
+  sinkAtSea(captain: Captain): void {
+    // Lost at sea, but still disembarked (not just nulled) at the last
+    // Location its Transport passed through (kept live even mid-transit --
+    // see Transport.location's own doc comment) -- purely for bookkeeping:
+    // World.runDay's PoliceFleet auto-replacement (the only reader of a
+    // just-died Captain's `.location`) needs SOME Location to spawn the
+    // replacement at, even though this Captain itself is fully discarded
+    // (not tracked anywhere after this) and never reactivated.
+    const lastLocation = captain.transport!.location;
+    this.loseCargoAndCash(captain);
+    this.removeTransport(captain);
+    if (lastLocation !== null) captain.disembarkAt(lastLocation);
+    else captain.transport = null;
+  }
+
+  /**
+   * A Ship sinking while docked (a Port or Platform) -- currently only
+   * reachable via a pirate attack's condition damage (see PirateBrigade.attack),
+   * since condition never decays while AtLocation. Survivable: the crew
+   * disembarks into this Location's Sailor pool (exactly like a normal crew-
+   * rotation departure -- see Captain.advanceCrewRotation) and the Captain is
+   * benched into `inactiveCaptains`, disembarked (no Transport, no crew) at
+   * this Location -- see the class doc on `inactiveCaptains`. Only removes
+   * `captain` from THIS Faction's own `captains`; the caller (World.runDay)
+   * still has to splice it out of `world.captains` too.
+   */
+  sinkInPort(captain: Captain): void {
+    const transport = captain.transport!;
+    const location = transport.location!;
+    this.loseCargoAndCash(captain);
+    for (const member of transport.crew) {
+      if (member === captain) continue;
+      member.disembarkAt(location);
+      addToSailorPool(location.name, member);
+    }
+    this.removeTransport(captain);
+    captain.disembarkAt(location);
+    this.inactiveCaptains.push(captain);
+  }
+
+  /**
+   * Splits every idle-in-port Captain into those needing repair (assigned a
+   * REPAIR Directive immediately, before any trade/contract/patrol/reposition
+   * logic -- a Ship below CONDITION_REPAIR_THRESHOLD can't depart at all
+   * today, see Captain.act's RepairDirective handling) and the rest, still
+   * free to be assigned something else this turn. Shared by every
+   * decaysCondition Faction's own directFleet (Company, PirateBrigade,
+   * PoliceFleet) -- pointless to call from a Faction where decaysCondition
+   * stays false, since its Ships' condition never moves off 1 and this would
+   * just return every idle Captain in `idle`, none in the repair map.
+   */
+  protected partitionForRepair(closedLocations: ReadonlySet<string>): { idle: Captain[]; directives: Map<Captain, Directive> } {
+    const idleAll = this.captains.filter((t) => t.isIdleInPort(closedLocations));
+    const directives = new Map<Captain, Directive>();
+    const idle: Captain[] = [];
+    for (const captain of idleAll) {
+      if (captain.transport!.condition < CONDITION_REPAIR_THRESHOLD) {
+        directives.set(captain, { action: "REPAIR" });
+      } else {
+        idle.push(captain);
+      }
+    }
+    return { idle, directives };
+  }
+
+  /**
+   * Places a freshly bought Ship at `location` (validated Port/Platform-
+   * compatible), going through `this.addTransport` polymorphically --
+   * correct as-is for PirateBrigade/PoliceFleet, which have no
+   * home-location-forcing `addTransport` override to bypass in the first
+   * place. Company overrides this to explicitly bypass ITS OWN
+   * addTransport override (which forces a fresh recruit to the Company's
+   * fixed homeLocation) via `super.addTransport`. Only called by
+   * World.acquireShip.
+   */
+  buyShipAt(transport: Transport, captain: Captain, location: string): Captain {
+    const loc = getLocation(location);
+    if (loc === undefined || !locationSupportsTransport(loc, transport)) {
+      throw new Error(`'${this.name}': Location '${location}' does not have a TerminalType required by '${transport.name}'.`);
+    }
+    return this.addTransport(transport, captain, location, 0);
+  }
+
   name: string;
   captains: Captain[] = [];
+  /**
+   * Captains benched after their Ship sank in port (see sinkInPort) -- no
+   * longer in `captains` (or `world.captains`; World.runDay excludes them
+   * from the daily loop entirely) and no longer aboard anything (disembarked
+   * at wherever the sinking happened -- see Person.disembarkAt), just
+   * sitting here until a future Ship purchase at their Location reactivates
+   * them (see World.buyShipForCompany/acquireShip) or (SoloTrader/PoliceFleet
+   * only) an automatic replacement purchase does.
+   */
+  inactiveCaptains: Captain[] = [];
   /** The PoliticalEntity this Faction is affiliated with, or null for an independent operator (the default). Purely informational -- affiliation doesn't influence trading behaviour. Set by buildWorldFromJson from the authored World; a procedurally-built Faction stays independent. */
   politicalEntity: PoliticalEntity | null = null;
   startingCash: number;
@@ -219,7 +376,7 @@ export class Faction {
     }
     const location = transport.location;
     if (location === null) return;
-    const hired = hireFromSailorPool(location.name, extraSeats);
+    const hired = hireFromSailorPool(location.name, extraSeats, this.hirePiracyThreshold);
     for (const sailor of hired) {
       if (this.rotatesCrew) sailor.journeysRemaining = JOURNEYS_PER_HIRE;
       sailor.boardTransport(transport);
@@ -358,6 +515,16 @@ export class Company extends ContractFulfiller {
     return true;
   }
 
+  /** Company/SoloTrader Ships accumulate condition decay and can sink -- see Faction.decaysCondition. */
+  override get decaysCondition(): boolean {
+    return true;
+  }
+
+  /** Company/SoloTrader will hire a lightly piracy-tainted Sailor (up to 0.1), unlike PoliceFleet's zero tolerance -- see Faction.hirePiracyThreshold. */
+  override get hirePiracyThreshold(): number {
+    return 0.1;
+  }
+
   /**
    * Whether THIS Company prioritises contracts over arbitrage, or weighs the
    * two by expected profit -- see ContractStrategy and directFleet. A plain
@@ -423,6 +590,25 @@ export class Company extends ContractFulfiller {
     return super.addTransport(transport, captain, this._homeLocation ?? homeLocation, startingCash);
   }
 
+  /**
+   * A purchased Ship starts at the Location it was bought at, NOT this
+   * Company's fixed `homeLocation` -- unlike a fleet-synthesis/initial-fleet
+   * addition (addTransport, above), which always forces the Company's own
+   * home. Only called by World.acquireShip (buyShipForCompany's/the
+   * PoliceFleet auto-replacement's shared engine); `location` is validated
+   * here (not just by the caller's UI) since this bypasses addTransport's
+   * own validateHomeLocationCompatibility check entirely, going straight to
+   * `super.addTransport` -- see Faction.buyShipAt for why PirateBrigade/
+   * PoliceFleet don't need (or have) an override of their own.
+   */
+  override buyShipAt(transport: Transport, captain: Captain, location: string): Captain {
+    const loc = getLocation(location);
+    if (loc === undefined || !locationSupportsTransport(loc, transport)) {
+      throw new Error(`Company '${this.name}': Location '${location}' does not have a TerminalType required by '${transport.name}'.`);
+    }
+    return super.addTransport(transport, captain, location, 0);
+  }
+
   directFleet(
     _day: number,
     buyMarkets: Map<string, Market>,
@@ -432,10 +618,11 @@ export class Company extends ContractFulfiller {
     board: BulletinBoard,
     _pirateCounts: ReadonlyMap<string, number> = new Map(),
   ): Map<Captain, Directive> {
-    const idle = this.captains.filter((t) => t.isIdleInPort(closedLocations));
-    if (idle.length === 0) return new Map();
+    // Repair need is checked FIRST, before any trade/contract logic -- see
+    // Faction.partitionForRepair.
+    const { idle, directives } = this.partitionForRepair(closedLocations);
+    if (idle.length === 0) return directives;
 
-    const directives = new Map<Captain, Directive>();
     const assigned = new Set<Captain>();
 
     if (this.contractStrategy === "compare") {
@@ -757,27 +944,39 @@ export class PirateBrigade extends Faction {
     return false;
   }
 
+  override get fencesCargo(): boolean {
+    return true;
+  }
+
+  /** Pirates hire anyone -- 1 is the max possible piracy, so this never excludes a candidate. See Faction.hirePiracyThreshold. */
+  override get hirePiracyThreshold(): number {
+    return 1.0;
+  }
+
+  /** Pirate Ships accumulate condition decay and can sink, same as Company -- see Faction.decaysCondition. */
+  override get decaysCondition(): boolean {
+    return true;
+  }
+
   targets: Company[];
   laziness: number;
   raidFraction: number;
-  maxCarousingToAttack: number;
-  carousingCostPerCrew: number;
-  carousingIncreaseByDay: number;
-  maxCarousing: number;
   policeFleets: PoliceFleet[];
   /** Fraction of tracked Company/SoloTrader ship-presence at each Location, as of the last scan -- see directFleet's density-matching reposition logic. */
   private cachedTargetDensity: Map<string, number> | null = null;
   private lastScanDay: number | null = null;
   /**
-   * Per-day attack bookkeeping, reset at the top of every directFleet call
-   * (which always runs before any captain's own act() -- see World.runDay).
-   * Shared between directFleet's own scan-based attack loop and
-   * maybeAttackOnArrival's same-day arrival-triggered attack, so a given
-   * pirate/victim pair only ever attacks/gets attacked once per day
-   * regardless of which of the two paths triggers it.
+   * Pirates that have already attacked SOMEONE today, reset once per day at
+   * the top of directFleet (which -- like every Faction's -- still runs
+   * exactly once per day, before any Captain's own act()). Needed because
+   * groundedDaysRemaining alone isn't a reliable one-attack-per-day gate: a
+   * pirate's own act() call (wherever it falls in today's randomized
+   * agentOrderFn order) decrements it back to 0 the same day it was set,
+   * which -- without this set -- would let that pirate attack a SECOND,
+   * later-arriving victim the same day if its own turn happened to fall
+   * between the two arrivals.
    */
-  private attackersUsedToday = new Set<Captain>();
-  private victimsHitToday = new Set<Captain>();
+  private attackedToday = new Set<Captain>();
 
   constructor(
     name: string,
@@ -786,10 +985,6 @@ export class PirateBrigade extends Faction {
     startingCash: number = 0.0,
     laziness: number = 1,
     raidFraction: number = 0.1,
-    maxCarousingToAttack: number = 100.0,
-    carousingCostPerCrew: number = 10.0,
-    carousingIncreaseByDay: number = 10.0,
-    maxCarousing: number = 100.0,
     policeFleets: PoliceFleet[] | null = null,
   ) {
     const nonShips = crew.filter(([transport]) => !(transport instanceof Ship)).map(([, captain]) => captain.name);
@@ -802,10 +997,6 @@ export class PirateBrigade extends Faction {
     this.targets = targets;
     this.laziness = laziness;
     this.raidFraction = raidFraction;
-    this.maxCarousingToAttack = maxCarousingToAttack;
-    this.carousingCostPerCrew = carousingCostPerCrew;
-    this.carousingIncreaseByDay = carousingIncreaseByDay;
-    this.maxCarousing = maxCarousing;
     this.policeFleets = policeFleets ?? [];
   }
 
@@ -840,118 +1031,107 @@ export class PirateBrigade extends Faction {
     return counts;
   }
 
+  /**
+   * A Police Ship tied up on a REPAIR directive doesn't deter -- physically
+   * present but not actually standing guard (see Captain.act's
+   * RepairDirective handling, and PirateBrigade.isEligibleAttacker's
+   * mirror-image "a repairing pirate can't attack" check). condition <
+   * CONDITION_REPAIR_THRESHOLD is a reliable stand-in for "assigned a
+   * REPAIR directive today" -- see Faction.partitionForRepair, which always
+   * issues one to every eligible idle-in-port Ship under threshold.
+   */
   private policePresentAt(location: string): boolean {
     for (const policeFleet of this.policeFleets) {
       for (const captain of policeFleet.captains) {
-        if (captain.status === "AtLocation" && captain.locationName === location) return true;
+        if (
+          captain.status === "AtLocation" && captain.locationName === location &&
+          captain.transport!.condition >= CONDITION_REPAIR_THRESHOLD
+        ) {
+          return true;
+        }
       }
     }
     return false;
   }
 
-  /** Whether `pirateCaptain` is fit to raid right now -- independent of its own InTransit/AtLocation status (see coLocatedTarget / maybeAttackOnArrival). */
+  /** Whether `pirateCaptain` is fit to raid right now -- independent of its own InTransit/AtLocation status (see maybeAttackOnArrival). A Ship tied up on a REPAIR directive can't attack -- see policePresentAt's doc comment for why condition < CONDITION_REPAIR_THRESHOLD is used as the "repairing today" signal. */
   private isEligibleAttacker(pirateCaptain: Captain): boolean {
     return (
       pirateCaptain.groundedDaysRemaining === 0 &&
-      pirateCaptain.carousing <= this.maxCarousingToAttack &&
+      !this.attackedToday.has(pirateCaptain) &&
+      pirateCaptain.transport!.condition >= CONDITION_REPAIR_THRESHOLD &&
       !this.policePresentAt(pirateCaptain.locationName)
     );
   }
 
   /**
-   * A still-available target Company/SoloTrader captain sharing `pirateCaptain`'s
-   * Location -- matched purely on the `location` field, regardless of either
-   * side's InTransit/AtLocation status. A ship mid-multi-leg-refuel sits at an
-   * intermediate node with `location` updated but status still "InTransit"
-   * (see Captain.arrive), and a ship that departed/arrived earlier today keeps
-   * its pre-move `location` until its next arrival -- both are exposed here on
-   * purpose, matching a raider that can strike anyone currently sitting at its
-   * anchorage, moving or not.
-   */
-  private coLocatedTarget(pirateCaptain: Captain): Captain | null {
-    if (!this.isEligibleAttacker(pirateCaptain)) return null;
-    for (const company of this.targets) {
-      for (const captain of company.captains) {
-        if (this.victimsHitToday.has(captain)) continue;
-        if (captain.locationName === pirateCaptain.locationName) return captain;
-      }
-    }
-    return null;
-  }
-
-  /**
    * Called by Captain.act() the instant a tracked Company/SoloTrader captain
-   * arrives somewhere, BEFORE it sells/delivers its cargo that same act()
-   * call -- directFleet's own scan runs once per day, before any captain's
-   * act(), so it can never catch a ship that arrives and immediately sells
-   * within that same day. This gives a co-located, still-available pirate a
-   * shot at it right then instead. Shares attackersUsedToday/victimsHitToday
-   * with directFleet's scan so a pair never attacks/gets attacked twice in
-   * one day regardless of which path fires.
+   * genuinely arrives somewhere, BEFORE it sells/delivers its cargo that same
+   * act() call -- this is now the ONLY way a pirate ever attacks (a docked
+   * ship that's already sold its cargo has nothing left worth raiding, so
+   * there's no separate "ambush a stationary ship" path anymore -- see
+   * PirateBrigade.directFleet, which now only repositions). Picks the first
+   * eligible co-located pirate; a victim can only genuinely arrive once per
+   * day, so no same-day dedup is needed on that side (see attackedToday for
+   * the attacker side, which does still need one).
    */
-  maybeAttackOnArrival(day: number, victimCaptain: Captain, sellMarkets: Map<string, Market>): void {
+  maybeAttackOnArrival(day: number, victimCaptain: Captain): void {
     if (!(victimCaptain.company instanceof Company) || !this.targets.includes(victimCaptain.company)) return;
-    if (this.victimsHitToday.has(victimCaptain)) return;
     for (const pirateCaptain of this.captains) {
-      if (this.attackersUsedToday.has(pirateCaptain)) continue;
       if (pirateCaptain.locationName !== victimCaptain.locationName) continue;
       if (!this.isEligibleAttacker(pirateCaptain)) continue;
-      this.attack(day, pirateCaptain, victimCaptain, sellMarkets);
-      this.attackersUsedToday.add(pirateCaptain);
-      this.victimsHitToday.add(victimCaptain);
+      this.attack(day, pirateCaptain, victimCaptain);
+      this.attackedToday.add(pirateCaptain);
       pirateCaptain.groundedDaysRemaining = Math.max(pirateCaptain.groundedDaysRemaining, 1);
       return;
     }
   }
 
-  private applyDailyCarousing(captain: Captain): void {
-    const cost = captain.transport!.crew.length * this.carousingCostPerCrew;
-    if (captain.cash < cost) return;
-    captain.cash -= cost;
-    captain.carousing += this.carousingIncreaseByDay;
-    if (captain.carousing > this.maxCarousing) {
-      captain.carousing = 0.0;
-      captain.groundedDaysRemaining = Math.max(captain.groundedDaysRemaining, 1);
-    }
-  }
-
-  private attack(day: number, pirateCaptain: Captain, victimCaptain: Captain, sellMarkets: Map<string, Market>): void {
+  /**
+   * Steals cash outright and, if the victim is carrying cargo, seizes it onto
+   * `pirateCaptain`'s own `cargo` -- exactly the same field a merchant uses
+   * for its own trades. The destruction fraction (some of the haul is
+   * damaged/dumped in the raid) is rolled here, at the moment of seizure, but
+   * fencing the survivors for cash happens later THIS SAME DAY, in this
+   * captain's own sell step (see Captain.act's fenceCargoIfPossible) -- same
+   * turn a merchant would sell cargo it's just arrived with, priced fresh at
+   * that point rather than snapshotted here.
+   */
+  private attack(day: number, pirateCaptain: Captain, victimCaptain: Captain): void {
     const victimPoolsCash = victimCaptain.company !== null && victimCaptain.company.poolsCash;
     const stolenCash = victimPoolsCash ? 0.0 : round2(victimCaptain.cash * this.raidFraction);
+    victimCaptain.cash -= stolenCash;
+    pirateCaptain.cash += stolenCash;
+
+    // On top of the robbery, the raid itself damages the hull -- rolled
+    // fresh per attack (see MIN/MAX_ATTACK_CONDITION_DAMAGE). Checked (not
+    // applied) here; the actual sink -- always the survivable "in port"
+    // case, since an attack only ever lands on an already-AtLocation victim
+    // -- is deferred to the very end of this method, AFTER every remaining
+    // `.locationName` read below (sinking disembarks the Captain, and
+    // `.locationName` throws once there's no Transport left to read it off).
+    let sinks = false;
+    if (victimCaptain.transport!.handlesZeroCondition() && victimCaptain.company?.decaysCondition === true) {
+      victimCaptain.transport!.condition -= randUniform(MIN_ATTACK_CONDITION_DAMAGE, MAX_ATTACK_CONDITION_DAMAGE);
+      sinks = victimCaptain.transport!.condition <= 0;
+    }
 
     let seizedCommodity: string | null = null;
     let seizedQuantity = 0.0;
     let destroyedQuantity = 0.0;
-    let fencePrice: number | null = null;
-    let fencedProceeds = 0.0;
     if (victimCaptain.cargo !== null) {
       const cargo = victimCaptain.cargo;
-      const market = sellMarkets.get(marketKey(pirateCaptain.locationName, cargo.commodity));
-      const unitValue = market !== undefined ? market.price : cargo.unitCost;
-      const location = getLocation(pirateCaptain.locationName);
-      const fenceFraction = location !== undefined ? location.fenceFraction : 0.5;
       seizedCommodity = cargo.commodity;
       seizedQuantity = cargo.quantity;
 
       // A raid is messy -- some of the haul gets damaged, dumped, or lost in
       // the scuffle before it ever reaches the fence, rolled fresh per
       // attack (see MIN/MAX_CARGO_DESTRUCTION_FRACTION). Only what survives
-      // gets fenced; the rest is gone regardless of fenceFraction.
+      // boards the pirate ship; the rest is gone for good.
       const destructionFraction = randUniform(MIN_CARGO_DESTRUCTION_FRACTION, MAX_CARGO_DESTRUCTION_FRACTION);
       destroyedQuantity = round2(cargo.quantity * destructionFraction);
-      const fenceableQuantity = cargo.quantity - destroyedQuantity;
-
-      fencePrice = round2(unitValue * fenceFraction);
-      fencedProceeds = round2(fencePrice * fenceableQuantity);
+      const survivingQuantity = round2(cargo.quantity - destroyedQuantity);
       victimCaptain.cargo = null;
-
-      // The fence doesn't just pay cash for the surviving goods -- it takes
-      // physical possession, so they re-enter circulation at wherever the
-      // pirate happens to be docked, rather than vanishing from the economy
-      // (the destroyed portion above, unlike this, is gone for good).
-      if (location !== undefined && fenceableQuantity > 0) {
-        location.stockpiles[cargo.commodity] = (location.stockpiles[cargo.commodity] ?? 0) + fenceableQuantity;
-      }
 
       // Contract-bound cargo never reaches its destination either way (fenced
       // or destroyed), so the delivery is cancelled outright -- the fulfiller
@@ -963,13 +1143,30 @@ export class PirateBrigade extends Faction {
         cargo.contract.cancelled = true;
         cargo.contract.inFlightCaptain = null;
       }
+
+      if (survivingQuantity > 0) {
+        pirateCaptain.cargo = {
+          commodity: cargo.commodity,
+          quantity: survivingQuantity,
+          unitCost: 0,
+          origin: pirateCaptain.locationName,
+          destination: pirateCaptain.locationName,
+          distance: 0,
+          routeType: "none",
+          travelDays: 0,
+          fuelPricePaid: 0,
+          fuelUnitsConsumed: 0,
+          fuelCostTotal: 0,
+          totalCost: 0,
+          departureDay: day,
+          contract: null,
+        };
+      }
     }
 
-    const totalGain = round2(stolenCash + fencedProceeds);
-    if (totalGain <= 0 && seizedCommodity === null) return;
-
-    victimCaptain.cash -= stolenCash;
-    pirateCaptain.cash += totalGain;
+    // Even an otherwise-empty raid (no cash, no cargo) is still worth
+    // logging/resolving if it happened to sink the Ship.
+    if (stolenCash <= 0 && seizedCommodity === null && !sinks) return;
 
     pirateCaptain.tradeLog.push({
       day,
@@ -978,19 +1175,20 @@ export class PirateBrigade extends Faction {
       location: pirateCaptain.locationName,
       destination: victimCaptain.name,
       quantity: round2(seizedQuantity),
-      price: fencePrice,
+      price: null,
       distance: null,
       routeType: null,
       travelDays: null,
       fuelPrice: null,
       fuelUnitsConsumed: null,
       fuelCostPaid: 0.0,
-      profit: totalGain,
+      profit: round2(stolenCash),
     });
     let detail = stolenCash > 0 ? `-$${stolenCash.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cash` : "cash pooled -- untouchable";
     if (seizedCommodity !== null) {
-      detail += `, ${seizedQuantity.toFixed(1)} ${seizedCommodity} seized (${destroyedQuantity.toFixed(1)} destroyed) and fenced for ${fencedProceeds.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      detail += `, ${seizedQuantity.toFixed(1)} ${seizedCommodity} seized (${destroyedQuantity.toFixed(1)} destroyed)`;
     }
+    if (sinks) detail += ", and the Ship sank";
     victimCaptain.agentEventLog.push({
       day,
       location: victimCaptain.locationName,
@@ -998,23 +1196,22 @@ export class PirateBrigade extends Faction {
       kind: "cash_loss",
       detail,
     });
+
+    // Must come LAST -- sinking disembarks victimCaptain (clears its
+    // Transport), and every `.locationName` read above requires one.
+    if (sinks) victimCaptain.company?.sinkInPort(victimCaptain);
   }
 
   directFleet(
     day: number,
     _buyMarkets: Map<string, Market>,
-    sellMarkets: Map<string, Market>,
+    _sellMarkets: Map<string, Market>,
     _commodities: string[],
     closedLocations: ReadonlySet<string>,
     _board: BulletinBoard,
     _pirateCounts: ReadonlyMap<string, number> = new Map(),
   ): Map<Captain, Directive> {
-    this.attackersUsedToday = new Set();
-    this.victimsHitToday = new Set();
-
-    for (const captain of this.captains) {
-      if (captain.status === "AtLocation") this.applyDailyCarousing(captain);
-    }
+    this.attackedToday = new Set();
 
     const needsScan = this.lastScanDay === null || day - this.lastScanDay >= this.laziness;
     if (needsScan) {
@@ -1037,24 +1234,14 @@ export class PirateBrigade extends Faction {
     const pirateCounts = this.pirateShipCountsByLocation();
     const totalPirates = this.captains.length;
 
-    const directives = new Map<Captain, Directive>();
-    for (const captain of this.captains) {
-      // Attack eligibility no longer requires AtLocation (see
-      // isEligibleAttacker/coLocatedTarget) -- checked for every captain,
-      // not just idle ones, so a ship mid-multi-leg-refuel sitting at an
-      // intermediate node can still ambush someone there. Only the
-      // reposition assignment below stays gated to idle-in-port captains.
-      const victim = this.coLocatedTarget(captain);
-      if (victim !== null) {
-        this.attack(day, captain, victim, sellMarkets);
-        this.attackersUsedToday.add(captain);
-        this.victimsHitToday.add(victim);
-        captain.groundedDaysRemaining = Math.max(captain.groundedDaysRemaining, 1);
-        continue;
-      }
-
-      if (!captain.isIdleInPort(closedLocations)) continue;
-
+    // Repair need is checked FIRST, before reposition -- see
+    // Faction.partitionForRepair. Attacking is no longer decided here -- see
+    // maybeAttackOnArrival, the only remaining attack trigger (a ship
+    // already sitting in port has nothing left worth raiding, having
+    // already sold on arrival). This loop now purely repositions idle,
+    // condition-permitting ships toward under-covered targets.
+    const { idle, directives } = this.partitionForRepair(closedLocations);
+    for (const captain of idle) {
       // Rank every Location with Company/SoloTrader presence by how far
       // short of its target-density share this brigade's OWN ship count
       // there currently falls (desired - current), most-deficient first --
@@ -1084,6 +1271,21 @@ export class PirateBrigade extends Faction {
 export class PoliceFleet extends Faction {
   override get poolsCash(): boolean {
     return true;
+  }
+
+  /** Zero tolerance -- Faction's own base default (0) already means this, but stated explicitly here since Company relaxes it to 0.1. See Faction.hirePiracyThreshold. */
+  override get hirePiracyThreshold(): number {
+    return 0.0;
+  }
+
+  /** Police Ships accumulate condition decay and can sink, same as Company -- see Faction.decaysCondition. A sunk Police Ship is replaced immediately regardless of outcome -- see World.runDay's post-act() cleanup. */
+  override get decaysCondition(): boolean {
+    return true;
+  }
+
+  /** Police crews stay aboard on duty overnight -- no Shore Leave, unlike Company/SoloTrader/PirateBrigade. See Faction.grantsShoreLeave. */
+  override get grantsShoreLeave(): boolean {
+    return false;
   }
 
   targets: PirateBrigade[];
@@ -1129,10 +1331,10 @@ export class PoliceFleet extends Faction {
     for (const m of buyMarkets.values()) allLocations.add(m.locationName);
     for (const m of sellMarkets.values()) allLocations.add(m.locationName);
 
-    const directives = new Map<Captain, Directive>();
-    for (const captain of this.captains) {
-      if (!captain.isIdleInPort(closedLocations)) continue;
-
+    // Repair need is checked FIRST, before patrol assignment -- see
+    // Faction.partitionForRepair.
+    const { idle, directives } = this.partitionForRepair(closedLocations);
+    for (const captain of idle) {
       const lastPatrolDay = this.lastPatrolDay.get(captain);
       if (lastPatrolDay !== undefined && day - lastPatrolDay < this.patrolIntervalDays) continue;
 

@@ -67,10 +67,29 @@ Architecture.md §3.2 (stockpile-deviation pricing, deficit/excess boosts),
 | Change how a Company decides between Contracts and arbitrage | `faction.ts`'s `Company.contractStrategy` (`"compare"` default vs. `"prioritise"`) and the `serviceContractsByProfit`/`claimOpenContracts`/`serviceContracts` methods it dispatches to |
 | Change which Contract types a fulfiller can accept | `faction.ts`'s `ContractFulfiller.contractTypes` -- `Company`'s default is `["Commodity"]`; `SoloTrader` overrides it to `[]` (never accepts anything) |
 | Add a genuinely new kind of Company (a third fleet-behavior variant) | Subclass `Faction`/`Company`/`ContractFulfiller` in `faction.ts`, override `directFleet`, then construct it in `buildWorld.ts` (or wherever else builds a `World`) |
+| Add new behavior that differs by Faction kind (Company/SoloTrader/PirateBrigade/PoliceFleet) | Add a new getter to `Faction` (defaulted to the strictest/off value) and override it per subclass -- see `poolsCash`/`canSmuggle`/`rotatesCrew`/`fencesCargo`/`decaysCondition`/`grantsShoreLeave`/`hirePiracyThreshold` for the existing pattern. Don't add an `instanceof` check in `captain.ts`/`world.ts` -- `captain.ts` only imports `Faction` as a type specifically to avoid this |
 
 Architecture.md §5.1 (Transport/`SHIP_CLASSES`), §6 (Captain), §8.1
 (`Company`/`SoloTrader`), §9 (Contracts, `ContractFulfiller`), §11
 (`buildWorld.ts`'s fleet-sizing math), §16.4/§16.6 (tuning reference).
+
+## Captains, Sailors, and the fleet lifecycle
+
+| I want to... | Touch this |
+| --- | --- |
+| Change how many Sailors sit in each Location's hireable pool | `sailorPool.ts`'s `SAILOR_POOL_FLOOR`/`SAILOR_POOL_SIZE_MULTIPLIER`, or `generateSailorPool`'s sizing formula itself |
+| Change how a Sailor's `piracy` taint rises/decays, or which Factions tolerate it | `sailor.ts`'s `PIRACY_INCREASE_PER_DAY`/`PIRACY_DECAY_PER_DAY`; `faction.ts`'s `Faction.hirePiracyThreshold` getter (per-subclass override) |
+| Change how long a Company/SoloTrader hire lasts before rotating back to the pool | `sailor.ts`'s `JOURNEYS_PER_HIRE`; `faction.ts`'s `Faction.rotatesCrew` getter |
+| Change Ship condition decay/repair-threshold/attack-damage tuning | `transport.ts`'s `CONDITION_DECAY_PER_TRANSIT_DAY`/`CONDITION_REPAIR_THRESHOLD`/`MIN_ATTACK_CONDITION_DAMAGE`/`MAX_ATTACK_CONDITION_DAMAGE` |
+| Make a non-`Ship` Transport type (WagonTrain/Plane/etc.) also decay and sink | Override `handlesZeroCondition()` on that subclass in `transport.ts` (currently only `Ship` does) -- see Architecture.md §8.5.6 for why this is currently a Ship-only mechanic |
+| Change what happens when a Ship sinks (at sea vs. in port) | `faction.ts`'s `Faction.sinkAtSea`/`sinkInPort`/`loseCargoAndCash` |
+| Change whether/how a sunk Ship gets automatically replaced | `world.ts`'s `buySoloTraderReplacementIfPossible`/`buyPoliceReplacementImmediately` (both private, called from `World.runDay`'s post-`act()` cleanup) -- note a plain multi-ship `Company` and `PirateBrigade` currently have NO automatic replacement path at all, see Architecture.md §8.5.4 |
+| Change the odds/mechanics of Shore Leave, or actually implement its effect | `sailor.ts`'s `SHORE_LEAVE_PROBABILITY` and the `Sailor.shoreLeave()` placeholder method (currently a no-op); the per-ship roll/eligibility logic lives at the end of `world.ts`'s `runDay` |
+
+Architecture.md §5.1 (`Transport.condition`), §5.2 (`Person`/`Sailor`), §6
+(Captain), §8.5 (the full lifecycle writeup: birth, hiring/rotation/piracy,
+condition/repair/sinking, replacement asymmetry across Faction kinds, Shore
+Leave, and known inconsistencies).
 
 ## Events
 

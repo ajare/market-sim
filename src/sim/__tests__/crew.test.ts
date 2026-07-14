@@ -9,7 +9,14 @@ import { setGeography, getLocation } from "../worldData";
 import { Route, addRouteToNetwork, setRoutes } from "../routes";
 import { buildWorld } from "../buildWorld";
 import { buildWorldFromJson } from "../buildWorldFromJson";
-import { generateSailorPool, getSailorPoolAt, setSailorPool, SAILOR_POOL_FLOOR } from "../sailorPool";
+import {
+  generateSailorPool, getSailorPoolAt, setSailorPool, SAILOR_POOL_FLOOR, SAILOR_POOL_SIZE_MULTIPLIER,
+} from "../sailorPool";
+
+/** The floor/demand formula's raw result is scaled by SAILOR_POOL_SIZE_MULTIPLIER (see generateSailorPool) -- this mirrors that scaling for test expectations. */
+function scaledPoolSize(raw: number): number {
+  return Math.round(raw * SAILOR_POOL_SIZE_MULTIPLIER);
+}
 
 /** A freshly generated pool Sailor, gender/birth date test-irrelevant fixed values. */
 function makeSailor(name: string): Sailor {
@@ -138,11 +145,18 @@ describe("upfront crew wages", () => {
 
   it("won't depart at all if the upfront crew wages (plus goods/fuel) aren't affordable", () => {
     const { buyMarkets, sellMarkets } = makeTradeWorld();
+    // A full crew, not just the Captain -- hiring for an already-docked ship
+    // is now a global World.runDay pass (formal day order step 2), not
+    // something act() does itself, so seed the pool and hire explicitly to
+    // stand in for that pass before exercising the departure decision.
+    setSailorPoolAt("Home", 10);
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
     const captain = makeCaptain("Cap", "Home");
     // Barely enough for goods + fuel, nowhere near enough for 4 days of a
     // full 4-person crew's wages on top.
     new Company("Acme", [[transport, captain, "Home"]], 50);
+    captain.hireCrewIfPossible();
+    expect(transport.crew.length).toBe(4);
 
     captain.act(1, buyMarkets, sellMarkets, ["Gold"], new Set());
     expect(captain.cargo).toBeNull();
@@ -167,9 +181,14 @@ describe("hiring crew at a Port or Platform (pool-based)", () => {
     return { transport, captain };
   }
 
+  // hireCrewIfPossible is now public and called directly (either by
+  // World.runDay's own daily pass, for an already-docked ship, or from
+  // act()'s justArrived handling for one that just arrived/rotated crew) --
+  // see CLAUDE.md's formal day order. These exercise it directly rather than
+  // through act(), since act() no longer hires an already-docked ship itself.
   it("fills every open seat in one day when the pool has enough, at a Port", () => {
     const { transport, captain } = makeDockedShip("Port", 10);
-    captain.act(1, new Map(), new Map(), [], new Set());
+    captain.hireCrewIfPossible();
     expect(transport.crew.length).toBe(transport.crewRequirement);
     const sailors = transport.crew.filter((member) => member.rank === "Able Seaman");
     expect(sailors).toHaveLength(3);
@@ -178,20 +197,20 @@ describe("hiring crew at a Port or Platform (pool-based)", () => {
 
   it("fills every open seat in one day when the pool has enough, at a Platform too -- the Port-only restriction is gone", () => {
     const { transport, captain } = makeDockedShip("Platform", 10);
-    captain.act(1, new Map(), new Map(), [], new Set());
+    captain.hireCrewIfPossible();
     expect(transport.crew.length).toBe(transport.crewRequirement);
   });
 
   it("hires only as many as the pool has available, leaving the rest of the seats open rather than generating anyone fresh", () => {
     const { transport, captain } = makeDockedShip("Port", 2);
-    captain.act(1, new Map(), new Map(), [], new Set());
+    captain.hireCrewIfPossible();
     expect(transport.crew.length).toBe(3); // Captain + the 2 pool Sailors available
     expect(getSailorPoolAt("Dock")).toHaveLength(0);
   });
 
   it("hires nobody when the pool is empty", () => {
     const { transport, captain } = makeDockedShip("Port", 0);
-    captain.act(1, new Map(), new Map(), [], new Set());
+    captain.hireCrewIfPossible();
     expect(transport.crew.length).toBe(1);
   });
 });
@@ -206,7 +225,7 @@ describe("Sailor pool generation", () => {
     setGeography([dock], { Dock: [0, 0] });
     generateSailorPool([]); // no Faction demand -- every Sea-capable Location still gets the floor
     const sailors = getSailorPoolAt("Dock");
-    expect(sailors.length).toBe(SAILOR_POOL_FLOOR);
+    expect(sailors.length).toBe(scaledPoolSize(SAILOR_POOL_FLOOR));
     for (const sailor of sailors) {
       expect(sailor.name).toMatch(/^\S+ \S+/); // "First Last"
       expect(sailor.gender).toBe("Male");
@@ -232,17 +251,17 @@ describe("Sailor pool sizing", () => {
     const company = new Company("Acme", [[transport, captain, "Base"]], 0); // crew = [captain] only (deferred)
 
     generateSailorPool([company]);
-    expect(getSailorPoolAt("Base")).toHaveLength(SAILOR_POOL_FLOOR); // max(10, 2*3) = 10
+    expect(getSailorPoolAt("Base")).toHaveLength(scaledPoolSize(SAILOR_POOL_FLOOR)); // round(max(10, 2*3) * 1.25) = 13
   });
 
-  it("floors at SAILOR_POOL_FLOOR for a Sea-capable Location with no initial ship demand", () => {
+  it("floors at SAILOR_POOL_FLOOR (before scaling) for a Sea-capable Location with no initial ship demand", () => {
     const empty = new Location({
       name: "Quiet Port", producedCommodities: {}, consumedCommodities: {},
       stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
     });
     setGeography([empty], { "Quiet Port": [0, 0] });
     generateSailorPool([]);
-    expect(getSailorPoolAt("Quiet Port")).toHaveLength(SAILOR_POOL_FLOOR);
+    expect(getSailorPoolAt("Quiet Port")).toHaveLength(scaledPoolSize(SAILOR_POOL_FLOOR));
   });
 
   it("scales past the floor once demand crosses it", () => {
@@ -258,7 +277,7 @@ describe("Sailor pool sizing", () => {
     // 3 x Capesize, crewRequirement 13 -> extraSeats 12 each -> 36 total demand.
     const company = new Company("Acme", crew, 0);
     generateSailorPool([company]);
-    expect(getSailorPoolAt("Busy Port")).toHaveLength(72); // 2 * 36, well past the floor
+    expect(getSailorPoolAt("Busy Port")).toHaveLength(scaledPoolSize(72)); // 2 * 36, well past the floor
   });
 });
 
@@ -341,9 +360,11 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
     expect(transport.crew.length).toBe(3);
     expect(transport.crew).not.toContain(sailor);
 
-    // Docked at a Port with Sailors still in the local pool -- act() re-hires
-    // the open seat for free.
-    captain.act(1, new Map(), new Map(), [], new Set());
+    // Docked at a Port with Sailors still in the local pool -- hiring for an
+    // already-docked ship is now a global World.runDay pass (formal day
+    // order step 2), not something act() does itself, so call it directly to
+    // stand in for that pass.
+    captain.hireCrewIfPossible();
     expect(transport.crew.length).toBe(4);
   });
 

@@ -48,6 +48,13 @@
   color: #b00020;
 }
 
+.buy-ship-form {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .panels {
   display: flex;
   flex-direction: column;
@@ -387,6 +394,22 @@
   height: 10px;
   border-radius: 2px;
   background: var(--accent);
+}
+
+.heatmap-canvas-wrap {
+  position: relative;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.heatmap-canvas-wrap canvas {
+  display: block;
+  cursor: default;
+}
+
+.stock-heatmap-canvas-wrap {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .chart-canvas-wrap {

@@ -4,6 +4,7 @@ import { ControlsPanel } from "./components/ControlsPanel";
 import { PoliticalEntitiesPanel } from "./components/PoliticalEntitiesPanel";
 import { LocationsPanel } from "./components/LocationsPanel";
 import { FleetPanel } from "./components/FleetPanel";
+import { BuyShipPanel } from "./components/BuyShipPanel";
 import { TransportsPanel } from "./components/TransportsPanel";
 import { PersonPanel } from "./components/PersonPanel";
 import { ContractsPanel } from "./components/ContractsPanel";
@@ -11,6 +12,9 @@ import { StockHistoryPanel } from "./components/StockHistoryPanel";
 import { PriceHistoryPanel } from "./components/PriceHistoryPanel";
 import { NetWorthHistoryPanel } from "./components/NetWorthHistoryPanel";
 import { NetworkView } from "./components/NetworkView";
+import { TransportHeatmapPanel } from "./components/TransportHeatmapPanel";
+import { StockLevelHeatmapPanel } from "./components/StockLevelHeatmapPanel";
+import { PirateAttackHeatmapPanel } from "./components/PirateAttackHeatmapPanel";
 import { EventsPanel } from "./components/EventsPanel";
 import "./App.css";
 
@@ -25,7 +29,10 @@ function App() {
       <h1>Commodity Sim</h1>
       <ControlsPanel />
       <NetworkView />
+      <TransportHeatmapPanel />
+      <PirateAttackHeatmapPanel />
       <EventsPanel />
+      <StockLevelHeatmapPanel />
       <StockHistoryPanel />
       <PriceHistoryPanel />
       <NetWorthHistoryPanel />
@@ -33,6 +40,7 @@ function App() {
         <PoliticalEntitiesPanel />
         <LocationsPanel />
         <FleetPanel />
+        <BuyShipPanel />
         <TransportsPanel />
         <PersonPanel />
         <ContractsPanel />

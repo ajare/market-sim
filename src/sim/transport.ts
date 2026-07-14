@@ -10,6 +10,19 @@ import type { Location } from "./location";
 
 export type TransportStatus = "AtLocation" | "InTransit" | "Inactive";
 
+// Tunable knobs for Ship condition -- see the `condition` field doc on
+// Transport. Apply to every decaysCondition Faction's Ships (Company/
+// SoloTrader/PirateBrigade/PoliceFleet -- see Faction.decaysCondition in
+// faction.ts, the actual per-Faction gate; Captain.act is the consumer).
+
+/** How much a Ship's condition drops for every day it spends genuinely InTransit -- see Captain.act. At this rate a Ship needs 25 days of continuous, unrepaired travel to go from full condition to needing repair. */
+export const CONDITION_DECAY_PER_TRANSIT_DAY = 0.02;
+/** A docked Ship below this condition must repair (a whole-day REPAIR Directive, see Company.directFleet/Captain.act) before it's allowed to depart again. */
+export const CONDITION_REPAIR_THRESHOLD = 0.5;
+/** Random extra condition damage a pirate attack inflicts on top of stealing cash/cargo -- see PirateBrigade.attack. */
+export const MIN_ATTACK_CONDITION_DAMAGE = 0.0;
+export const MAX_ATTACK_CONDITION_DAMAGE = 0.2;
+
 export interface TransportInit {
   name?: string;
   cargoCapacity?: number;
@@ -21,6 +34,8 @@ export interface TransportInit {
   status?: TransportStatus;
   currentFuel?: number | null;
   crewRequirement?: number;
+  purchasePrice?: number;
+  condition?: number;
 }
 
 export class Transport {
@@ -35,6 +50,19 @@ export class Transport {
   /** Live fuel gauge; null means this Transport doesn't track fuel and never needs refueling. */
   currentFuel: number | null;
   crewRequirement: number;
+  /** Cost to buy a fresh one of these (see World.buyShipForCompany) -- 0 for a Transport that was never meant to be purchased at runtime (every non-SHIP_CLASSES Transport). */
+  purchasePrice: number;
+  /**
+   * [0, 1] -- 1 is pristine, 0 (or below) is destroyed. Every Transport
+   * tracks it (initialized to 1), but only `Ship` actually decays it or does
+   * anything when it bottoms out -- see `handlesZeroCondition`. What
+   * actually HAPPENS when a Ship's condition hits zero (crew fate, cash/
+   * cargo loss, Company bookkeeping) lives in Captain.act/Faction, not here
+   * -- Transport is deliberately decoupled from the trading agent that owns
+   * it (see this file's doc comment) and has no access to a Captain's cash,
+   * cargo, or Company.
+   */
+  condition: number;
   crew: Sailor[] = [];
   /**
    * Where this Transport currently is -- the settled Location once docked,
@@ -61,6 +89,20 @@ export class Transport {
     this.status = init.status ?? "AtLocation";
     this.currentFuel = init.currentFuel ?? null;
     this.crewRequirement = init.crewRequirement ?? 1;
+    this.purchasePrice = init.purchasePrice ?? 0.0;
+    this.condition = init.condition ?? 1.0;
+  }
+
+  /**
+   * Whether this Transport TYPE is destroyed once `condition` bottoms out --
+   * the subclass-dispatched "handler" for zero condition. False (and inert)
+   * in the base class and every subclass except `Ship`; the actual
+   * consequences of a Ship hitting zero (crew/Captain fate, cash/cargo loss,
+   * Company/World bookkeeping) are orchestrated by Captain.act/Faction,
+   * which check this before acting -- see this class's `condition` doc.
+   */
+  handlesZeroCondition(): boolean {
+    return false;
   }
 
   /** Marks this Transport as currently at/passing through `location` -- keeps `location` (object) and `currentNode` (its name) in sync in one place, called on initial homing and every arrival (including intermediate multi-hop stops). */
@@ -119,6 +161,8 @@ export class Transport {
       status: this.status,
       currentFuel: this.currentFuel,
       crewRequirement: this.crewRequirement,
+      purchasePrice: this.purchasePrice,
+      condition: this.condition,
       ...overrides,
     });
   }
@@ -131,6 +175,10 @@ export class Transport {
  * behavior port, not a bugfix).
  */
 export class Ship extends Transport {
+  override handlesZeroCondition(): boolean {
+    return true;
+  }
+
   constructor(init: TransportInit = {}) {
     // 6 (Handysize's crew size) is the fallback for a generic/editor-authored
     // Ship not built from one of the SHIP_CLASSES presets below, each of
@@ -255,29 +303,38 @@ export class Spaceship extends Transport {
   }
 }
 
+/** Purchase price per unit of cargoCapacity -- see World.buyShipForCompany, the only thing that spends this. Calibrated against buildWorld's own cashPerShip (10,000, the typical starting capital allocated per initial-fleet ship) so a mid-size Panamax costs roughly one ship's worth of starting capital. */
+const PURCHASE_PRICE_PER_CARGO_UNIT = 50.0;
+
 // Off-the-shelf classes spanning the capacity/speed/efficiency trade-off
 // space. Small and fast burns less fuel per trip but can't move much
 // cargo; large and slow moves a lot but ties up more capital per voyage.
+// purchasePrice is fixed per class (not computed at runtime), but set
+// proportional to cargoCapacity -- see PURCHASE_PRICE_PER_CARGO_UNIT.
 export const SHIP_CLASSES: Record<string, Ship> = {
   Speedster: new Ship({
     name: "Speedster", cargoCapacity: 80.0, speedUnitsPerDay: 800.0,
     fuelConsumptionPerUnitDistance: 0.003, repositionFuelConsumptionPerDistance: 0.025,
     fixedShipmentCost: 8.0, fuelCapacity: 60.0, currentFuel: 0.0, crewRequirement: 4,
+    purchasePrice: 80.0 * PURCHASE_PRICE_PER_CARGO_UNIT,
   }),
   Handysize: new Ship({
     name: "Handysize", cargoCapacity: 120.0, speedUnitsPerDay: 600.0,
     fuelConsumptionPerUnitDistance: 0.0035, repositionFuelConsumptionPerDistance: 0.03,
     fixedShipmentCost: 10.0, fuelCapacity: 90.0, currentFuel: 0.0, crewRequirement: 6,
+    purchasePrice: 120.0 * PURCHASE_PRICE_PER_CARGO_UNIT,
   }),
   Panamax: new Ship({
     name: "Panamax", cargoCapacity: 200.0, speedUnitsPerDay: 500.0,
     fuelConsumptionPerUnitDistance: 0.004, repositionFuelConsumptionPerDistance: 0.04,
     fixedShipmentCost: 15.0, fuelCapacity: 140.0, currentFuel: 0.0, crewRequirement: 9,
+    purchasePrice: 200.0 * PURCHASE_PRICE_PER_CARGO_UNIT,
   }),
   Capesize: new Ship({
     name: "Capesize", cargoCapacity: 350.0, speedUnitsPerDay: 400.0,
     fuelConsumptionPerUnitDistance: 0.0045, repositionFuelConsumptionPerDistance: 0.05,
     fixedShipmentCost: 25.0, fuelCapacity: 220.0, currentFuel: 0.0, crewRequirement: 13,
+    purchasePrice: 350.0 * PURCHASE_PRICE_PER_CARGO_UNIT,
   }),
   // Wind-powered -- burns no fuel at all, and leaves currentFuel at null,
   // so needsRefuel() is always false: never needs a refueling stop.
@@ -285,5 +342,6 @@ export const SHIP_CLASSES: Record<string, Ship> = {
     name: "SailingVessel", cargoCapacity: 100.0, speedUnitsPerDay: 300.0,
     fuelConsumptionPerUnitDistance: 0.0, repositionFuelConsumptionPerDistance: 0.0,
     fixedShipmentCost: 5.0, fuelCapacity: 0.0, currentFuel: null, crewRequirement: 3,
+    purchasePrice: 100.0 * PURCHASE_PRICE_PER_CARGO_UNIT,
   }),
 };

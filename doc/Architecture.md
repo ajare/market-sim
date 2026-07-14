@@ -24,13 +24,16 @@ costs, and sell where it's scarce. Some Captains act alone; others belong
 to a **Company** that pools capital and actively coordinates its fleet.
 Locations also proactively tender one-shot supply **Contracts** when
 running low, which a `Company` can claim and service alongside (or instead
-of) ordinary arbitrage. A `PirateBrigade`/`PoliceFleet` raiding/patrol
-system exists in the engine but isn't part of the world the app actually
-builds today (see §8.2-8.3). A random **event** system layers demand/supply
-shocks, per-transport mishaps, per-company windfalls/setbacks, and
-whole-port closures on top of the baseline economy. **World** owns and
-drives the whole thing one simulated day at a time, and everything is
-reproducible from a small number of independent random seeds.
+of) ordinary arbitrage. A `PirateBrigade` raids that Company/SoloTrader
+traffic and a `PoliceFleet` deters it (see §8.2-8.3) -- both are part of the
+world the app builds by default today. Every Ship -- merchant, pirate, or
+police -- also accumulates wear (`Transport.condition`) while underway,
+periodically needs a whole day docked to repair, and can sink outright if
+it's neither repaired nor caught in time (§8.5). A random **event** system
+layers demand/supply shocks, per-transport mishaps, per-company
+windfalls/setbacks, and whole-port closures on top of the baseline economy.
+**World** owns and drives the whole thing one simulated day at a time, and
+everything is reproducible from a small number of independent random seeds.
 
 The system can be driven three ways:
 
@@ -52,9 +55,14 @@ public API as one barrel. The dependency chain runs roughly:
 
 ```
 worldData (Location, geography) -> routes (Route/RouteType) -> markets (Market)
-  -> transport (Transport/Ship/WagonTrain/Plane) -> crew (Crew/Sailor) -> captain (Captain)
-  -> faction (Faction/Company/SoloTrader/PirateBrigade/PoliceFleet) -> world (World)
+  -> transport (Transport/Ship/WagonTrain/Plane) -> person (Person) -> sailor (Sailor)
+  -> captain (Captain) -> faction (Faction/Company/SoloTrader/PirateBrigade/PoliceFleet)
+  -> world (World)
 ```
+
+`sailorPool.ts` sits beside `faction.ts`/`captain.ts` (the world-wide pool of
+unhired `Sailor`s both draw from and return to -- §8.5) rather than earlier
+in the chain.
 
 `contracts.ts` sits beside `faction.ts`/`captain.ts` (both depend on it, and
 `World` orchestrates it) rather than earlier in the chain. `buildWorld.ts`
@@ -72,9 +80,11 @@ and the `src/state/` + `src/components/` UI layer sit on top of everything.
 | `pathfinding.ts` | Dijkstra shortest-path routing over the Route network, restricted per-Transport |
 | `events.ts` | `Event` base class and its four kinds: `MarketEvent`, `TransportEvent`, `CompanyEvent`, `LocationClosure`, plus every template list |
 | `markets.ts` | `Market` -- stockpile-deviation pricing and the day-to-day price update |
-| `transport.ts` | `Transport`/`Ship`/`WagonTrain`/`Plane`, `SHIP_CLASSES` presets |
-| `crew.ts` | `Crew` (bare identity, base class for anyone operating a Transport) and `Sailor` (generic waged crew) |
-| `captain.ts` | `Captain` -- the trading agent, a `Crew` subclass |
+| `transport.ts` | `Transport`/`Ship`/`WagonTrain`/`Plane`, `SHIP_CLASSES` presets, the `condition`/repair/sinking constants (§8.5) |
+| `person.ts` | `Person` -- the base identity/placement layer (AT-a-Location XOR ON-a-Transport, never both/neither once placed) for anyone occupying a spot in the world; `randomBirthDate`/`ageInYears` |
+| `sailor.ts` | `Sailor extends Person` (generic waged crew, `rank`/`journeysRemaining`/`piracy`) and its tunable constants (`JOURNEYS_PER_HIRE`, `PIRACY_INCREASE_PER_DAY`/`PIRACY_DECAY_PER_DAY`, `SHORE_LEAVE_PROBABILITY`) -- §8.5 |
+| `sailorPool.ts` | The world-wide pool of unhired `Sailor`s, one bucket per Sea-capable Location (§8.5) |
+| `captain.ts` | `Captain extends Sailor` -- the trading agent |
 | `names.ts` | `randomName()` + per-language first/last name pools for naming Captains |
 | `faction.ts` | `Faction`/`Company`/`SoloTrader`/`PirateBrigade`/`PoliceFleet`, `ContractStrategy`; `ContractFulfiller`, the base class `Company` accepts Contracts through |
 | `contracts.ts` | `Contract`, `ContractType`, `BulletinBoard`, `contractKey` -- Location-funded one-shot supply orders |
@@ -527,7 +537,7 @@ exists at all for that Transport.
 This is what lets a Captain plan a genuine multi-hop voyage through
 intermediate locations when no direct Route exists.
 
-## 5. Transport and Crew
+## 5. Transport and Person/Sailor
 
 ### 5.1 `Transport` (`transport.ts`)
 
@@ -561,51 +571,99 @@ capacity/speed/efficiency trade-off space:
 | Capesize | 350 | 400 | 0.0045 | $25 | 220 |
 | SailingVessel | 100 | 300 | 0.0 (never refuels) | $5 | 0 |
 
-### 5.2 `Crew` (`crew.ts`)
+Every `Transport` also carries a `condition` field ([0, 1], starts at 1) and
+a `handlesZeroCondition()` hook -- `false` (inert) on the base class and
+every subclass except `Ship`, which overrides it to `true`. `Transport`
+itself never decays or reads `condition`; it's deliberately decoupled from
+the trading-agent/ownership layers that actually drive it (`Captain.act` for
+decay, `Faction.sinkAtSea`/`sinkInPort` for the consequences) -- see §8.5 for
+the full lifecycle this feeds into, including the significant asymmetry that
+today only `Ship` ever overrides `handlesZeroCondition()`, so a
+`WagonTrain`/`Plane`/`Lorry`/`FreightTrain`/`Spaceship` fleet's `condition`
+field sits inert at 1 forever, completely exempt from decay/repair/sinking.
 
-`Crew` is a bare identity/assignment layer: a name, which `Transport` (if
-any) it currently runs, and a `dailyWages` figure owed to its owning
-Faction only while that Transport is actually `InTransit` (idle time in
-port is free). `Sailor` is a generic waged deckhand (default $20/day) used
-to pad a Transport's roster up to its `crewRequirement` beyond the Captain
-(who is itself a `Crew` member and costs nothing extra by default).
-`Faction`'s constructor (§8) is what actually assembles a Transport's
-`crew` list.
+### 5.2 `Person`/`Sailor` (`person.ts`/`sailor.ts`)
+
+`Person` (`person.ts`) is the base identity/placement layer for anyone who
+occupies a spot in the world: a name, gender, nationality, birth date, and
+the AT/ON invariant -- `location` XOR `transport`, never both, never
+neither, once actually placed somewhere (`boardTransport`/`disembarkAt`
+toggle between the two; `currentLocation()` reads whichever is set, falling
+back to the Transport's own `location` while aboard one). `Sailor extends
+Person` (`sailor.ts`) adds `rank` (`"Captain"` or `"Able Seaman"`), a
+`dailyWage` (defaulted in the constructor, $20 for a generic hire, forced to
+$0 for a `Captain`, itself a `Sailor` subclass -- §6), `journeysRemaining`
+(a Company/SoloTrader hire's remaining term, §8.5), a `piracy` score in
+`[0, 1]` (§8.5), and the `shoreLeave()` placeholder (§8.5). `Faction`'s
+constructor (§8) is what actually assembles a Transport's `crew` list; see
+§8.5 for the full hiring/rotation/replacement lifecycle this feeds into.
 
 ## 6. Captain: the trading agent
 
-`Captain` (`captain.ts`) subclasses `Crew` and adds all trading-agent
-behavior on top: cash, risk threshold, price impact, route planning, and
-event exposure. It occupies exactly one location at a time and runs a
+`Captain` (`captain.ts`) subclasses `Sailor` (itself a `Person`, §5.2) and
+adds all trading-agent behavior on top: cash, risk threshold, price impact,
+route planning, and event exposure. It occupies exactly one location at a
+time and runs a
 single `Transport` -- there's no teleportation and no parallel shipments;
 while `InTransit` it's committed to its destination and can't act again
 until it arrives.
 
-### 6.1 Daily action loop (`Captain.act`)
+### 6.1 Daily action loop
 
-Called once per day by `World.runDay` for every Captain, in an order
-decided by `agentOrderFn` (default `randomAgentOrder`: a fresh shuffle each
-day, so first-mover advantage on a shared Market price doesn't structurally
-favor whichever agent happens to sit first in a list):
+`World.runDay` runs a fixed sequence of GLOBAL passes over the whole fleet
+before any Captain individually acts, then calls `Captain.act` once per day
+for every Captain, in an order decided by `agentOrderFn` (default
+`randomAgentOrder`: a fresh shuffle each day, so first-mover advantage on a
+shared Market price doesn't structurally favor whichever agent happens to
+sit first in a list). This is the formal order of a day's events:
 
-1. Roll for a `TransportEvent` today (§7.2) and tick down any already
-   active.
-2. If `InTransit`: pay today's crew wages (or go `Inactive` if the Faction
-   can't afford them), burn fuel, tick down `daysRemaining`. On arrival day,
+1. **Contracts issued** -- `Location.tenderContracts`, against yesterday's
+   closing stockpile/pirate-presence picture.
+2. **Crew hiring, for ships already in port** -- a global pass calling
+   `Captain.hireCrewIfPossible` directly, before any Faction plans, so
+   `directFleet`'s route-economics see this crew rather than yesterday's. A
+   ship that instead arrives (or finishes crew rotation) THIS SAME day gets
+   its hire folded into its own turn instead (step 8, below).
+3. **Fleets plan and accept contracts** -- `Faction.directFleet` per
+   Faction (§8).
+
+Then, inside a single `Captain.act` call per ship (no further global phase
+barrier -- these run per-Captain, one pass, interleaved in today's
+`agentOrderFn` order; the very first thing this call does, regardless of
+status, is tick down any already-active `TransportEvent` -- new ones are
+never randomly rolled, only a loaded scenario's leftover events still tick,
+§7.2):
+
+4. **Buy required commodities** and 5. **leave port** -- two separate calls
+   (`executeLocalRoute`/`executeContractDelivery` buy, then hand off to
+   `leavePort` to actually depart), not fused, so a future step could be
+   inserted between them. Reached only if the Captain has no cargo, isn't
+   grounded, and isn't the same day it arrived -- via a Directive a Faction
+   supplied (§8: a trade route, a bare `REPOSITION`, or a
+   `CONTRACT_DELIVER`) or its own autonomous arbitrage plan
+   (`planAndDepart`). The whole trip's crew wages (§6.3), fuel, and fixed
+   fee are paid upfront here, in full -- there's no later daily deduction
+   while `InTransit`.
+6. **Arrive at port (from a previous journey) and maybe get attacked** --
+   while `InTransit`, burn fuel and tick down `daysRemaining` each day;
    `arrive()` either advances to an intermediate stop on a multi-hop path
    (refueling there if needed and not closed) and stays `InTransit`, or
-   genuinely docks at the final destination.
-3. Once in port (already was, or just arrived): if the current port is
-   closed, do nothing further this turn. Otherwise sell any cargo it's
-   carrying if the destination Market is `isAvailable` (§3.3) -- or, if the
-   cargo is contract-bound, deliver it against the Contract instead (§9);
-   if it's grounded (from a "delay" `TransportEvent`) or this is the very
-   day it just arrived, stop here -- a Transport always spends at least one
-   night in port before departing again.
-4. If empty-handed and not otherwise blocked: either follow a
-   `Directive` a `Faction` supplied (§8) -- a trade route, a bare
-   `REPOSITION`, or a `CONTRACT_DELIVER` -- or plan its own arbitrage route
-   autonomously (`planAndDepart`).
+   genuinely docks at the final destination. A genuine arrival is also the
+   ONLY moment a co-located pirate gets a shot at this Captain (§8.2),
+   BEFORE it sells.
+7. **Sell (or fence) and finalize contracts** -- if the current port is
+   closed, do nothing further this turn (SoloTraders may attempt
+   smuggling instead, §8.1). Otherwise sell any cargo carried, if the
+   destination Market is `isAvailable` (§3.3) -- or, if contract-bound,
+   deliver it against the Contract instead (§9) -- or, for a
+   `PirateBrigade` Captain carrying cargo seized in a raid, fence it
+   (§8.2) instead of selling at market price.
+8. **Crew due to rotate off leaves, and replacements are hired
+   immediately** -- but ONLY on the day a Captain genuinely arrived: crew
+   rotation (`advanceCrewRotation`) and `hireCrewIfPossible` both run right
+   here, right after this turn's sell/fence, and the turn ends (a Transport
+   always spends at least one night in port before departing again, even
+   on a day it arrives fully crewed).
 
 ### 6.2 Route scoring and the daily-return threshold
 
@@ -902,27 +960,38 @@ array -- `availableContracts` then always returns nothing, so a
 
 `directFleet` moves every idle pirate Transport toward wherever watched
 Company Transports are currently most concentrated (re-scanned every
-`laziness` days, not necessarily daily). If an idle pirate finds itself
-sharing a location with a watched Company Transport, it attacks instead of
-repositioning -- provided its own `carousing` (shore-leave distraction,
-below) isn't over `maxCarousingToAttack` and no watched `PoliceFleet` has a
-Ship at that same location.
+`laziness` days, not necessarily daily) -- it no longer decides any attacks
+itself, purely repositioning.
 
-`attack` steals `raidFraction` of the victim's *own* cash -- but only if
-the victim's Company doesn't pool cash (a pooling Company's shared purse is
-untouchable; only `SoloTrader` or similar non-pooling victims lose cash
-directly). If the victim carries cargo, the pirate seizes and fences all of
-it at the current location's live sell price times that Location's own
-`fenceFraction` (a black-market discount). Logged in the pirate's own
-`tradeLog` (`action: "ATTACK"`) and the victim's `agentEventLog`
+Attacking happens exactly once per encounter: the instant a tracked Company/
+SoloTrader Captain genuinely arrives somewhere (`Captain.act` ->
+`PirateBrigade.maybeAttackOnArrival`, BEFORE that Captain sells/delivers its
+cargo the same turn), a co-located, eligible pirate raids it. A docked ship
+that's already sold has nothing left worth raiding, so there's no separate
+"ambush a stationary ship" path. A pirate is eligible if it isn't still
+grounded from a previous attack, hasn't already attacked someone else today
+(`attackedToday`, reset once per day -- needed because `groundedDaysRemaining`
+alone can't reliably gate this: a pirate's own turn, wherever it falls in the
+day's randomized order, decrements it back to 0 the same day it was set), and
+no watched `PoliceFleet` has a Ship at that same location.
+
+`attack` steals `raidFraction` of the victim's *own* cash instantly -- but
+only if the victim's Company doesn't pool cash (a pooling Company's shared
+purse is untouchable; only `SoloTrader` or similar non-pooling victims lose
+cash directly). If the victim carries cargo, the pirate seizes it onto its
+OWN `cargo` field (the same one a merchant uses for its own trades), rolling
+a destruction fraction at the moment of seizure -- only what survives boards
+the pirate ship. Fencing the survivors for cash is deferred to later THIS
+SAME turn, in the pirate's own sell step (`Captain.act`, since
+`Faction.fencesCargo` is true for `PirateBrigade` -> `fenceCargoIfPossible`
+instead of `sellCargoIfPossible`), priced fresh at that point (current live
+price x the Location's `fenceFraction` discount) rather than snapshotted at
+seizure. The seizure is logged in the pirate's own `tradeLog`
+(`action: "ATTACK"`, cash only) and the victim's `agentEventLog`
 (`kind: "cash_loss"`) -- not as a structured `Event`, so `EventsPanel`
-deliberately doesn't show this activity.
-
-**Carousing.** Every pirate Ship sitting `AtLocation` spends
-`carousingCostPerCrew` per crew member on shore leave each day, if
-affordable; `carousing` then rises by `carousingIncreaseByDay`. If that
-pushes it over `maxCarousing`, the crew blacks out: `carousing` resets to 0
-and the Captain is grounded for a day.
+deliberately doesn't show this activity; the later fencing gets its own
+`tradeLog` entry (`action: "SELL"`). A successful attacker is grounded for a
+day afterward regardless of the outcome.
 
 A `PirateBrigade` can only crew `Ship`s (the constructor throws, naming any
 non-Ship Transport in its roster).
@@ -939,12 +1008,20 @@ Always pools cash into a literal `Infinity` pool (not caller-configurable).
 watching every `PirateBrigade` in `factions`, sized by `numPoliceShips`
 (default 3 if the `World` is built directly with no override).
 
-**Neither `PirateBrigade` nor `PoliceFleet` is part of the world the app
-actually ships**, though: `buildWorld()` only ever constructs `Company`/
-`SoloTrader` factions and explicitly passes `numPoliceShips: 0` -- so the
-shipped default world has no pirates and no police at all. Both classes
-remain fully implemented and exercised directly by unit tests (see §12),
-available for a future world-building path that wants raiding.
+**Both `PirateBrigade` and `PoliceFleet` are part of the world the app ships
+today** -- this was not always true (an earlier revision of this document
+described them as engine-only, exercised by tests but never actually built
+by `buildWorld()`; that's since changed). `buildWorld()` now builds one
+World-wide `PirateBrigade` (`DEFAULT_NUM_PIRATE_SHIPS = 20`, calibrated
+Spanish-named raiders started with `DEFAULT_PIRATE_CASH_PER_SHIP = 5,000`
+each so a broke ship isn't stranded at its home port forever) and one
+`PoliceFleet` ("Coast Guard", `DEFAULT_NUM_POLICE_SHIPS = 80`, English-named,
+watching that PirateBrigade) by default -- both `BuildWorldOptions` knobs
+(`numPirateShips`/`numPoliceShips`), overridable down to 0 for a
+pirate-free/police-free world (e.g. a sweep isolating their effect on the
+stockpile metric). See §11.1 for the calibration history (80 police ships
+was tuned against a ~100-attacks/year target once the brigade became one
+coordinated 20-ship fleet instead of several small uncoordinated ones).
 
 ### 8.4 Nationalities and name generation (`nationality.ts`, `names.ts`, `shipNames.ts`, `companyNames.ts`)
 
@@ -961,6 +1038,289 @@ Company draws from that Company's PoliticalEntity's nationality, and an
 Independent faction from a seeded-random one. The procedural `buildWorld`
 names its ships/captains from a single fixed pool and doesn't consult this
 per-entity machinery.
+
+### 8.5 Fleet lifecycle: birth, hiring, condition, sinking, and replacement
+
+Everything in this section is Ship-specific (`WagonTrain`/`Plane`/`Lorry`/
+`FreightTrain`/`Spaceship` opt out entirely, see 8.5.3) and applies uniformly
+across all four `Faction` kinds today (Company, SoloTrader, PirateBrigade,
+PoliceFleet), even though the mechanics were added at different times for
+different reasons -- Sailor hiring/piracy tainting for PirateBrigade
+realism, then condition/repair/sinking generalized from Company to all four,
+then a still-inert Shore Leave stub. The throughline worth understanding
+before extending any of it: **`Faction` exposes the difference between the
+four kinds as a set of getter "capability flags"** (`poolsCash`,
+`canSmuggle`, `rotatesCrew`, `fencesCargo`, `decaysCondition`,
+`grantsShoreLeave`, `hirePiracyThreshold`) rather than `captain.ts`/`world.ts`
+ever checking `instanceof Company`/`instanceof PirateBrigade` directly. This
+is deliberate, not incidental style: `captain.ts` only imports `Faction` as
+a *type*, to avoid a value-level circular import with `faction.ts` (which
+imports `Captain` as a value) -- see this file's own doc comment. **The
+correct way to add new Faction-kind-dependent behavior is a new getter here,
+not a scattered `instanceof` check.** Every one of these getters defaults to
+the "off"/strictest value on the base `Faction` class and is overridden
+per-subclass only where it needs to differ.
+
+#### 8.5.1 Birth: how a Captain/Ship/Sailor comes into existence
+
+A `Captain` is always constructed directly (`new Captain({...})`), never
+drawn from any pool -- `randomBirthDate`/`randomPersonName`/
+`randomNationality` (§8.4) supply a plausible identity. It only becomes
+"real" (owned, crewed, located) once handed to a `Faction`, one of three ways:
+
+- **Initial fleet** -- the `FleetCrew` array (`[Transport, Captain,
+  homeLocation]` triples) a `Faction` constructor takes: `transport.arriveAt`,
+  `captain.boardTransport`, dedup the Ship/Captain name against the rest of
+  this fleet (`dedupeTransportName`/`dedupeCaptainName` -- a second "Captain
+  Smith" becomes "Captain A. Smith"), and set `transport.crew = [captain]`.
+  Extra seats (beyond the Captain) are **not** filled here -- see 8.5.2 for
+  why.
+- **`Faction.addTransport`** -- the single-recruit runtime equivalent (called
+  by `buildWorld`'s per-Location fleet top-up, `World.addLocation`'s fleet
+  top-up, and `World.acquireShip`'s manual/automatic ship purchases, below).
+  Same wiring, plus extra seats ARE filled immediately here (the world-wide
+  Sailor pool already exists by the time this runs).
+- **`World.acquireShip`** (private, shared by three call sites --
+  `buyShipForCompany` (manual "Buy Ship" UI action), the SoloTrader
+  auto-replacement, and the PoliceFleet auto-replacement, see 8.5.4) --
+  picks a `Captain` via `captainForNewShip`, which reuses the
+  longest-benched matching `Faction.inactiveCaptains` entry **at the exact
+  purchase Location** if one exists, else generates a brand-new one. This is
+  the only place a "dead" Ship's Captain can come back: reactivation is
+  strictly location-matched, so a Captain benched at a Location nobody ever
+  buys a replacement Ship at simply stays benched forever (see 8.5.6).
+
+A Ship's crew (Sailors beyond the Captain) is never constructed directly by
+a caller -- it always comes from `Faction.fillExtraSeats`, which for a `Ship`
+draws from the world-wide Sailor pool (8.5.2); for every OTHER Transport type
+it still generates fresh placeholder `Sailor`s on the spot (`"${transport.name}
+Sailor N"`), since the pool/hiring/piracy machinery is Ship-only.
+
+#### 8.5.2 Hiring, crew rotation, and the piracy taint
+
+`sailorPool.ts` holds one **world-wide pool of unhired `Sailor`s**, bucketed
+per Sea-capable Location (Port or Platform), sized once by
+`generateSailorPool` (called by `World`'s constructor, AFTER every initial
+Faction/Ship exists but BEFORE any of them draws from it) at
+`max(SAILOR_POOL_FLOOR, 2 x that Location's total initial crew demand) x
+SAILOR_POOL_SIZE_MULTIPLIER` -- the 1.25x multiplier exists purely as a
+buffer against the pool shrinking over a long run as `piracy`-tainted
+Sailors accumulate and become unhireable to anyone but pirates (below).
+
+A Ship's open seats are filled from its **current dock's** bucket only, by
+two call sites sharing the same underlying `hireFromSailorPool`:
+`Faction.fillExtraSeats` (initial `crewFleet()`/`addTransport`) and
+`Captain.hireCrewIfPossible` (a global pass over every already-docked ship at
+the start of each day -- formal day-order step 2, §6.1 -- plus a same-day
+call folded into a genuine arrival, §6.1 step 8). Hiring is always free; a
+Location whose pool falls short simply leaves the Ship under-crewed (never
+generates a Sailor fresh) -- it sails slower (`crewSpeedFraction`: 50% speed
+on just the Captain, ramping to 100% at a full `crewRequirement`) rather than
+waiting.
+
+**`Faction.hirePiracyThreshold`** gates which pool Sailors a given Faction
+will hire (`Sailor.piracy <= threshold`): `0.0` (zero tolerance) on the base
+class and `PoliceFleet`, `0.1` on `Company` (inherited by `SoloTrader`), and
+`1.0` (accepts anyone, since `piracy` never exceeds 1) on `PirateBrigade` --
+so pirates recruit their crew from the exact same general population pool a
+merchant would, no separate "pirate recruit" pipeline. Once aboard a
+`PirateBrigade` Ship, a Sailor's `piracy` rises by `PIRACY_INCREASE_PER_DAY`
+(0.01) every day (`World.runDay`'s end-of-day piracy tick, after every Ship's
+crew is settled for the day); everyone else -- crewing any other Faction's
+Ship, or sitting unhired in a pool (`sailorPool.tickPoolPiracy`) -- decays by
+`PIRACY_DECAY_PER_DAY` (0.02) a day, clamped to `[0, 1]`. This is what lets a
+tainted Sailor eventually "launder" back into the hireable population if they
+ever leave a pirate crew -- except a `PirateBrigade`'s own crew never
+rotates off on its own (below), so in practice the only way a pirate Sailor
+re-enters circulation is their Ship sinking (8.5.3).
+
+**`Faction.rotatesCrew`** (`true` on Company/SoloTrader, `false` -- permanent
+crew -- on PirateBrigade/PoliceFleet and the base class) controls whether a
+hire carries a `journeysRemaining` counter (`JOURNEYS_PER_HIRE = 5`),
+decremented once per genuine arrival (`Captain.advanceCrewRotation`, called
+right after that turn's sell/fence step -- §6.1 step 8) and, on hitting zero,
+disembarked back into that Location's pool and immediately backfilled
+(`hireCrewIfPossible`, same turn). A Captain and any PirateBrigade/PoliceFleet
+crew member always carry `journeysRemaining = null` and skip rotation
+entirely.
+
+#### 8.5.3 Condition, repair, and sinking
+
+`Transport.condition` ([0, 1], starts at 1) is pure hardware state -- decay,
+repair, and sinking consequences are all orchestrated by `Captain`/`Faction`,
+never by `Transport` itself (§5.1). Two independent gates control whether any
+of this actually happens for a given Ship:
+
+- **`Transport.handlesZeroCondition()`** -- `true` only on `Ship`. Every
+  other Transport subclass leaves `condition` sitting inert at 1 forever;
+  see 8.5.6 for why this is a real, currently-undocumented-elsewhere
+  asymmetry.
+- **`Faction.decaysCondition`** -- `true` on every concrete Faction today
+  (Company/SoloTrader, PirateBrigade, PoliceFleet); `false` only on the base
+  `Faction` class itself, which nothing is actually instantiated as directly
+  in a running World.
+
+While genuinely `InTransit`, a decaying Ship loses `CONDITION_DECAY_PER_TRANSIT_DAY`
+(0.02, so 25 uninterrupted transit days from full to needing repair) each day
+(`Captain.act`). A docked Ship below `CONDITION_REPAIR_THRESHOLD` (0.5) is
+issued a whole-day `REPAIR` Directive ahead of any trade/contract/patrol/
+reposition logic (`Faction.partitionForRepair`, shared by
+`Company`/`PirateBrigade`/`PoliceFleet`'s `directFleet`) and can't depart
+until repaired -- repair is instant and free the moment that Directive is
+executed (`condition` snaps to 1.0), the only cost being the lost trading day.
+A pirate below threshold can't attack (`PirateBrigade.isEligibleAttacker`); a
+police Ship below threshold doesn't deter a pirate either
+(`PirateBrigade.policePresentAt`) -- both reuse `condition <
+CONDITION_REPAIR_THRESHOLD` as a same-day stand-in for "was issued a REPAIR
+Directive today," since nothing else currently needs a more explicit flag
+(see 8.5.6 for the coupling this creates).
+
+If condition ever bottoms out (`<= 0`), the Ship sinks -- two distinct forms,
+both on the base `Faction` class so a caller holding only a `Faction`-typed
+reference (e.g. `Captain.company`) can invoke either without a value import
+of a specific subclass:
+
+- **`sinkAtSea`** -- condition decay bottoming out while genuinely
+  `InTransit` (`Captain.act`'s InTransit branch). **Fatal**: the Captain
+  (and, implicitly, every other crew member -- see 8.5.6) is gone for good.
+  Cargo/cash are lost (`loseCargoAndCash` -- zeroes a non-pooling Captain's
+  own balance; a pooling Faction's shared purse is untouched, since it was
+  never "on" any one Ship); an in-flight Contract is cancelled. The Captain
+  is still `disembarkAt`'d at the last Location the Transport passed
+  through, purely so a Faction with automatic replacement (8.5.4) has
+  somewhere to spawn the new Ship -- this Captain itself is never reused.
+- **`sinkInPort`** -- a pirate attack's random condition damage
+  (`MIN_ATTACK_CONDITION_DAMAGE`-`MAX_ATTACK_CONDITION_DAMAGE`, 0-0.2 per
+  raid) bottoming out; an attack only ever lands on an already-`AtLocation`
+  victim (`maybeAttackOnArrival`), so this is the only way `sinkInPort`
+  fires. **Survivable**: cargo/cash lost the same way, but every crew member
+  (Captain included) disembarks alive -- ordinary Sailors return to that
+  Location's pool exactly like a normal rotation, and the Captain is benched
+  into `Faction.inactiveCaptains` (no Transport, no crew) rather than
+  discarded.
+
+#### 8.5.4 Ship replacement after a sinking -- an intentional but sharp asymmetry
+
+What happens next differs sharply by Faction kind, and only two of the four
+have any automatic path at all (`World.runDay`'s post-`act()` cleanup, the
+only caller of either):
+
+| Faction kind | Automatic replacement? | Mechanism |
+| --- | --- | --- |
+| **SoloTrader** | Yes, immediate, conditional | `buySoloTraderReplacementIfPossible`: if the (surviving, in-port-sunk) Captain's own cash covers the cheapest `SHIP_CLASSES` entry, buy it, no crew. Otherwise `dissolveSoloTrader` -- the Faction is removed from `world.factions` outright. |
+| **PoliceFleet** | Yes, immediate, unconditional | `buyPoliceReplacementImmediately`: always buys the cheapest class, no crew, regardless of whether the Captain survived (reuses the benched one, or generates a fresh one for a fatal at-sea loss) -- `PoliceFleet.cash` is hardcoded `Infinity`, so affordability never gates it. |
+| **Company** (plain, multi-ship) | **No** | A surviving Captain just sits in `inactiveCaptains` indefinitely. The only way it's ever reactivated is a human manually buying a new Ship (`buyShipForCompany`/`BuyShipPanel`) **at that exact Location** -- `captainForNewShip`'s reuse lookup is location-matched, not fleet-wide. |
+| **PirateBrigade** | **No, and none is planned** | A sunk pirate Ship (always the fatal at-sea case in practice -- see 8.5.6) just permanently shrinks the fleet; there is no manual purchase path either (`buyShipForCompany` only accepts a `Company`). |
+
+The `SoloTrader`/`PoliceFleet` pair exists because both are naturally
+single-decision-maker fleets where "just buy a new one" is the obvious,
+uncomplicated response; `Company` was left manual because a coordinated
+multi-ship fleet losing one Ship isn't really a "must replace immediately"
+event the way a `SoloTrader` losing its only Ship is; `PirateBrigade` was
+deliberately left with no path at all, per the confirmed design driving this
+whole feature. Whether a plain `Company`'s total lack of *any* automatic
+recovery (not even a "the Company itself can decide to buy a replacement
+next time it plans" hook) is a real gap or acceptable is exactly the kind of
+judgment call worth revisiting -- see 8.5.6.
+
+**`buySoloTraderReplacementIfPossible`'s affordability branch is effectively
+dead code today**: `sinkInPort`/`sinkAtSea` already zero a non-pooling
+Captain's own cash (`loseCargoAndCash`) before this ever runs, so a
+freshly-sunk `SoloTrader` survivor always has `$0` the instant the
+replacement check executes -- dissolution is the only branch that can
+currently fire. The affordability check is intentionally still implemented
+correctly (not deleted) for whatever future mechanic might leave a survivor
+with cash (a `$0` ship class, a windfall between sinking and this check,
+...), but as written today it's unreachable in practice.
+
+#### 8.5.5 Shore Leave (`Sailor.shoreLeave`) -- a wired-up but inert stub
+
+The literal final step of `World.runDay`, after the daily piracy tick: for
+every Ship still docked tonight (`AtLocation`) whose Faction grants leave
+(`Faction.grantsShoreLeave` -- `true` on the base class and inherited by
+Company/SoloTrader/PirateBrigade, `false` only on `PoliceFleet`, which stays
+on duty) and that didn't spend today repairing (today's `Directive` --
+`isRepairDirective` -- a repairing crew never gets leave, roll or not), one
+`randRandom() < SHORE_LEAVE_PROBABILITY` (0.5) coin flip per Ship decides
+whether every non-Captain crew member gets `.shoreLeave()` called on them --
+currently an empty placeholder with zero gameplay effect. The gating logic
+(who's eligible, the per-ship roll, the repair/PoliceFleet exclusions) is
+fully built and tested; only the consequence is unimplemented. A future
+implementation (desertion risk, morale, a wage bonus, a piracy-taint
+side-effect for a pirate crew going ashore, ...) would need to reconcile
+with `Faction.rotatesCrew`/`inactiveCaptains` if it ever disembarks anyone,
+and with the piracy tick (which reads `captain.transport.crew` the same
+night) if it changes who's aboard.
+
+#### 8.5.6 Known inconsistencies and rough edges
+
+Collected here rather than scattered as caveats above, since they're the
+kind of thing worth checking before building on top of this system:
+
+- **Condition/repair/sinking is Ship-only, silently.** `Transport.condition`
+  is a field on the base class, so a Company fleet built from
+  `WagonTrain`/`Plane`/`Lorry`/`FreightTrain`/`Spaceship` (all fully valid
+  Transports elsewhere in the engine) is completely immune to wear, repair
+  requirements, and sinking -- `handlesZeroCondition()` is only overridden on
+  `Ship`. Nothing prevents building a non-Ship Company today; nothing warns
+  that doing so opts it out of this entire mechanic. Extending
+  `handlesZeroCondition()`/decay to other Transport types (or explicitly
+  documenting the Ship-only scope closer to where `condition` is declared)
+  is the natural next step if this ever matters.
+- **`PirateBrigade` can only ever crew `Ship`s** (constructor and
+  `addTransport` both throw on a non-Ship Transport) -- consistent with the
+  point above (piracy/patrol only make sense at sea today), but it does mean
+  the whole condition/piracy-taint/Shore Leave system this section describes
+  is implicitly a sea-only subsystem layered onto an otherwise multi-modal
+  engine (Land/Air/Space routing all work fine for ordinary Company trade).
+- **A plain multi-ship `Company` has no automatic ship-loss recovery at
+  all** (8.5.4) -- of the four Faction kinds, it's the only one where a
+  benched `inactiveCaptains` entry can realistically sit forever, since
+  reactivation depends on a human happening to buy a Ship at that exact
+  Location. Whether this is an intentional "Companies must be actively
+  managed" design point or a gap (a `Company.directFleet` hook that
+  self-funds a replacement, mirroring `SoloTrader`, would be the natural
+  fix) hasn't been explicitly decided.
+- **`sinkAtSea` never explicitly touches ordinary crew.** Unlike
+  `sinkInPort` (which loops `transport.crew` and individually disembarks
+  each non-Captain member into the Location pool), `sinkAtSea` only handles
+  the Captain -- consistent with the doc comment's "the crew AND the Captain
+  die, permanently," since an ordinary Sailor is never tracked anywhere
+  except a Transport's own `crew` array, so once that Transport becomes
+  unreferenced they simply cease to exist along with it. This is correct,
+  not a bug, but easy to misread as an oversight at a glance -- there's no
+  explicit "kill the crew" step because none is needed.
+- **A `Captain`'s own `piracy` field (inherited from `Sailor`) is tracked
+  but functionally inert.** It ticks up/down exactly like any crew member's
+  (`World.runDay`'s piracy tick iterates `transport.crew`, which includes
+  the Captain), but `hirePiracyThreshold` only ever gates hiring a Sailor
+  *from the pool* -- a Captain is never drawn from there, so nothing ever
+  reads a Captain's own `piracy` for any decision.
+- **`condition < CONDITION_REPAIR_THRESHOLD` doubles as "was issued a REPAIR
+  Directive today"** for both `PirateBrigade.isEligibleAttacker` and
+  `policePresentAt` (8.5.3) -- reliable only because `partitionForRepair`
+  unconditionally issues that Directive to every idle-in-port Ship under
+  threshold, with nothing else able to leave a Ship in that state while
+  docked. Correct today, but a latent coupling: any future change that lets
+  a Ship sit below threshold WITHOUT a REPAIR Directive (e.g. a
+  closed-port exception) would silently and incorrectly disable attacking/
+  deterrence for it too.
+- **Stale comments this session found and fixed in passing**
+  (`transport.ts`'s `CONDITION_*` constants doc, `faction.ts`'s
+  `decaysCondition` getter doc, `captain.ts`'s `act()` decay comment) all
+  used to claim PirateBrigade/PoliceFleet were exempt from condition decay --
+  false since both were given `decaysCondition = true` overrides. Worth
+  scanning for the same pattern elsewhere before trusting an inline comment
+  over the actual override.
+- **This document itself was stale in several places** before this pass:
+  §2's module map/dependency chain referenced a `crew.ts`/`Crew` class that
+  no longer exists (replaced by `person.ts`'s `Person` + `sailor.ts`'s
+  `Sailor`, per this repo's "Person/sailor/captain rework" commit), and
+  §8.3/§11.1 described `PirateBrigade`/`PoliceFleet` as absent from
+  `buildWorld()`'s default output when they've since become part of it by
+  default. `CLAUDE.md` (the terser guidance file, not updated by this pass)
+  still has the same stale `crew (Crew/Sailor)` module-chain reference as
+  of this writing -- worth fixing there too next time that file is touched.
 
 ## 9. Contracts: location-funded supply orders, the BulletinBoard, and issuer/fulfiller roles
 
@@ -1148,6 +1508,8 @@ buildWorld(3000, {
   minStockpileDays: 14,                          // days-of-consumption buffer minStockpile represents
   consumedStockpileFactor: 2.0,                  // starting stockpile, as a multiple of minStockpile
   locationsPerPoliticalEntity: 5,                 // target Locations grouped into each PoliticalEntity (§3.6)
+  numPirateShips: 20,                            // PirateBrigade fleet size (§8.2), 0 for a pirate-free world
+  numPoliceShips: 80,                            // PoliceFleet fleet size (§8.3), 0 for a police-free world
 });
 ```
 
@@ -1165,8 +1527,10 @@ index parity (`Company 001`, `Solo 002`, `Company 003`, ...) -- 17
 cash. Fleet composition (home ports, ship class, crew size, Captain names)
 is drawn from a dedicated `Rng(99)` stream, independent of both the
 geography seed (`WORLD_GEN_SEED`) and `World`'s own seed -- three
-independent streams total. `numPoliceShips: 0` is passed explicitly, and no
-`PirateBrigade` is ever constructed (§8.2-8.3).
+independent streams total. `buildWorld` also builds a 20-ship `PirateBrigade`
+and an 80-ship `PoliceFleet` by default (§8.2-8.3) -- pass `numPirateShips: 0`
+and/or `numPoliceShips: 0` for a raid-free world (e.g. a sweep isolating
+their effect on the stockpile metric).
 
 `shipsPerCompany`/`arbitrageShipFraction`/the 5-ships/location ratio were
 calibrated via seed-averaged sweeps against the stockpile-vs-minimum ratio
@@ -1398,11 +1762,23 @@ behavior, event rolls, and agent outcomes vary with that seed.
   itself.
 - **New Transport type**: subclass `Transport`, override
   `allowedRouteTypes()` if it's physically restricted, add it to
-  `SHIP_CLASSES` if it's ship-like.
+  `SHIP_CLASSES` if it's ship-like. Override `handlesZeroCondition()` too if
+  it should participate in the condition/repair/sinking system (§8.5.3) --
+  today only `Ship` does, so a new non-`Ship` Transport is automatically
+  exempt unless you opt it in explicitly.
 - **New Faction behavior**: subclass `Faction` and override `directFleet`
   -- `World.runDay` already treats an empty returned `Map` as "let this
   fleet act autonomously," so any subclass that supplies real directives is
   picked up automatically.
+- **New behavior that varies by EXISTING Faction kind** (Company/SoloTrader/
+  PirateBrigade/PoliceFleet), as opposed to a whole new subclass: add a new
+  getter to the base `Faction` class (defaulted to the strictest/off value)
+  and override it per subclass, following `poolsCash`/`canSmuggle`/
+  `rotatesCrew`/`fencesCargo`/`decaysCondition`/`grantsShoreLeave`/
+  `hirePiracyThreshold`'s existing pattern (§8.5) -- not an `instanceof`
+  check in `captain.ts`/`world.ts`, since `captain.ts` only imports
+  `Faction` as a type specifically to avoid a value-level circular import
+  with `faction.ts`.
 - **New event kind**: subclass `Event`, give the constructor a fixed
   `type`/`scope`, decide where `subject` gets stamped (at construction if
   known, or externally once tied to a specific entity -- see
@@ -1570,9 +1946,6 @@ The *magnitude* of each shock lives in its template list:
   non-pooling victim's cash is stolen per attack (§8.2); `Location.fenceFraction`
   (default `0.5`, per-Location) -- how much of a seized cargo's market
   value a pirate actually recovers when fencing it.
-- **`PirateBrigade.maxCarousingToAttack`** / `carousingCostPerCrew` /
-  `carousingIncreaseByDay` / `maxCarousing` -- how often a pirate crew is
-  too distracted by shore leave to raid a co-located victim.
 - **`PirateBrigade.laziness`** (default `1`) -- how many days between
   re-scans of where target Companies' ships are concentrated.
 - **`PoliceFleet.patrolIntervalDays`** (default `5`) / `numPoliceShips`

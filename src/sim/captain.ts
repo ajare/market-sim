@@ -8,7 +8,7 @@
 import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
-import { Ship, crewSpeedFraction, type TransportStatus } from "./transport";
+import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
@@ -122,7 +122,12 @@ export interface ContractDeliveryDirective {
   contract: Contract;
 }
 
-export type Directive = TradeDirective | RepositionDirective | ContractDeliveryDirective;
+/** Directs a docked Ship whose condition has fallen below CONDITION_REPAIR_THRESHOLD to spend the WHOLE day repairing instead of trading/departing -- see Company.directFleet (which issues this ahead of any trade/reposition/contract directive) and Captain.act. */
+export interface RepairDirective {
+  action: "REPAIR";
+}
+
+export type Directive = TradeDirective | RepositionDirective | ContractDeliveryDirective | RepairDirective;
 
 function isRepositionDirective(d: Directive): d is RepositionDirective {
   return "action" in d && d.action === "REPOSITION";
@@ -130,6 +135,10 @@ function isRepositionDirective(d: Directive): d is RepositionDirective {
 
 function isContractDeliveryDirective(d: Directive): d is ContractDeliveryDirective {
   return "action" in d && d.action === "CONTRACT_DELIVER";
+}
+
+export function isRepairDirective(d: Directive): d is RepairDirective {
+  return "action" in d && d.action === "REPAIR";
 }
 
 function excludeRouteKey(commodity: string, location: string): string {
@@ -143,11 +152,9 @@ export interface CaptainInit extends Omit<PersonInit, "location" | "transport" |
   minDailyReturnPct?: number;
   priceImpact?: number;
   agentEventProbability?: number;
-  carousing?: number;
 }
 
 export class Captain extends Sailor {
-  carousing: number;
   private _ownCash: number;
   startingCash: number | null;
   repositionReturnMultiplier: number;
@@ -183,7 +190,6 @@ export class Captain extends Sailor {
     // moves it onto the Transport (see Person.boardTransport) once assigned.
     super({ ...init, dailyWage: 0.0, location: init.homeLocation });
     this.rank = "Captain";
-    this.carousing = init.carousing ?? 0.0;
     this._ownCash = init.startingCash ?? 0.0;
     this.startingCash = init.startingCash ?? null;
     this.repositionReturnMultiplier = init.repositionReturnMultiplier ?? 1.25;
@@ -290,15 +296,22 @@ export class Captain extends Sailor {
    * A hire made for a Company/SoloTrader (Faction.rotatesCrew) is only good
    * for JOURNEYS_PER_HIRE journeys before disembarking again -- see
    * advanceCrewRotation. A PirateBrigade/PoliceFleet hire is permanent.
+   *
+   * Public (not `private`) since World.runDay calls this directly, in its
+   * own global pass over every already-docked captain (formal day order
+   * step 2 -- see CLAUDE.md), before any captain's own act() runs today. A
+   * ship that instead arrives (or finishes crew rotation) THIS SAME DAY gets
+   * its hire folded into act() itself, right after that turn's rotation --
+   * see act()'s justArrived handling.
    */
-  private hireCrewIfPossible(): void {
+  hireCrewIfPossible(): void {
     const transport = this.transport!;
     if (!(transport instanceof Ship)) return;
     const seatsOpen = transport.crewRequirement - transport.crew.length;
     if (seatsOpen <= 0) return;
     const location = transport.location;
     if (location === null || !(location.terminalTypes.has("Port") || location.terminalTypes.has("Platform"))) return;
-    const hired = hireFromSailorPool(location.name, seatsOpen);
+    const hired = hireFromSailorPool(location.name, seatsOpen, this.company?.hirePiracyThreshold ?? 0.0);
     const rotates = this.company?.rotatesCrew === true;
     for (const sailor of hired) {
       if (rotates) sailor.journeysRemaining = JOURNEYS_PER_HIRE;
@@ -390,6 +403,11 @@ export class Captain extends Sailor {
     // still applies and ticks down below.
     this.activeAgentEvents = this.activeAgentEvents.filter((e) => e.tick());
 
+    // Formal day order (see CLAUDE.md): contracts issued and crew hiring for
+    // already-docked ships both happen in World.runDay, before ANY captain's
+    // act() runs today -- see hireCrewIfPossible's own doc comment. Only an
+    // arrival's own hire (paired with that ship's crew rotation, below) still
+    // happens inside this method.
     let justArrived = false;
     if (this.status === "InTransit") {
       // Crew wages are no longer owed day-by-day here -- the whole trip's
@@ -398,16 +416,35 @@ export class Captain extends Sailor {
       // the estimated day count, so there's nothing left to deduct or check
       // affordability against while already underway.
       this.transport!.consumeFuel(this.dailyFuelBurn);
+
+      // Condition decay -- gated per-Faction by Faction.decaysCondition
+      // (true for every concrete Faction today: Company/SoloTrader,
+      // PirateBrigade, PoliceFleet). A Ship whose condition bottoms out here, still genuinely underway,
+      // sinks AT SEA -- fatal, unlike a pirate-attack-induced sink (always
+      // AtLocation by the time it happens -- see maybeAttackOnArrival,
+      // below) -- see Company.sinkAtSea. `this` is discarded the instant
+      // this fires, so nothing else in act() may run afterward.
+      if (this.transport!.handlesZeroCondition() && this.company?.decaysCondition === true) {
+        this.transport!.condition -= CONDITION_DECAY_PER_TRANSIT_DAY;
+        if (this.transport!.condition <= 0) {
+          this.company.sinkAtSea(this);
+          return;
+        }
+      }
+
       this.daysRemaining -= 1;
       if (this.daysRemaining > 0) return;
       if (!this.arrive(day, buyMarkets, closedLocations)) return;
       justArrived = true;
-      // Give a co-located pirate a shot at this delivery BEFORE it sells --
-      // otherwise a ship that arrives and sells within the same act() call
-      // is never observably "at this Location with cargo" at any day
-      // boundary, and the once-a-day PirateBrigade scan (which runs before
-      // any captain's act()) can never catch it. See PirateBrigade.maybeAttackOnArrival.
-      pirateBrigade?.maybeAttackOnArrival(day, this, sellMarkets);
+      // The only remaining attack trigger -- BEFORE this ship sells/fences,
+      // since a docked ship that's already sold has nothing left to raid.
+      // See PirateBrigade.maybeAttackOnArrival. This can sink the Ship
+      // (survivable -- see Company.sinkInPort), which clears `this.transport`
+      // -- every remaining line in this method reads it (starting with the
+      // very next one, `this.locationName`), so bail out immediately rather
+      // than let a benched Captain crash the rest of its own turn.
+      pirateBrigade?.maybeAttackOnArrival(day, this);
+      if (this.transport === null) return;
     }
 
     if (closedLocations.has(this.locationName)) {
@@ -418,7 +455,11 @@ export class Captain extends Sailor {
     }
 
     if (this.cargo !== null) {
-      this.sellCargoIfPossible(day, sellMarkets);
+      if (this.company?.fencesCargo === true) {
+        this.fenceCargoIfPossible(day, sellMarkets);
+      } else {
+        this.sellCargoIfPossible(day, sellMarkets);
+      }
     }
 
     if (this.groundedDaysRemaining > 0) {
@@ -426,16 +467,23 @@ export class Captain extends Sailor {
       return;
     }
 
-    // Runs even on the arrival day itself -- a Ship shouldn't sit under-crewed
-    // at a Port for a whole extra day just because it happened to just dock
-    // there, before the "no same-day redeparture" rule below applies.
-    this.hireCrewIfPossible();
-
-    if (justArrived) return;
+    if (justArrived) {
+      // Crew due to rotate off disembarks, and any vacated seats are
+      // refilled immediately, right here -- both AFTER this turn's
+      // sell/fence, matching the formal day order's last two steps.
+      this.advanceCrewRotation();
+      this.hireCrewIfPossible();
+      return;
+    }
 
     if (this.cargo === null) {
       if (directedRoute !== null) {
-        if (isRepositionDirective(directedRoute)) {
+        if (isRepairDirective(directedRoute)) {
+          // Spends the WHOLE day repairing -- no trade, no departure, just
+          // this. Free (no cash cost); see Company.directFleet, the only
+          // source of this Directive.
+          this.transport!.condition = 1.0;
+        } else if (isRepositionDirective(directedRoute)) {
           this.executeDirectedReposition(directedRoute.destination, day, buyMarkets);
         } else if (isContractDeliveryDirective(directedRoute)) {
           this.executeContractDelivery(directedRoute.contract, day, buyMarkets);
@@ -463,7 +511,6 @@ export class Captain extends Sailor {
       return false;
     }
 
-    this.advanceCrewRotation();
     this.status = "AtLocation";
     this.destination = null;
     this.dailyFuelBurn = 0.0;
@@ -478,6 +525,8 @@ export class Captain extends Sailor {
    * SoloTrader hires ever carry a non-null journeysRemaining (see
    * hireCrewIfPossible/Faction.rotatesCrew) -- the Captain and any
    * PirateBrigade/PoliceFleet crew are permanent and skip this entirely.
+   * Called from act() AFTER this turn's sell/fence step, not from arrive()
+   * itself -- see act()'s justArrived handling.
    */
   private advanceCrewRotation(): void {
     const transport = this.transport!;
@@ -579,6 +628,52 @@ export class Captain extends Sailor {
       fuelUnitsConsumed: round2(this.cargo.fuelUnitsConsumed),
       fuelCostPaid: round2(this.cargo.fuelCostTotal),
       profit: round2(profit),
+    });
+    this.cargo = null;
+  }
+
+  /**
+   * PirateBrigade-only counterpart to sellCargoIfPossible (see
+   * Faction.fencesCargo) -- converts cargo seized in a raid (see
+   * PirateBrigade.attack) into cash at this Location's fence price, a
+   * discount off the CURRENT live market price, looked up fresh right now
+   * rather than snapshotted at the moment of seizure. There's no cost basis
+   * (it was stolen, not bought), so the full proceeds are profit. The fence
+   * takes physical possession of the goods -- they re-enter this Location's
+   * stockpile rather than vanishing from the economy.
+   */
+  private fenceCargoIfPossible(day: number, sellMarkets: Map<string, Market>): void {
+    if (this.cargo === null) return;
+    const cargo = this.cargo;
+    const market = sellMarkets.get(marketKey(this.locationName, cargo.commodity));
+    const location = getLocation(this.locationName);
+    const fenceFraction = location !== undefined ? location.fenceFraction : 0.5;
+    const unitValue = market !== undefined ? market.price : 0;
+    const fencePrice = round2(unitValue * fenceFraction);
+    const proceeds = round2(fencePrice * cargo.quantity);
+
+    this.cash += proceeds;
+    this.realizedProfit += proceeds;
+
+    if (location !== undefined && cargo.quantity > 0) {
+      location.stockpiles[cargo.commodity] = (location.stockpiles[cargo.commodity] ?? 0) + cargo.quantity;
+    }
+
+    this.tradeLog.push({
+      day,
+      action: "SELL",
+      commodity: cargo.commodity,
+      location: this.locationName,
+      destination: null,
+      quantity: round2(cargo.quantity),
+      price: fencePrice,
+      distance: null,
+      routeType: null,
+      travelDays: null,
+      fuelPrice: null,
+      fuelUnitsConsumed: null,
+      fuelCostPaid: 0.0,
+      profit: proceeds,
     });
     this.cargo = null;
   }
@@ -805,6 +900,27 @@ export class Captain extends Sailor {
     return profit / totalDays;
   }
 
+  /**
+   * Formal day-order step 5 (see CLAUDE.md) -- puts this Captain underway
+   * along `path`'s first leg. Split out from the buy step (step 4, which
+   * already set `this.cargo` and paid for it before calling this) as its own
+   * function call, not fused, so a future step can be inserted between
+   * buying and departing without threading more state through one call.
+   * Shared by executeLocalRoute and executeContractDelivery -- both buy then
+   * hand off to this for the actual departure bookkeeping.
+   */
+  private leavePort(path: Route[], originLocation: string, leg1FuelUnits: number): void {
+    this.status = "InTransit";
+    this.transport!.refuel(leg1FuelUnits);
+
+    const firstLeg = path[0];
+    this.path = path.slice(1);
+    const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
+    this.destination = nextNode;
+    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay());
+    this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
+  }
+
   private executeLocalRoute(
     route: { commodity: string; destination: string },
     day: number,
@@ -835,9 +951,8 @@ export class Captain extends Sailor {
     const path = econ.path;
     if (path === null || path.length === 0) return;
 
-    const firstLeg = path[0];
     const originLocation = this.locationName;
-    const leg1FuelUnits = firstLeg.distance * this.currentFuelConsumptionRate() * quantity;
+    const leg1FuelUnits = path[0].distance * this.currentFuelConsumptionRate() * quantity;
     const leg1FuelCost = leg1FuelUnits * fuelPrice;
     // Crew wages for the WHOLE trip (every leg, see routeEconomics) are paid
     // upfront here alongside goods/fuel/fixed-cost -- there's no later daily
@@ -870,14 +985,6 @@ export class Captain extends Sailor {
       departureDay: day,
       contract: null,
     };
-    this.status = "InTransit";
-    this.transport!.refuel(leg1FuelUnits);
-
-    this.path = path.slice(1);
-    const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
-    this.destination = nextNode;
-    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay());
-    this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
 
     this.tradeLog.push({
       day,
@@ -895,6 +1002,8 @@ export class Captain extends Sailor {
       fuelCostPaid: round2(leg1FuelCost),
       profit: null,
     });
+
+    this.leavePort(path, originLocation, leg1FuelUnits);
   }
 
   /**
@@ -987,14 +1096,6 @@ export class Captain extends Sailor {
       departureDay: day,
       contract,
     };
-    this.status = "InTransit";
-    this.transport!.refuel(leg1FuelUnits);
-
-    this.path = path.slice(1);
-    const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
-    this.destination = nextNode;
-    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay());
-    this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
 
     this.tradeLog.push({
       day,
@@ -1012,6 +1113,8 @@ export class Captain extends Sailor {
       fuelCostPaid: round2(leg1FuelCost),
       profit: null,
     });
+
+    this.leavePort(path, originLocation, leg1FuelUnits);
   }
 
   private planAndDepart(
