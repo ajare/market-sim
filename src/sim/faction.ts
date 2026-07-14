@@ -152,15 +152,18 @@ export class Faction {
     // Lost at sea, but still disembarked (not just nulled) at the last
     // Location its Transport passed through (kept live even mid-transit --
     // see Transport.location's own doc comment) -- purely for bookkeeping:
-    // World.runDay's PoliceFleet auto-replacement (the only reader of a
-    // just-died Captain's `.location`) needs SOME Location to spawn the
+    // World.runDay's PoliceFleet/Company auto-replacement (the only readers
+    // of a just-died Captain's `.location`) need SOME Location to spawn the
     // replacement at, even though this Captain itself is fully discarded
     // (not tracked anywhere after this) and never reactivated.
-    const lastLocation = captain.transport!.location;
+    const sunkTransport = captain.transport!;
+    const lastLocation = sunkTransport.location;
     this.loseCargoAndCash(captain);
     this.removeTransport(captain);
     if (lastLocation !== null) captain.disembarkAt(lastLocation);
     else captain.transport = null;
+    // Recorded AFTER transport is otherwise cleared -- see Captain.lastTransport.
+    captain.lastTransport = sunkTransport;
   }
 
   /**
@@ -186,6 +189,8 @@ export class Faction {
     this.removeTransport(captain);
     captain.disembarkAt(location);
     this.inactiveCaptains.push(captain);
+    // See Captain.lastTransport.
+    captain.lastTransport = transport;
   }
 
   /**

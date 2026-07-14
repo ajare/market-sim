@@ -8,7 +8,7 @@
 import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
-import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type TransportStatus } from "./transport";
+import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
@@ -162,6 +162,17 @@ export class Captain extends Sailor {
   priceImpact: number;
   agentEventProbability: number;
   company: Faction | null = null;
+
+  /**
+   * The Transport this Captain was crewing the instant it sank (see
+   * Faction.sinkAtSea/sinkInPort, the only writers) -- `transport` itself is
+   * already null by the time either of those returns, so this is the only
+   * way a caller further up the stack (World.runDay's post-act() cleanup)
+   * can still tell what kind of Ship needs replacing. Left stale (not
+   * cleared) once set; only meaningful to read in the same turn a sinking
+   * just happened, while `transport` is still null.
+   */
+  lastTransport: Transport | null = null;
 
   destination: string | null = null;
   daysRemaining = 0;

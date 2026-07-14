@@ -10,7 +10,7 @@
 import { type Event, MarketEvent, LocationClosure } from "./events";
 import { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
-import { Ship, SHIP_CLASSES } from "./transport";
+import { Ship, SHIP_CLASSES, type Transport } from "./transport";
 import { Captain, isRepairDirective, type Directive } from "./captain";
 import { ENGLISH_NAMES, SPANISH_NAMES, randomPersonName, type Gender, type NamePool, type NameRng } from "./names";
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
@@ -513,6 +513,77 @@ export class World {
   }
 
   /**
+   * The `SHIP_CLASSES` entry that best matches `sunk` -- exact on
+   * `cargoCapacity` (unique per class, and every real in-game Ship is a
+   * direct `shipClass.clone()`, see `buildWorld`/`acquireShip`, so this is
+   * an exact hit in practice), falling back to the closest `cargoCapacity`
+   * for a Ship that never came from a preset at all (a hand-authored World
+   * editor Ship with bespoke stats). Always returns something, since
+   * `SHIP_CLASSES` is never empty.
+   */
+  private matchingShipClass(sunk: Transport): Ship {
+    const classes = Object.values(SHIP_CLASSES);
+    const exact = classes.find((c) => c.cargoCapacity === sunk.cargoCapacity);
+    if (exact !== undefined) return exact;
+    return classes.reduce((a, b) =>
+      Math.abs(a.cargoCapacity - sunk.cargoCapacity) <= Math.abs(b.cargoCapacity - sunk.cargoCapacity) ? a : b,
+    );
+  }
+
+  /**
+   * `target`, or the next cheapest `SHIP_CLASSES` entry the Company can
+   * actually afford -- never a class MORE expensive than `target` (this
+   * never "upgrades" past what was lost). Null if even the cheapest class
+   * in the whole roster is unaffordable.
+   */
+  private affordableShipClass(company: Company, target: Ship): Ship | null {
+    const cheaperOrEqual = Object.values(SHIP_CLASSES)
+      .filter((c) => c.purchasePrice <= target.purchasePrice)
+      .sort((a, b) => b.purchasePrice - a.purchasePrice);
+    return cheaperOrEqual.find((c) => company.cash >= c.purchasePrice) ?? null;
+  }
+
+  /**
+   * Triggered immediately (same day, same turn) whenever a plain (non-
+   * SoloTrader) Company's Ship sinks -- UNCONDITIONALLY, whether `captain`
+   * survived (benched in `company.inactiveCaptains`, sunk in port) or died
+   * (sunk at sea) -- see World.runDay's post-act() check, the only caller.
+   * Location depends on which: sunk IN PORT buys the replacement right
+   * there (`captain.location`, exactly like SoloTrader/PoliceFleet); sunk AT
+   * SEA (no dock to buy at) instead falls back to the Company's own
+   * `homeLocation` -- unlike SoloTrader/PoliceFleet, a plain Company always
+   * has one. Tries to match the sunk Ship's own class first
+   * (`matchingShipClass`, off `captain.lastTransport` -- see its doc comment
+   * for why `captain.transport` itself is already null here), falling back
+   * to progressively cheaper classes if the Company can't afford it
+   * (`affordableShipClass`); does nothing at all if even the cheapest class
+   * is unaffordable, or if there's nowhere to buy it (a homeLocation-less
+   * Company -- shouldn't happen for a real multi-ship Company, but the type
+   * allows it). Crews normally (unlike SoloTrader/PoliceFleet's deliberate
+   * `noCrew`), matching the manual "Buy Ship" UI action's own behavior --
+   * see `buyShipForCompany`. `captainForNewShip` (inside `acquireShip`)
+   * already implements "reuse the longest-benched inactive Captain at this
+   * Location, else generate a new one," so no separate logic is needed here
+   * for that part.
+   */
+  private buyCompanyReplacementIfPossible(company: Company, captain: Captain): void {
+    const sunkTransport = captain.lastTransport;
+    if (sunkTransport === null) return; // defensive; always set by sinkAtSea/sinkInPort
+    const sunkInPort = company.inactiveCaptains.includes(captain);
+    const locationName = sunkInPort ? captain.location?.name ?? null : company.homeLocation;
+    if (locationName === null) return;
+    const location = getLocation(locationName);
+    if (location === undefined) return;
+
+    const target = this.matchingShipClass(sunkTransport);
+    const shipClass = this.affordableShipClass(company, target);
+    if (shipClass === null) return;
+
+    company.cash -= shipClass.purchasePrice;
+    this.acquireShip(company, location, shipClass, false);
+  }
+
+  /**
    * Adds a brand-new Location at (x, y) (world-unit coordinates), affiliated
    * with `politicalEntity` -- the live-simulation counterpart of the editor's
    * click-to-place (see NetworkView.tsx). Named from the entity's
@@ -796,12 +867,11 @@ export class World {
       // longer belongs in the daily loop's own captains list. A benched
       // SoloTrader Captain gets an immediate shot at a replacement Ship
       // (see buySoloTraderReplacementIfPossible) if it survived; a sunk
-      // PoliceFleet Ship gets one UNCONDITIONALLY, survived or not (see
-      // buyPoliceReplacementImmediately) -- a benched regular Company
-      // Captain, or a PirateBrigade Captain (dead or benched), just leaves
-      // a gap (regular-Company reactivation only happens later, via a fresh
-      // Ship purchase at the same Location -- see acquireShip; PirateBrigade
-      // has no replacement mechanism at all).
+      // PoliceFleet or plain Company Ship gets one UNCONDITIONALLY, survived
+      // or not (see buyPoliceReplacementImmediately/
+      // buyCompanyReplacementIfPossible) -- only a PirateBrigade Captain
+      // (dead or benched) leaves a permanent gap; it has no replacement
+      // mechanism at all.
       if (trader.transport === null) {
         const idx = this.captains.indexOf(trader);
         if (idx !== -1) this.captains.splice(idx, 1);
@@ -809,6 +879,8 @@ export class World {
           this.buySoloTraderReplacementIfPossible(trader.company, trader);
         } else if (trader.company instanceof PoliceFleet) {
           this.buyPoliceReplacementImmediately(trader.company, trader);
+        } else if (trader.company instanceof Company) {
+          this.buyCompanyReplacementIfPossible(trader.company, trader);
         }
       }
     }
