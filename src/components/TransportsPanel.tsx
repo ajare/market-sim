@@ -43,7 +43,7 @@ export function TransportsPanel() {
                         <td>{member.name}</td>
                         <td>
                           {/* The Captain isn't hired/rehired the way a plain
-                              Sailor is (see Faction.crewTransport/
+                              Sailor is (see Faction.crewFleet/
                               hireCrewIfPossible), so only Able Seamen get a
                               Kill button -- Captain extends Sailor now, so
                               `instanceof Sailor` alone would wrongly include

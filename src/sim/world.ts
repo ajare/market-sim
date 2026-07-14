@@ -17,6 +17,7 @@ import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNa
 import { randomLocationName } from "./locationNames";
 import { NATIONALITY_POOLS, randomNationality } from "./nationality";
 import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
+import { generateSailorPool } from "./sailorPool";
 import { locationSupportsTransport } from "./companyHome";
 import type { PoliticalEntity } from "./politicalEntity";
 import { primeRouteGraphCache } from "./pathfinding";
@@ -245,6 +246,15 @@ export class World {
     } else {
       this.policeFleet = null;
     }
+
+    // Every initial Faction (Company/SoloTrader from init.factions, plus the
+    // PirateBrigade/PoliceFleet just built above) has registered its
+    // Transports but only seated its Captains so far -- crewFleet() (which
+    // fills the remaining seats from the Sailor pool) hasn't run yet, so the
+    // pool can be sized off every Faction's true demand before any of them
+    // draw from it. See sailorPool.generateSailorPool / Faction.crewFleet.
+    generateSailorPool(this.factions);
+    for (const faction of this.factions) faction.crewFleet();
 
     this.captains = [...(init.traders ?? []), ...this.factions.flatMap((f) => f.captains)];
     this.agentOrderFn = init.agentOrderFn ?? randomAgentOrder;

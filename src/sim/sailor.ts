@@ -14,8 +14,13 @@ export const DEFAULT_SAILOR_DAILY_WAGE = 20.0;
 export const SAILOR_MIN_AGE = 18;
 export const SAILOR_MAX_AGE = 50;
 
+/** Journeys a Company/SoloTrader hire is good for before disembarking at the next dock and rejoining that Location's Sailor pool -- see Captain's advanceCrewRotation/hireCrewIfPossible and Faction.rotatesCrew. */
+export const JOURNEYS_PER_HIRE = 5;
+
 export class Sailor extends Person {
   rank: Rank = "Able Seaman";
+  /** Journeys left before this Sailor's hire term is up (Company/SoloTrader hires only -- see JOURNEYS_PER_HIRE/Faction.rotatesCrew). Null means permanent crew: the Captain, a PirateBrigade/PoliceFleet hire, or a pool Sailor not yet hired by anyone. */
+  journeysRemaining: number | null = null;
 
   constructor(init: PersonInit) {
     super({ dailyWage: DEFAULT_SAILOR_DAILY_WAGE, ...init });

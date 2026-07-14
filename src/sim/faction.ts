@@ -14,7 +14,7 @@
  * dynamically (like Python's MRO), so it works correctly here.
  */
 import { Captain, type Directive, type TradeDirective } from "./captain";
-import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
+import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE, JOURNEYS_PER_HIRE } from "./sailor";
 import { Ship, type Transport } from "./transport";
 import { getRoutes } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
@@ -25,9 +25,9 @@ import type { BulletinBoard, Contract, ContractType } from "./contracts";
 import type { PoliticalEntity } from "./politicalEntity";
 import { locationSupportsTransport } from "./companyHome";
 import { round2 } from "./utils";
-import { randomGender, randomPersonName, type NameRng } from "./names";
+import { randomGender, type NameRng } from "./names";
 import { randomBirthDate } from "./person";
-import { NATIONALITY_POOLS, randomNationality } from "./nationality";
+import { hireFromSailorPool } from "./sailorPool";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
@@ -78,6 +78,11 @@ export class Faction {
     return false;
   }
 
+  /** Whether this Faction's hired Sailors rotate out after JOURNEYS_PER_HIRE journeys (see Captain.advanceCrewRotation/hireCrewIfPossible) -- true for Company/SoloTrader, false (permanent crew) for PirateBrigade/PoliceFleet and by default here. */
+  get rotatesCrew(): boolean {
+    return false;
+  }
+
   name: string;
   captains: Captain[] = [];
   /** The PoliticalEntity this Faction is affiliated with, or null for an independent operator (the default). Purely informational -- affiliation doesn't influence trading behaviour. Set by buildWorldFromJson from the authored World; a procedurally-built Faction stays independent. */
@@ -99,7 +104,13 @@ export class Faction {
       this.captains.push(captain);
       this.dedupeTransportName(transport);
       this.dedupeCaptainName(captain);
-      this.crewTransport(transport, captain);
+      // Only the Captain's own seat is filled here -- extra Sailor seats are
+      // deferred to crewFleet(), since the world-wide Sailor pool can only be
+      // sized correctly once every initial Faction's demand (Company/
+      // SoloTrader/PirateBrigade/PoliceFleet) is known (see
+      // sailorPool.generateSailorPool / World's constructor, which calls
+      // crewFleet() on every Faction right after generating the pool).
+      transport.crew = [captain];
     }
     this.startingCash = startingCash;
     if (this.poolsCash) {
@@ -164,15 +175,7 @@ export class Faction {
     this.captainNames.add(captain.name);
   }
 
-  /** A freshly generated Sailor with a full name/gender from a uniformly randomly chosen nationality and a plausible birth date -- a Ship's crew (see crewTransport). Nickname stays null. */
-  private randomShipSailor(): Sailor {
-    const nationality = randomNationality(globalNameRng);
-    const { name, gender } = randomPersonName(globalNameRng, NATIONALITY_POOLS[nationality].names);
-    const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
-    return new Sailor({ name, gender, dateOfBirth });
-  }
-
-  /** A Sailor with the old placeholder "${transport.name} Sailor N" name -- every non-Ship Transport type's crew (the nickname/hiring/speed mechanic in captain.ts is Ship-specific, so these keep the plain placeholder rather than a generated name). Still needs a gender/birth date to satisfy Person's fields, so those are still rolled. */
+  /** A Sailor with the old placeholder "${transport.name} Sailor N" name -- every non-Ship Transport type's crew (the pool/hiring/speed mechanic in captain.ts is Ship-specific, so these keep the plain placeholder rather than a pool-drawn name). Still needs a gender/birth date to satisfy Person's fields, so those are still rolled. */
   private placeholderSailor(transport: Transport, seatIndex: number): Sailor {
     const gender = randomGender(globalNameRng);
     const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
@@ -180,16 +183,43 @@ export class Faction {
   }
 
   /**
-   * Fills a Transport's `.crew` (the captain plus Sailors for any extra
-   * crewRequirement seats) -- shared by the constructor's initial fleet and
-   * addTransport's single-recruit path.
+   * Fills every registered Transport's remaining crew seats (beyond the
+   * Captain) from the world-wide Sailor pool -- deferred out of the
+   * constructor (see it for why). Safe to call more than once; a no-op for
+   * any Transport already at its crewRequirement. Called by World's
+   * constructor right after generating the pool, and (for a Faction already
+   * live in a running World) implicitly via addTransport's single-recruit path.
    */
-  private crewTransport(transport: Transport, captain: Captain): void {
-    transport.crew = [captain];
-    const extraSeats = Math.max(0, transport.crewRequirement - 1);
-    const isShip = transport instanceof Ship;
-    for (let i = 0; i < extraSeats; i++) {
-      const sailor = isShip ? this.randomShipSailor() : this.placeholderSailor(transport, i);
+  crewFleet(): void {
+    for (const captain of this.captains) {
+      if (captain.transport !== null) this.fillExtraSeats(captain.transport);
+    }
+  }
+
+  /**
+   * Fills as many of `transport`'s open seats (beyond the Captain) as its
+   * current dock's Sailor pool allows -- a Ship is left under-crewed for any
+   * seat the local pool can't cover (see hireFromSailorPool), never
+   * generated fresh. Every other Transport type is unaffected by the pool
+   * (Ship-only feature) and still gets freshly generated placeholder crew.
+   * Shared by crewFleet (initial) and addTransport (single-recruit).
+   */
+  private fillExtraSeats(transport: Transport): void {
+    const extraSeats = Math.max(0, transport.crewRequirement - transport.crew.length);
+    if (extraSeats <= 0) return;
+    if (!(transport instanceof Ship)) {
+      for (let i = 0; i < extraSeats; i++) {
+        const sailor = this.placeholderSailor(transport, transport.crew.length - 1 + i);
+        sailor.boardTransport(transport);
+        transport.crew.push(sailor);
+      }
+      return;
+    }
+    const location = transport.location;
+    if (location === null) return;
+    const hired = hireFromSailorPool(location.name, extraSeats);
+    for (const sailor of hired) {
+      if (this.rotatesCrew) sailor.journeysRemaining = JOURNEYS_PER_HIRE;
       sailor.boardTransport(transport);
       transport.crew.push(sailor);
     }
@@ -209,7 +239,11 @@ export class Faction {
     this.captains.push(captain);
     this.dedupeTransportName(transport);
     this.dedupeCaptainName(captain);
-    this.crewTransport(transport, captain);
+    transport.crew = [captain];
+    // A single-recruit addition runs against an already-live World -- the
+    // Sailor pool already exists (unlike the constructor's initial fleet, see
+    // there), so extra seats are filled immediately, not deferred.
+    this.fillExtraSeats(transport);
 
     if (this.poolsCash) {
       this.cash += startingCash + captain.ownCash;
@@ -316,6 +350,11 @@ export class ContractFulfiller extends Faction {
  */
 export class Company extends ContractFulfiller {
   override contractTypes: readonly ContractType[] = ["Commodity"];
+
+  /** Company/SoloTrader hires rotate out after JOURNEYS_PER_HIRE journeys -- see Faction.rotatesCrew. */
+  override get rotatesCrew(): boolean {
+    return true;
+  }
 
   /**
    * Whether THIS Company prioritises contracts over arbitrage, or weighs the

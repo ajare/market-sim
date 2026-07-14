@@ -90,8 +90,9 @@ export class Transport {
   /**
    * Removes `member` from this Transport's crew (e.g. the Transports panel's
    * "kill crew member" UI action) -- no-op if not present. Leaves the seat
-   * open; for a Ship, the next time it's docked at a Port,
-   * Captain.hireCrewIfPossible tops it back up with a freshly hired Sailor.
+   * open; for a Ship, the next time it's docked at a Port or Platform,
+   * Captain.hireCrewIfPossible tops it back up from that Location's Sailor
+   * pool (if it has anyone available -- see sailorPool.ts).
    */
   removeCrewMember(member: Sailor): void {
     const idx = this.crew.indexOf(member);

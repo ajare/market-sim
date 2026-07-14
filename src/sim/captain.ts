@@ -5,7 +5,7 @@
  * the economic reasoning; comments here are kept light since the logic is
  * transcribed 1:1.
  */
-import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
+import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
 import { Ship, crewSpeedFraction, type TransportStatus } from "./transport";
@@ -13,16 +13,12 @@ import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
-import { randChoice, randRandom } from "./simRandom";
+import { randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
 import { round2 } from "./utils";
-import { randomPersonName, type NameRng } from "./names";
-import { randomBirthDate, type PersonInit } from "./person";
+import type { PersonInit } from "./person";
 import type { Location } from "./location";
-import { NATIONALITY_POOLS, randomNationality } from "./nationality";
-
-/** Adapts the global sim RNG to the NameRng surface randomPersonName needs, so a Ship's newly hired Sailors draw off the same seeded stream as the rest of the simulation. */
-const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
+import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
 
 export interface CargoState {
   commodity: string;
@@ -183,7 +179,7 @@ export class Captain extends Sailor {
     // dailyWage forced to 0 -- Captains are unpaid, unlike a plain Sailor's
     // DEFAULT_SAILOR_DAILY_WAGE (see sailor.ts). location (not transport) is
     // set to homeLocation here, matching Person's AT/ON invariant for a
-    // freshly constructed, not-yet-crewed Captain; Faction.crewTransport
+    // freshly constructed, not-yet-crewed Captain; Faction's constructor
     // moves it onto the Transport (see Person.boardTransport) once assigned.
     super({ ...init, dailyWage: 0.0, location: init.homeLocation });
     this.rank = "Captain";
@@ -280,18 +276,20 @@ export class Captain extends Sailor {
   }
 
   /**
-   * If this Captain's Ship is docked at a Location with a Port terminal
-   * (Platform doesn't count, even though both support Sea routes
-   * identically otherwise -- see ROUTE_TERMINAL_COMPATIBILITY) and isn't at
-   * full complement, hires enough Sailors to fill every open seat in one
-   * day. Hiring itself is free -- the only cost is the upfront wage the
-   * next time this Ship actually departs (see routeEconomics/
-   * dailyCrewCost). No-op for every other Transport type.
+   * If this Captain's Ship is docked at a Sea-capable Location (Port or
+   * Platform -- both count identically, see ROUTE_TERMINAL_COMPATIBILITY)
+   * and isn't at full complement, hires as many Sailors as that Location's
+   * pool has available to fill open seats, up to every seat in one day.
+   * Hiring itself is free -- the only cost is the upfront wage the next time
+   * this Ship actually departs (see routeEconomics/dailyCrewCost). If the
+   * local pool falls short, the remaining seats simply stay open (no Sailor
+   * is ever generated fresh here) -- the Ship sails under-crewed and slower
+   * (see crewSpeedFraction) rather than waiting. No-op for every other
+   * Transport type.
    *
-   * Each new Sailor gets a full name from a uniformly randomly chosen
-   * nationality (not tied to this Ship's own Company/nationality), a birth
-   * date 18-50 years before the World's start date, and nickname left null
-   * -- see person.ts/sailor.ts.
+   * A hire made for a Company/SoloTrader (Faction.rotatesCrew) is only good
+   * for JOURNEYS_PER_HIRE journeys before disembarking again -- see
+   * advanceCrewRotation. A PirateBrigade/PoliceFleet hire is permanent.
    */
   private hireCrewIfPossible(): void {
     const transport = this.transport!;
@@ -299,12 +297,11 @@ export class Captain extends Sailor {
     const seatsOpen = transport.crewRequirement - transport.crew.length;
     if (seatsOpen <= 0) return;
     const location = transport.location;
-    if (location === null || !location.terminalTypes.has("Port")) return;
-    for (let i = 0; i < seatsOpen; i++) {
-      const nationality = randomNationality(globalNameRng);
-      const { name, gender } = randomPersonName(globalNameRng, NATIONALITY_POOLS[nationality].names);
-      const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
-      const sailor = new Sailor({ name, gender, dateOfBirth });
+    if (location === null || !(location.terminalTypes.has("Port") || location.terminalTypes.has("Platform"))) return;
+    const hired = hireFromSailorPool(location.name, seatsOpen);
+    const rotates = this.company?.rotatesCrew === true;
+    for (const sailor of hired) {
+      if (rotates) sailor.journeysRemaining = JOURNEYS_PER_HIRE;
       sailor.boardTransport(transport);
       transport.crew.push(sailor);
     }
@@ -466,10 +463,36 @@ export class Captain extends Sailor {
       return false;
     }
 
+    this.advanceCrewRotation();
     this.status = "AtLocation";
     this.destination = null;
     this.dailyFuelBurn = 0.0;
     return true;
+  }
+
+  /**
+   * Ticks down every crew member's rotation counter by one journey (this
+   * genuine final arrival counts as one, whether it closed out a local
+   * trade, a contract delivery, or a reposition) and disembarks anyone whose
+   * term just expired into this Location's Sailor pool. Only Company/
+   * SoloTrader hires ever carry a non-null journeysRemaining (see
+   * hireCrewIfPossible/Faction.rotatesCrew) -- the Captain and any
+   * PirateBrigade/PoliceFleet crew are permanent and skip this entirely.
+   */
+  private advanceCrewRotation(): void {
+    const transport = this.transport!;
+    const location = transport.location!;
+    const departing: Sailor[] = [];
+    for (const member of transport.crew) {
+      if (member.journeysRemaining === null) continue;
+      member.journeysRemaining -= 1;
+      if (member.journeysRemaining <= 0) departing.push(member);
+    }
+    for (const member of departing) {
+      transport.removeCrewMember(member);
+      member.disembarkAt(location);
+      addToSailorPool(location.name, member);
+    }
   }
 
   private refuelAtStop(

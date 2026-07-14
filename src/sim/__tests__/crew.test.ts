@@ -1,22 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { Location } from "../location";
 import { Market, marketKey } from "../markets";
-import { Company } from "../faction";
+import { Company, PirateBrigade } from "../faction";
 import { Captain } from "../captain";
+import { Sailor, JOURNEYS_PER_HIRE } from "../sailor";
 import { Ship, SHIP_CLASSES } from "../transport";
 import { setGeography, getLocation } from "../worldData";
 import { Route, addRouteToNetwork, setRoutes } from "../routes";
 import { buildWorld } from "../buildWorld";
 import { buildWorldFromJson } from "../buildWorldFromJson";
+import { generateSailorPool, getSailorPoolAt, setSailorPool, SAILOR_POOL_FLOOR } from "../sailorPool";
+
+/** A freshly generated pool Sailor, gender/birth date test-irrelevant fixed values. */
+function makeSailor(name: string): Sailor {
+  return new Sailor({ name, gender: "Male", dateOfBirth: new Date("1990-01-01") });
+}
+
+/** Wholesale-replaces the world's Sailor pool with exactly `count` Sailors at `locationName` -- mirrors worldData's setGeography-style "reset everything" test convention. */
+function setSailorPoolAt(locationName: string, count: number): void {
+  const pool = new Map<string, Sailor[]>();
+  pool.set(locationName, Array.from({ length: count }, (_, i) => makeSailor(`${locationName} Pool Sailor ${i}`)));
+  setSailorPool(pool);
+}
 
 function makeTradeWorld() {
   const home = new Location({
     // A small stockpile caps quantity well under both cargoCapacity and
     // Speedster's fuelCapacity (60) at this route's distance/fuel rate, so
     // the route stays feasible regardless of which crew scenario is under
-    // test. Platform (not Port) so an under-crewed ship departing from here
-    // isn't auto-rehired to full complement before it even leaves -- Platform
-    // supports Sea routes identically to Port otherwise (see routes.ts).
+    // test. Platform (not Port) so a Platform is exercised as a hiring/
+    // departure point too (Platform supports Sea routes identically to Port
+    // -- see routes.ts -- and, since the Port-only hiring restriction was
+    // reversed, hires identically too).
     name: "Home", producedCommodities: { Gold: 5 }, consumedCommodities: {},
     stockpiles: { Gold: 5 }, minStockpiles: {}, basePriceModifiers: { Gold: 1 },
     fuelPrice: 1.0, terminalTypes: new Set(["Platform"]),
@@ -49,12 +64,25 @@ function makeCaptain(name: string, homeLocationName: string): Captain {
   });
 }
 
-/** A Speedster (crewRequirement 4) crewed by Captain + Sailors, then optionally stripped down to the Captain alone. */
+/**
+ * A Speedster (crewRequirement 4) crewed by Captain + Sailors, then
+ * optionally left stripped down to the Captain alone. Full crewing now goes
+ * through the Sailor pool (initial crewing is deferred -- see
+ * Faction.crewFleet), so `fullCrew` seeds "Home"'s pool first and calls
+ * crewFleet() explicitly, standing in for what World's constructor would
+ * otherwise do automatically.
+ */
 function makeSpeedsterCompany(fullCrew: boolean): { transport: Ship; captain: Captain; company: Company } {
   const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
   const captain = makeCaptain("Cap", "Home");
+  // Always reset (not just when fullCrew) -- the pool is keyed by Location
+  // NAME, so a prior scenario's leftover "Home" pool would otherwise leak
+  // into this one (act()'s own hireCrewIfPossible call would silently top a
+  // "stripped" ship back up before it even departs) even though
+  // makeTradeWorld() rebuilds "Home" as a brand-new Location object each time.
+  setSailorPoolAt("Home", fullCrew ? 10 : 0);
   const company = new Company("Acme", [[transport, captain, "Home"]], 1_000_000);
-  if (!fullCrew) transport.crew = transport.crew.filter((member) => member === captain);
+  if (fullCrew) company.crewFleet();
   return { transport, captain, company };
 }
 
@@ -122,8 +150,8 @@ describe("upfront crew wages", () => {
   });
 });
 
-describe("hiring crew at a Port (not a Platform)", () => {
-  function makeDockedShip(terminal: "Port" | "Platform") {
+describe("hiring crew at a Port or Platform (pool-based)", () => {
+  function makeDockedShip(terminal: "Port" | "Platform", poolSize: number) {
     const dock = new Location({
       name: "Dock", producedCommodities: {}, consumedCommodities: {},
       stockpiles: {}, minStockpiles: {}, basePriceModifiers: {},
@@ -131,48 +159,168 @@ describe("hiring crew at a Port (not a Platform)", () => {
     });
     setGeography([dock], { Dock: [0, 0] });
     setRoutes(new Map());
+    setSailorPoolAt("Dock", poolSize);
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
     const captain = makeCaptain("Cap", "Dock");
-    new Company("Acme", [[transport, captain, "Dock"]], 100_000);
-    transport.crew = transport.crew.filter((member) => member === captain);
+    new Company("Acme", [[transport, captain, "Dock"]], 100_000); // crew = [captain] only (initial crewing is deferred)
     return { transport, captain };
   }
 
-  it("fills every open seat in one day when docked at a Port", () => {
-    const { transport, captain } = makeDockedShip("Port");
+  it("fills every open seat in one day when the pool has enough, at a Port", () => {
+    const { transport, captain } = makeDockedShip("Port", 10);
     captain.act(1, new Map(), new Map(), [], new Set());
     expect(transport.crew.length).toBe(transport.crewRequirement);
     const sailors = transport.crew.filter((member) => member.rank === "Able Seaman");
     expect(sailors).toHaveLength(3);
-    // Distinct nicknames within this one ship's crew.
     expect(new Set(sailors.map((s) => s.name)).size).toBe(3);
   });
 
-  it("does not hire at a Platform, even though Platforms support Sea routes identically otherwise", () => {
-    const { transport, captain } = makeDockedShip("Platform");
+  it("fills every open seat in one day when the pool has enough, at a Platform too -- the Port-only restriction is gone", () => {
+    const { transport, captain } = makeDockedShip("Platform", 10);
+    captain.act(1, new Map(), new Map(), [], new Set());
+    expect(transport.crew.length).toBe(transport.crewRequirement);
+  });
+
+  it("hires only as many as the pool has available, leaving the rest of the seats open rather than generating anyone fresh", () => {
+    const { transport, captain } = makeDockedShip("Port", 2);
+    captain.act(1, new Map(), new Map(), [], new Set());
+    expect(transport.crew.length).toBe(3); // Captain + the 2 pool Sailors available
+    expect(getSailorPoolAt("Dock")).toHaveLength(0);
+  });
+
+  it("hires nobody when the pool is empty", () => {
+    const { transport, captain } = makeDockedShip("Port", 0);
     captain.act(1, new Map(), new Map(), [], new Set());
     expect(transport.crew.length).toBe(1);
   });
 });
 
-describe("Sailor naming", () => {
-  it("gives a Ship's Sailors a full generated name (not the old placeholder), a gender, and a null nickname", () => {
-    makeTradeWorld(); // registers "Home" via setGeography
-    const { transport } = makeSpeedsterCompany(true);
-    const sailors = transport.crew.filter((member) => member.rank === "Able Seaman");
-    expect(sailors).toHaveLength(3);
+describe("Sailor pool generation", () => {
+  it("generates pool Sailors with a full name, always Male, a null nickname, and a plausible birth date, disembarked at their Location", () => {
+    const dock = new Location({
+      name: "Dock", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {},
+      fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([dock], { Dock: [0, 0] });
+    generateSailorPool([]); // no Faction demand -- every Sea-capable Location still gets the floor
+    const sailors = getSailorPoolAt("Dock");
+    expect(sailors.length).toBe(SAILOR_POOL_FLOOR);
     for (const sailor of sailors) {
-      expect(sailor.name).not.toMatch(/Sailor \d/);
-      expect(["Male", "Female"]).toContain(sailor.gender);
+      expect(sailor.name).toMatch(/^\S+ \S+/); // "First Last"
+      expect(sailor.gender).toBe("Male");
       expect(sailor.nickname).toBeNull();
       expect(sailor.dateOfBirth).toBeInstanceOf(Date);
+      expect(sailor.location?.name).toBe("Dock");
+      expect(sailor.transport).toBeNull();
+      expect(sailor.journeysRemaining).toBeNull(); // not yet hired by anyone
     }
   });
 });
 
+describe("Sailor pool sizing", () => {
+  it("sizes a Sea-capable Location's pool at max(floor, 2 x its initial extra-seat demand)", () => {
+    const home = new Location({
+      name: "Base", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([home], { Base: [0, 0] });
+
+    const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" }); // crewRequirement 4 -> extraSeats 3
+    const captain = makeCaptain("Cap", "Base");
+    const company = new Company("Acme", [[transport, captain, "Base"]], 0); // crew = [captain] only (deferred)
+
+    generateSailorPool([company]);
+    expect(getSailorPoolAt("Base")).toHaveLength(SAILOR_POOL_FLOOR); // max(10, 2*3) = 10
+  });
+
+  it("floors at SAILOR_POOL_FLOOR for a Sea-capable Location with no initial ship demand", () => {
+    const empty = new Location({
+      name: "Quiet Port", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([empty], { "Quiet Port": [0, 0] });
+    generateSailorPool([]);
+    expect(getSailorPoolAt("Quiet Port")).toHaveLength(SAILOR_POOL_FLOOR);
+  });
+
+  it("scales past the floor once demand crosses it", () => {
+    const home = new Location({
+      name: "Busy Port", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([home], { "Busy Port": [0, 0] });
+    const crew: Array<[Ship, Captain, string]> = [];
+    for (let i = 0; i < 3; i++) {
+      crew.push([SHIP_CLASSES.Capesize.clone({ name: `Ship ${i}` }), makeCaptain(`Cap ${i}`, "Busy Port"), "Busy Port"]);
+    }
+    // 3 x Capesize, crewRequirement 13 -> extraSeats 12 each -> 36 total demand.
+    const company = new Company("Acme", crew, 0);
+    generateSailorPool([company]);
+    expect(getSailorPoolAt("Busy Port")).toHaveLength(72); // 2 * 36, well past the floor
+  });
+});
+
+describe("Company/SoloTrader crew rotation", () => {
+  it("hires with a JOURNEYS_PER_HIRE counter, never sets one on the Captain, and resets it on re-hire after an expiry", () => {
+    const { buyMarkets, sellMarkets } = makeTradeWorld();
+    setSailorPoolAt("Home", 10);
+    const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
+    const captain = makeCaptain("Cap", "Home");
+    const company = new Company("Acme", [[transport, captain, "Home"]], 1_000_000);
+    company.crewFleet();
+
+    expect(company.rotatesCrew).toBe(true);
+    const sailors = transport.crew.filter((m) => m.rank === "Able Seaman");
+    expect(sailors).toHaveLength(3);
+    for (const s of sailors) expect(s.journeysRemaining).toBe(JOURNEYS_PER_HIRE);
+    expect(captain.journeysRemaining).toBeNull(); // Captains never rotate
+
+    // Force everyone to expire on the very next arrival.
+    for (const s of sailors) s.journeysRemaining = 1;
+
+    captain.act(1, buyMarkets, sellMarkets, ["Gold"], new Set());
+    const travelDays = captain.daysRemaining;
+    for (let day = 2; day <= 1 + travelDays; day++) {
+      captain.act(day, buyMarkets, sellMarkets, ["Gold"], new Set());
+    }
+    expect(captain.locationName).toBe("Dest");
+    // The expired Sailors disembarked into Dest's pool on arrival and were
+    // immediately re-hired back onto the same still-open seats (the only
+    // Sailors locally available) -- crew count is unchanged, but their
+    // rotation clocks reset.
+    expect(transport.crew.length).toBe(transport.crewRequirement);
+    for (const member of transport.crew.filter((m) => m.rank === "Able Seaman")) {
+      expect(member.journeysRemaining).toBe(JOURNEYS_PER_HIRE);
+      expect(member.transport).toBe(transport);
+    }
+  });
+});
+
+describe("PirateBrigade/PoliceFleet crew never rotates", () => {
+  it("leaves journeysRemaining null on hires for a Faction with rotatesCrew=false", () => {
+    const base = new Location({
+      name: "Base", producedCommodities: {}, consumedCommodities: {},
+      stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
+    });
+    setGeography([base], { Base: [0, 0] });
+    setSailorPoolAt("Base", 10);
+
+    const ship = new Ship({ name: "Raider", crewRequirement: 4 });
+    const captain = makeCaptain("Blackbeard", "Base");
+    const brigade = new PirateBrigade("Brigade", [[ship, captain, "Base"]], []);
+    brigade.crewFleet();
+
+    expect(brigade.rotatesCrew).toBe(false);
+    const sailors = ship.crew.filter((m) => m.rank === "Able Seaman");
+    expect(sailors).toHaveLength(3);
+    for (const s of sailors) expect(s.journeysRemaining).toBeNull();
+  });
+});
+
 describe("removing a crew member (Transports panel's Kill button)", () => {
-  it("removes a Sailor, leaving the seat open until the Ship next docks at a Port", () => {
+  it("removes a Sailor, leaving the seat open until re-hired from the pool", () => {
     const dock = new Location({
       name: "Dock", producedCommodities: {}, consumedCommodities: {},
       stockpiles: {}, minStockpiles: {}, basePriceModifiers: {},
@@ -180,10 +328,12 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
     });
     setGeography([dock], { Dock: [0, 0] });
     setRoutes(new Map());
+    setSailorPoolAt("Dock", 10);
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
     const captain = makeCaptain("Cap", "Dock");
-    new Company("Acme", [[transport, captain, "Dock"]], 100_000);
+    const company = new Company("Acme", [[transport, captain, "Dock"]], 100_000);
+    company.crewFleet();
     expect(transport.crew.length).toBe(4);
 
     const sailor = transport.crew.find((member) => member.rank === "Able Seaman")!;
@@ -191,7 +341,8 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
     expect(transport.crew.length).toBe(3);
     expect(transport.crew).not.toContain(sailor);
 
-    // Docked at a Port -- act() re-hires the open seat for free.
+    // Docked at a Port with Sailors still in the local pool -- act() re-hires
+    // the open seat for free.
     captain.act(1, new Map(), new Map(), [], new Set());
     expect(transport.crew.length).toBe(4);
   });
@@ -206,10 +357,12 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
       stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
     });
     setGeography([nowhere, elsewhere], { Nowhere: [0, 0], Elsewhere: [1, 1] });
+    setSailorPoolAt("Nowhere", 10);
 
     const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
     const captain = makeCaptain("Cap", "Nowhere");
-    new Company("Acme", [[transport, captain, "Nowhere"]], 0);
+    const company = new Company("Acme", [[transport, captain, "Nowhere"]], 0);
+    company.crewFleet();
     expect(transport.crew.length).toBe(4);
 
     const strayCaptain = makeCaptain("Ghost", "Elsewhere");
@@ -219,11 +372,15 @@ describe("removing a crew member (Transports panel's Kill button)", () => {
 });
 
 describe("a Ship arriving under-crewed at a Port always hires before it can leave again", () => {
-  it("tops back up to full on the arrival day itself -- not deferred to the following day", () => {
+  it("tops back up (as much as the destination's pool allows) on the arrival day itself -- not deferred to the following day", () => {
     const { buyMarkets, sellMarkets } = makeTradeWorld();
-    const { transport, captain } = makeSpeedsterCompany(true);
+    setSailorPoolAt("Home", 10);
+    const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner" });
+    const captain = makeCaptain("Cap", "Home");
+    const company = new Company("Acme", [[transport, captain, "Home"]], 1_000_000);
+    company.crewFleet();
 
-    // Depart Home (a Platform -- no hiring there) at full crew.
+    // Depart Home at full crew.
     captain.act(1, buyMarkets, sellMarkets, ["Gold"], new Set());
     expect(captain.status).toBe("InTransit");
     const travelDays = captain.daysRemaining; // 4, per makeTradeWorld's 3200-unit / 800-speed route
@@ -234,16 +391,20 @@ describe("a Ship arriving under-crewed at a Port always hires before it can leav
     transport.removeCrewMember(sailor);
     expect(transport.crew.length).toBe(3);
 
+    // Dest's own pool, available once the ship actually arrives there --
+    // Home's pool is irrelevant from this point on.
+    setSailorPoolAt("Dest", 10);
+
     // Step through the remaining transit days up to and including arrival.
     for (let day = 2; day <= 1 + travelDays; day++) {
       captain.act(day, buyMarkets, sellMarkets, ["Gold"], new Set());
     }
     expect(captain.locationName).toBe("Dest"); // arrived
     expect(captain.status).toBe("AtLocation");
-    // Hiring runs on the arrival day itself (Dest is a Port) -- fully crewed
-    // again the same day it docks, before any new departure is even
-    // considered (the "no same-day redeparture" rule still applies, but
-    // hiring isn't gated behind it).
+    // Hiring runs on the arrival day itself (Dest is a Port with Sailors
+    // available) -- fully crewed again the same day it docks, before any new
+    // departure is even considered (the "no same-day redeparture" rule still
+    // applies, but hiring isn't gated behind it).
     expect(transport.crew.length).toBe(transport.crewRequirement);
   });
 });
