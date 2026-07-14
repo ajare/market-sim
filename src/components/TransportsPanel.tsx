@@ -5,6 +5,8 @@ import { Ship, crewSpeedFraction } from "../sim/transport";
 export function TransportsPanel() {
   const world = useSimStore((s) => s.world);
   const killCrewMember = useSimStore((s) => s.killCrewMember);
+  const selectedPerson = useSimStore((s) => s.selectedPerson);
+  const selectPerson = useSimStore((s) => s.selectPerson);
   if (world === null) return null;
 
   const ships = world.captains
@@ -39,8 +41,12 @@ export function TransportsPanel() {
                   </thead>
                   <tbody>
                     {ship.crew.map((member, j) => (
-                      <tr key={j}>
-                        <td>{member.name}</td>
+                      <tr key={j} className={member === selectedPerson ? "fleet-row-selected" : undefined}>
+                        <td>
+                          <button type="button" className="link-button" onClick={() => selectPerson(member)}>
+                            {member.name}
+                          </button>
+                        </td>
                         <td>
                           {/* The Captain isn't hired/rehired the way a plain
                               Sailor is (see Faction.crewFleet/

@@ -67,7 +67,7 @@ function randomPoolSailor(): Sailor {
   const pool = NATIONALITY_POOLS[nationality].names;
   const name = `${globalNameRng.choice(pool.maleFirstNames)} ${globalNameRng.choice(pool.lastNames)}`;
   const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
-  return new Sailor({ name, gender: "Male", dateOfBirth });
+  return new Sailor({ name, gender: "Male", nationality, dateOfBirth });
 }
 
 function isSeaCapable(location: Location): boolean {

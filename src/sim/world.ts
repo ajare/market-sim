@@ -15,7 +15,7 @@ import { Captain, type Directive } from "./captain";
 import { ENGLISH_NAMES, SPANISH_NAMES, randomPersonName, type Gender, type NamePool, type NameRng } from "./names";
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { randomLocationName } from "./locationNames";
-import { NATIONALITY_POOLS, randomNationality } from "./nationality";
+import { NATIONALITY_POOLS, randomNationality, type Nationality } from "./nationality";
 import { Faction, Company, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
 import { generateSailorPool } from "./sailorPool";
 import { locationSupportsTransport } from "./companyHome";
@@ -37,11 +37,14 @@ import {
 const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 import { BulletinBoard, contractKey, type Contract, type TenderContractsOptions } from "./contracts";
 
-/** A freshly rolled name/gender (from `pool`) plus a plausible birth date -- the Person fields every new Captain constructed directly in this file (pirate/police fleets, addPirateShip/addPoliceShip, addLocation's fleet top-up) needs alongside its homeLocation. */
-function randomCaptainPersonFields(pool: NamePool): { name: string; gender: Gender; dateOfBirth: Date } {
+/** A freshly rolled name/gender (from `pool`, tagged with `nationality` for display) plus a plausible birth date -- the Person fields every new Captain constructed directly in this file (pirate/police fleets, addPirateShip/addPoliceShip, addLocation's fleet top-up) needs alongside its homeLocation. */
+function randomCaptainPersonFields(
+  pool: NamePool,
+  nationality: Nationality,
+): { name: string; gender: Gender; nationality: Nationality; dateOfBirth: Date } {
   const { name, gender } = randomPersonName(globalNameRng, pool);
   const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
-  return { name, gender, dateOfBirth };
+  return { name, gender, nationality, dateOfBirth };
 }
 import { round2 } from "./utils";
 
@@ -211,7 +214,7 @@ export class World {
       for (let i = 0; i < numPirateShips; i++) {
         const homeLocation = randChoice(init.locations);
         const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-        const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES), homeLocation });
+        const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES, "Spanish"), homeLocation });
         pirateCrew.push([ship, captain, homeLocation.name]);
       }
       this.pirateBrigade = new PirateBrigade(
@@ -231,7 +234,7 @@ export class World {
       for (let i = 0; i < numPoliceShips; i++) {
         const homeLocation = randChoice(init.locations);
         const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-        const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES), homeLocation });
+        const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES, "English"), homeLocation });
         policeCrew.push([ship, captain, homeLocation.name]);
       }
       this.policeFleet = new PoliceFleet(
@@ -297,7 +300,7 @@ export class World {
     }
     const homeLocationObj = randChoice(this.locations);
     const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-    const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES), homeLocation: homeLocationObj });
+    const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES, "Spanish"), homeLocation: homeLocationObj });
     this.pirateBrigade.addTransport(ship, captain, homeLocationObj.name, this.pirateShipStartingCash);
     this.captains.push(captain);
     return captain;
@@ -328,7 +331,7 @@ export class World {
     }
     const homeLocationObj = randChoice(this.locations);
     const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
-    const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES), homeLocation: homeLocationObj });
+    const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES, "English"), homeLocation: homeLocationObj });
     this.policeFleet.addTransport(ship, captain, homeLocationObj.name);
     this.captains.push(captain);
     return captain;
@@ -470,7 +473,7 @@ export class World {
         const nationality = target.politicalEntity?.nationality ?? randomNationality(globalNameRng);
         const pools = NATIONALITY_POOLS[nationality];
         const ship = new Ship({ name: randomShipName(globalNameRng, pools.ships), crewRequirement: randInt(1, 5) });
-        const captain = new Captain({ ...randomCaptainPersonFields(pools.names), homeLocation: getLocation(home)! });
+        const captain = new Captain({ ...randomCaptainPersonFields(pools.names, nationality), homeLocation: getLocation(home)! });
         target.addTransport(ship, captain, home, 0);
         this.captains.push(captain);
       }

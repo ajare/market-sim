@@ -376,6 +376,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     const captain = new Captain({
       name,
       gender,
+      nationality,
       dateOfBirth,
       homeLocation: getLocation(homeLocation)!,
       repositionReturnMultiplier: 1.25,
@@ -399,11 +400,12 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   // allowedRouteTypes() speaks for all of them) -- never added to a fleet.
   const probeShip = new Ship({ name: "_ProbeShip" });
 
-  /** An authored Captain: the JSON already supplies `captainName`, so only gender/birth date need rolling (no name pool to draw from -- the editor doesn't model nationality per-Captain). */
+  /** An authored Captain: the JSON already supplies `captainName`, so only gender/nationality/birth date need rolling (the editor doesn't author a nationality per-Captain -- the name itself came straight from the JSON, so this is just a display label, not what it was drawn from). */
   const makeAuthoredCaptain = (captainName: string, homeLocation: string): Captain =>
     new Captain({
       name: captainName,
       gender: randomGender(fleetRng),
+      nationality: randomNationality(fleetRng),
       dateOfBirth: randomBirthDate(() => fleetRng.random(), SAILOR_MIN_AGE, SAILOR_MAX_AGE),
       homeLocation: getLocation(homeLocation)!,
     });

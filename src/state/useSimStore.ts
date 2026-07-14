@@ -20,6 +20,7 @@ import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 import type { Transport } from "../sim/transport";
 import type { Sailor } from "../sim/sailor";
 import type { Captain } from "../sim/captain";
+import type { Person } from "../sim/person";
 
 interface SimStore {
   world: World | null;
@@ -36,6 +37,10 @@ interface SimStore {
   selectedCaptain: Captain | null;
   /** Toggles selection: selecting the already-selected Captain again clears it. Pass null to explicitly clear. */
   selectTransport: (captain: Captain | null) => void;
+  /** The Person currently shown in the Person panel (a Captain or a plain Sailor) -- null when nothing's selected. Cleared whenever a new World is built/loaded, since the old fleet's Person objects no longer apply. */
+  selectedPerson: Person | null;
+  /** Toggles selection: selecting the already-selected Person again clears it. Pass null to explicitly clear. */
+  selectPerson: (person: Person | null) => void;
   reset: () => void;
   /** Builds a fresh World from an editor JSON export (see buildWorldFromJson) and installs it, replacing the current one. Throws if the JSON can't be turned into a valid World -- the caller surfaces the message. */
   loadWorldFromJson: (text: string) => void;
@@ -91,6 +96,8 @@ export const useSimStore = create<SimStore>((set, get) => ({
   version: 0,
   selectedCaptain: null,
   selectTransport: (captain) => set((s) => ({ selectedCaptain: s.selectedCaptain === captain ? null : captain })),
+  selectedPerson: null,
+  selectPerson: (person) => set((s) => ({ selectedPerson: s.selectedPerson === person ? null : person })),
 
   reset: () => {
     const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
@@ -98,7 +105,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
     accumulator = 0;
     set((s) => ({
       world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false,
-      selectedCaptain: null, version: s.version + 1,
+      selectedCaptain: null, selectedPerson: null, version: s.version + 1,
     }));
   },
 
@@ -111,7 +118,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
     accumulator = 0;
     set((s) => ({
       world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false,
-      selectedCaptain: null, version: s.version + 1,
+      selectedCaptain: null, selectedPerson: null, version: s.version + 1,
     }));
   },
 

@@ -28,6 +28,7 @@ import { round2 } from "./utils";
 import { randomGender, type NameRng } from "./names";
 import { randomBirthDate } from "./person";
 import { hireFromSailorPool } from "./sailorPool";
+import { randomNationality } from "./nationality";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
@@ -175,11 +176,12 @@ export class Faction {
     this.captainNames.add(captain.name);
   }
 
-  /** A Sailor with the old placeholder "${transport.name} Sailor N" name -- every non-Ship Transport type's crew (the pool/hiring/speed mechanic in captain.ts is Ship-specific, so these keep the plain placeholder rather than a pool-drawn name). Still needs a gender/birth date to satisfy Person's fields, so those are still rolled. */
+  /** A Sailor with the old placeholder "${transport.name} Sailor N" name -- every non-Ship Transport type's crew (the pool/hiring/speed mechanic in captain.ts is Ship-specific, so these keep the plain placeholder rather than a pool-drawn name). Still needs a gender/nationality/birth date to satisfy Person's fields, so those are still rolled (nationality doesn't influence the placeholder name, unlike a pool Sailor's). */
   private placeholderSailor(transport: Transport, seatIndex: number): Sailor {
     const gender = randomGender(globalNameRng);
+    const nationality = randomNationality(globalNameRng);
     const dateOfBirth = randomBirthDate(globalNameRng.random, SAILOR_MIN_AGE, SAILOR_MAX_AGE);
-    return new Sailor({ name: `${transport.name} Sailor ${seatIndex + 2}`, gender, dateOfBirth });
+    return new Sailor({ name: `${transport.name} Sailor ${seatIndex + 2}`, gender, nationality, dateOfBirth });
   }
 
   /**

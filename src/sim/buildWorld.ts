@@ -292,6 +292,7 @@ export function buildWorld(
     const captain = new Captain({
       name,
       gender,
+      nationality: "Dutch",
       dateOfBirth,
       homeLocation: getLocation(homePort)!,
       repositionReturnMultiplier: 1.25,

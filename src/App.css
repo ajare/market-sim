@@ -121,11 +121,70 @@
   position: static;
 }
 
-.fleet-panel tbody tr {
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
   cursor: pointer;
 }
 
-.fleet-panel tbody tr:hover {
+.person-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.person-panel-header h2 {
+  margin: 0;
+}
+
+.person-details-table {
+  width: auto;
+  min-width: 320px;
+}
+
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable-header:hover {
+  background: var(--row-alt);
+}
+
+.person-filter-row th {
+  position: static;
+  padding-top: 2px;
+  padding-bottom: 4px;
+}
+
+.person-filter-row select {
+  width: 100%;
+  font: inherit;
+  cursor: pointer;
+}
+
+.person-details-table th {
+  position: static;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-h);
+  padding-right: 16px;
+  white-space: nowrap;
+}
+
+.fleet-panel tbody tr,
+.person-list-table tbody tr {
+  cursor: pointer;
+}
+
+.fleet-panel tbody tr:hover,
+.person-list-table tbody tr:hover {
   background: var(--row-alt);
 }
 

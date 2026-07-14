@@ -8,6 +8,7 @@
 import type { Location } from "./location";
 import type { Transport } from "./transport";
 import { randomGender, type Gender } from "./names";
+import type { Nationality } from "./nationality";
 import { getWorldStartDate } from "./worldData";
 
 export type { Gender };
@@ -16,6 +17,8 @@ export interface PersonInit {
   name: string;
   nickname?: string | null;
   gender: Gender;
+  /** Cultural background used to draw this Person's name/ship/company pools at generation time (see nationality.ts) -- purely informational once set, kept for display. Null for the rare Person built without ever picking one (most existing test fixtures). */
+  nationality?: Nationality | null;
   dateOfBirth: Date;
   dailyWage?: number;
   location?: Location | null;
@@ -26,6 +29,7 @@ export class Person {
   name: string;
   nickname: string | null;
   gender: Gender;
+  nationality: Nationality | null;
   dateOfBirth: Date;
   dailyWage: number;
   location: Location | null;
@@ -35,6 +39,7 @@ export class Person {
     this.name = init.name;
     this.nickname = init.nickname ?? null;
     this.gender = init.gender;
+    this.nationality = init.nationality ?? null;
     this.dateOfBirth = init.dateOfBirth;
     this.dailyWage = init.dailyWage ?? 0.0;
     this.location = init.location ?? null;
@@ -79,6 +84,21 @@ export function randomBirthDate(random: () => number, minAge: number, maxAge: nu
   const maxDays = maxAge * DAYS_PER_YEAR;
   const ageDays = minDays + random() * (maxDays - minDays);
   return new Date(reference.getTime() - ageDays * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Whole years between `dateOfBirth` and `reference` -- the simulated age to
+ * display for a Person. `reference` is normally the World's own CURRENT date
+ * (World.currentDate), not "now" or the World's start date, so a Sailor's
+ * displayed age keeps advancing as the simulation runs.
+ */
+export function ageInYears(dateOfBirth: Date, reference: Date): number {
+  let age = reference.getUTCFullYear() - dateOfBirth.getUTCFullYear();
+  const beforeBirthdayThisYear =
+    reference.getUTCMonth() < dateOfBirth.getUTCMonth() ||
+    (reference.getUTCMonth() === dateOfBirth.getUTCMonth() && reference.getUTCDate() < dateOfBirth.getUTCDate());
+  if (beforeBirthdayThisYear) age -= 1;
+  return age;
 }
 
 export { randomGender };

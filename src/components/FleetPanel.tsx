@@ -5,6 +5,7 @@ export function FleetPanel() {
   const world = useSimStore((s) => s.world);
   const selectedCaptain = useSimStore((s) => s.selectedCaptain);
   const selectTransport = useSimStore((s) => s.selectTransport);
+  const selectPerson = useSimStore((s) => s.selectPerson);
   if (world === null) return null;
 
   return (
@@ -45,7 +46,20 @@ export function FleetPanel() {
                   className={captain === selectedCaptain ? "fleet-row-selected" : undefined}
                   onClick={() => selectTransport(captain)}
                 >
-                  <td>{captain.name}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={(e) => {
+                        // Opens the Person panel without also toggling this
+                        // row's Network-view selection (see selectTransport).
+                        e.stopPropagation();
+                        selectPerson(captain);
+                      }}
+                    >
+                      {captain.name}
+                    </button>
+                  </td>
                   <td>{captain.transport?.name ?? "-"}</td>
                   <td>{captain.company?.name ?? "(independent)"}</td>
                   <td>{captain.company?.politicalEntity?.name ?? "Independent"}</td>
