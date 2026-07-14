@@ -74,6 +74,27 @@
   overflow-y: auto;
 }
 
+.ship-log {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.ship-log-entry {
+  margin: 0;
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+.ship-log-day {
+  font-weight: 600;
+  font-style: normal;
+  margin-right: 6px;
+}
+
 .political-entity-list {
   margin: 0;
   display: flex;

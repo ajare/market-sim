@@ -302,6 +302,22 @@ export function PersonPanel() {
               )}
             </tbody>
           </table>
+          {captain !== null && captain.shipLog.length > 0 && (
+            <>
+              <h3>Ship's Log</h3>
+              <ul className="ship-log">
+                {captain.shipLog
+                  .slice(-30)
+                  .reverse()
+                  .map((entry) => (
+                    <li key={entry.day} className="ship-log-entry">
+                      <span className="ship-log-day">Day {entry.day}.</span>
+                      {entry.text}
+                    </li>
+                  ))}
+              </ul>
+            </>
+          )}
           {captain !== null && captain.tradeLog.length > 0 && (
             <>
               <h3>Recent trades</h3>

@@ -148,7 +148,7 @@ export class Faction {
    * a `Faction`-typed reference (e.g. Captain.company) can invoke it
    * without a value import of any specific subclass.
    */
-  sinkAtSea(captain: Captain): void {
+  sinkAtSea(captain: Captain, day: number): void {
     // Lost at sea, but still disembarked (not just nulled) at the last
     // Location its Transport passed through (kept live even mid-transit --
     // see Transport.location's own doc comment) -- purely for bookkeeping:
@@ -164,6 +164,11 @@ export class Faction {
     else captain.transport = null;
     // Recorded AFTER transport is otherwise cleared -- see Captain.lastTransport.
     captain.lastTransport = sunkTransport;
+    // This Captain's final Ship's Log entry -- World.runDay's own end-of-day
+    // recordShipLog pass never runs for it (already spliced out of
+    // world.captains by the time that pass would reach it), so this is the
+    // only place this ever gets written.
+    captain.shipLog.push({ day, text: `The ${sunkTransport.name} went down at sea with all hands -- lost with everyone aboard.` });
   }
 
   /**
@@ -177,7 +182,7 @@ export class Faction {
    * `captain` from THIS Faction's own `captains`; the caller (World.runDay)
    * still has to splice it out of `world.captains` too.
    */
-  sinkInPort(captain: Captain): void {
+  sinkInPort(captain: Captain, day: number): void {
     const transport = captain.transport!;
     const location = transport.location!;
     this.loseCargoAndCash(captain);
@@ -191,6 +196,12 @@ export class Faction {
     this.inactiveCaptains.push(captain);
     // See Captain.lastTransport.
     captain.lastTransport = transport;
+    // This Captain's final Ship's Log entry for this Ship -- World.runDay's
+    // own end-of-day recordShipLog pass never runs for it today (already
+    // spliced out of world.captains by the time that pass would reach it).
+    // If a replacement Ship is bought later this same turn (see
+    // World.acquireShip), that gets its own fresh entry via newShipDay.
+    captain.shipLog.push({ day, text: `The ${transport.name} was lost at ${location.name} -- ${captain.name} and crew made it ashore safely.` });
   }
 
   /**
@@ -1204,7 +1215,7 @@ export class PirateBrigade extends Faction {
 
     // Must come LAST -- sinking disembarks victimCaptain (clears its
     // Transport), and every `.locationName` read above requires one.
-    if (sinks) victimCaptain.company?.sinkInPort(victimCaptain);
+    if (sinks) victimCaptain.company?.sinkInPort(victimCaptain, day);
   }
 
   directFleet(

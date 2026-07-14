@@ -11,7 +11,7 @@ import { setSailorPool, getSailorPoolAt } from "../sailorPool";
 
 /** Reaches World's private buySoloTraderReplacementIfPossible -- exercised directly since driving a full day through World.step() to naturally trigger a specific pirate/victim encounter would need a much larger fixture. */
 interface WorldSoloTraderReplacementAccess {
-  buySoloTraderReplacementIfPossible(soloTrader: SoloTrader, captain: Captain): void;
+  buySoloTraderReplacementIfPossible(soloTrader: SoloTrader, captain: Captain, day: number): void;
 }
 
 /** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
@@ -235,7 +235,7 @@ describe("SoloTrader dissolution on an unaffordable sinking", () => {
     // SoloTrader Captain -- exercised directly here since driving a full
     // day through World.step() to naturally land this exact encounter would
     // need much more scripted setup than the behavior itself warrants.
-    (world as unknown as WorldSoloTraderReplacementAccess).buySoloTraderReplacementIfPossible(solo, captain);
+    (world as unknown as WorldSoloTraderReplacementAccess).buySoloTraderReplacementIfPossible(solo, captain, 1);
 
     expect(world.factions).not.toContain(solo);
     expect(solo.inactiveCaptains).toHaveLength(0);

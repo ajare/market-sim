@@ -78,6 +78,12 @@ export interface AgentEventLogEntry {
   detail: string;
 }
 
+/** One day's narrative entry in a Captain's Ship's Log -- see Captain.recordShipLog. */
+export interface ShipLogEntry {
+  day: number;
+  text: string;
+}
+
 export interface PortfolioSnapshot {
   day: number;
   location: string;
@@ -186,6 +192,18 @@ export class Captain extends Sailor {
   agentEventLog: AgentEventLogEntry[] = [];
 
   tradeLog: TradeLogEntry[] = [];
+
+  /** One entry per simulated day this Captain has had a Ship -- see recordShipLog, the sole writer (plus Faction.sinkAtSea/sinkInPort for a Ship's final entry). Never truncated, same convention as tradeLog/portfolioHistory. */
+  shipLog: ShipLogEntry[] = [];
+  /** Day number the most recent genuine arrival happened (see Captain.arrive's true-return branch) -- consumed and cleared by recordShipLog the same day, so it can distinguish "made port today" from "still docked from a prior day." */
+  private arrivedToday: number | null = null;
+  /** Day number the most recent REPAIR Directive was executed (see act()'s isRepairDirective branch) -- consumed and cleared by recordShipLog. */
+  private repairedToday: number | null = null;
+  /** Day number Shore Leave was last granted -- set by World.runDay's end-of-day Shore Leave step (outside this class, hence public), consumed and cleared by recordShipLog. */
+  shoreLeaveGrantedToday: number | null = null;
+  /** Day number this Captain most recently took command of a (newly bought or replacement) Ship -- set by World.acquireShip (outside this class, hence public), consumed and cleared by recordShipLog. */
+  newShipDay: number | null = null;
+
   realizedProfit = 0.0;
   totalFuelSpent = 0.0;
   totalFuelUnitsConsumed = 0.0;
@@ -438,7 +456,7 @@ export class Captain extends Sailor {
       if (this.transport!.handlesZeroCondition() && this.company?.decaysCondition === true) {
         this.transport!.condition -= CONDITION_DECAY_PER_TRANSIT_DAY;
         if (this.transport!.condition <= 0) {
-          this.company.sinkAtSea(this);
+          this.company.sinkAtSea(this, day);
           return;
         }
       }
@@ -494,6 +512,7 @@ export class Captain extends Sailor {
           // this. Free (no cash cost); see Company.directFleet, the only
           // source of this Directive.
           this.transport!.condition = 1.0;
+          this.repairedToday = day;
         } else if (isRepositionDirective(directedRoute)) {
           this.executeDirectedReposition(directedRoute.destination, day, buyMarkets);
         } else if (isContractDeliveryDirective(directedRoute)) {
@@ -525,6 +544,7 @@ export class Captain extends Sailor {
     this.status = "AtLocation";
     this.destination = null;
     this.dailyFuelBurn = 0.0;
+    this.arrivedToday = day;
     return true;
   }
 
@@ -1311,5 +1331,89 @@ export class Captain extends Sailor {
       realizedProfit: round2(this.realizedProfit),
       totalFuelSpent: round2(this.totalFuelSpent),
     });
+  }
+
+  /** One narrative sentence for a single `tradeLog` entry -- see recordShipLog. */
+  private describeTradeLogEntry(entry: TradeLogEntry): string {
+    switch (entry.action) {
+      case "BUY":
+        return `Took on ${entry.quantity.toFixed(1)} units of ${entry.commodity} at ${entry.location}, bound for ${entry.destination}.`;
+      case "SELL":
+        if (entry.price === null) {
+          // fulfillContract -- see its own tradeLog push -- always leaves price null.
+          return `Delivered ${entry.quantity.toFixed(1)} ${entry.commodity} at ${entry.location} against a standing supply contract.`;
+        }
+        return entry.profit !== null && entry.profit >= 0
+          ? `Sold ${entry.quantity.toFixed(1)} ${entry.commodity} at ${entry.location} for $${entry.price.toFixed(2)}/unit, a profit of $${entry.profit.toFixed(2)}.`
+          : `Sold ${entry.quantity.toFixed(1)} ${entry.commodity} at ${entry.location} for $${entry.price.toFixed(2)}/unit, a loss of $${Math.abs(entry.profit ?? 0).toFixed(2)}.`;
+      case "REFUEL":
+        return `Took on fuel at ${entry.location}.`;
+      case "REPOSITION":
+        return `Weighed anchor from ${entry.location} for ${entry.destination}, chasing a better market.`;
+      case "ATTACK":
+        return entry.commodity !== null
+          ? `Ran down a merchant near ${entry.location}, seizing ${entry.quantity.toFixed(1)} ${entry.commodity} and $${(entry.profit ?? 0).toFixed(2)} in coin.`
+          : `Ran down a merchant near ${entry.location}, making off with $${(entry.profit ?? 0).toFixed(2)} in coin.`;
+      case "SMUGGLE":
+        return entry.price === null
+          ? `Tried to run ${entry.quantity.toFixed(1)} ${entry.commodity} past the blockade at ${entry.location} -- caught, cargo seized and a fine levied.`
+          : `Slipped ${entry.quantity.toFixed(1)} ${entry.commodity} past the blockade at ${entry.location} for a tidy sum.`;
+    }
+  }
+
+  /**
+   * Appends today's entry to this Captain's Ship's Log -- a narrative
+   * one-paragraph summary of the day, built entirely from data already
+   * recorded elsewhere (tradeLog, agentEventLog) plus a handful of small
+   * same-day flags (arrivedToday/repairedToday/shoreLeaveGrantedToday/
+   * newShipDay) set at the few call sites that don't otherwise leave a
+   * day-stamped trace -- see each flag's own doc comment. Called once per
+   * day, for every Captain still in `World.captains` (a Captain whose Ship
+   * sank this turn is spliced out before this runs -- see World.runDay --
+   * so its FINAL entry is instead written directly by Faction.sinkAtSea/
+   * sinkInPort, the only two writers of shipLog outside this method).
+   */
+  recordShipLog(day: number): void {
+    const clauses: string[] = [];
+
+    if (this.newShipDay === day) {
+      clauses.push(`Took command of the ${this.transport?.name ?? "vessel"} at ${this.locationName}.`);
+    }
+    if (this.repairedToday === day) {
+      clauses.push(`Spent the day under repair.`);
+    }
+    if (this.arrivedToday === day) {
+      clauses.push(`Made port at ${this.locationName}.`);
+    }
+    for (const entry of this.tradeLog) {
+      if (entry.day === day) clauses.push(this.describeTradeLogEntry(entry));
+    }
+    for (const entry of this.agentEventLog) {
+      if (entry.day === day) clauses.push(`${entry.name} -- ${entry.detail}.`);
+    }
+
+    if (clauses.length === 0) {
+      if (this.status === "InTransit") {
+        const days = this.daysRemaining;
+        clauses.push(`Under way toward ${this.destination}, ${days} day${days === 1 ? "" : "s"} out.`);
+      } else if (this.status === "Inactive") {
+        clauses.push(`Adrift near ${this.locationName}, unable to pay the crew.`);
+      } else if (this.groundedDaysRemaining > 0) {
+        const days = this.groundedDaysRemaining;
+        clauses.push(`Confined to port at ${this.locationName}, ${days} day${days === 1 ? "" : "s"} of penalty remaining.`);
+      } else {
+        clauses.push(`Rode out a quiet day at anchor in ${this.locationName}.`);
+      }
+    }
+
+    if (this.shoreLeaveGrantedToday === day) {
+      clauses.push(`Crew granted shore leave for the night.`);
+    }
+
+    this.shipLog.push({ day, text: clauses.join(" ") });
+    this.arrivedToday = null;
+    this.repairedToday = null;
+    this.shoreLeaveGrantedToday = null;
+    this.newShipDay = null;
   }
 }

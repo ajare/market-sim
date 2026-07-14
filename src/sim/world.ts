@@ -383,7 +383,19 @@ export class World {
     }
 
     company.cash -= shipClass.purchasePrice;
-    return this.acquireShip(company, location, shipClass, false);
+    const day = this.currentSimDay();
+    const captain = this.acquireShip(company, location, shipClass, false, day);
+    // A manual purchase happens between days (the UI action isn't part of
+    // any runDay call), so no later end-of-day recordShipLog pass is coming
+    // for `day` to consume the newShipDay flag acquireShip just set -- write
+    // this Captain's first Ship's Log entry right now instead.
+    captain.recordShipLog(day);
+    return captain;
+  }
+
+  /** "The day something happened," for a manual UI action taken between simulated days (not itself inside a runDay call) -- the last day that actually finished running, or day 1 if none has yet. See buyShipForCompany, its only caller. */
+  private currentSimDay(): number {
+    return Math.max(1, this.nextDay - 1);
   }
 
   /**
@@ -415,7 +427,7 @@ export class World {
    * home-location-forcing `addTransport` override (PirateBrigade/
    * PoliceFleet) still places the Ship at exactly `location`.
    */
-  private acquireShip(faction: Faction, location: Location, shipClass: Ship, noCrew: boolean): Captain {
+  private acquireShip(faction: Faction, location: Location, shipClass: Ship, noCrew: boolean, day: number): Captain {
     const nationality = faction.politicalEntity?.nationality ?? randomNationality(globalNameRng);
     const ship = shipClass.clone({ name: randomShipName(globalNameRng, NATIONALITY_POOLS[nationality].ships) });
     const captain = this.captainForNewShip(faction, location, nationality);
@@ -430,6 +442,11 @@ export class World {
       }
     }
     this.captains.push(captain);
+    // Consumed by this Captain's own recordShipLog -- either later THIS SAME
+    // day (an automatic replacement, called from inside runDay's per-captain
+    // loop) or immediately by the caller (a manual purchase -- see
+    // buyShipForCompany, the only caller not itself inside runDay).
+    captain.newShipDay = day;
     return captain;
   }
 
@@ -457,7 +474,7 @@ export class World {
    * for whatever future mechanic might leave a survivor with cash (a $0
    * Ship class, a windfall between sinking and this check, etc.).
    */
-  private buySoloTraderReplacementIfPossible(soloTrader: SoloTrader, captain: Captain): void {
+  private buySoloTraderReplacementIfPossible(soloTrader: SoloTrader, captain: Captain, day: number): void {
     const cheapest = Object.values(SHIP_CLASSES).reduce((a, b) => (a.purchasePrice <= b.purchasePrice ? a : b));
     const location = captain.location;
     // SoloTrader.poolsCash is false -- its real money lives on the
@@ -465,7 +482,7 @@ export class World {
     // never on the Faction-level `cash` field a pooling Company would use.
     if (location !== null && captain.cash >= cheapest.purchasePrice) {
       captain.cash -= cheapest.purchasePrice;
-      this.acquireShip(soloTrader, location, cheapest, true);
+      this.acquireShip(soloTrader, location, cheapest, true, day);
     } else {
       this.dissolveSoloTrader(soloTrader, captain);
     }
@@ -504,12 +521,12 @@ export class World {
    * -- PoliceFleet is hardcoded to Infinity cash (see its constructor), so
    * this always succeeds.
    */
-  private buyPoliceReplacementImmediately(policeFleet: PoliceFleet, captain: Captain): void {
+  private buyPoliceReplacementImmediately(policeFleet: PoliceFleet, captain: Captain, day: number): void {
     const location = captain.location;
     if (location === null) return; // defensive; should always be set per sinkAtSea/sinkInPort
     const cheapest = Object.values(SHIP_CLASSES).reduce((a, b) => (a.purchasePrice <= b.purchasePrice ? a : b));
     policeFleet.cash -= cheapest.purchasePrice;
-    this.acquireShip(policeFleet, location, cheapest, true);
+    this.acquireShip(policeFleet, location, cheapest, true, day);
   }
 
   /**
@@ -566,7 +583,7 @@ export class World {
    * Location, else generate a new one," so no separate logic is needed here
    * for that part.
    */
-  private buyCompanyReplacementIfPossible(company: Company, captain: Captain): void {
+  private buyCompanyReplacementIfPossible(company: Company, captain: Captain, day: number): void {
     const sunkTransport = captain.lastTransport;
     if (sunkTransport === null) return; // defensive; always set by sinkAtSea/sinkInPort
     const sunkInPort = company.inactiveCaptains.includes(captain);
@@ -580,7 +597,7 @@ export class World {
     if (shipClass === null) return;
 
     company.cash -= shipClass.purchasePrice;
-    this.acquireShip(company, location, shipClass, false);
+    this.acquireShip(company, location, shipClass, false, day);
   }
 
   /**
@@ -876,11 +893,11 @@ export class World {
         const idx = this.captains.indexOf(trader);
         if (idx !== -1) this.captains.splice(idx, 1);
         if (trader.company instanceof SoloTrader && trader.company.inactiveCaptains.includes(trader)) {
-          this.buySoloTraderReplacementIfPossible(trader.company, trader);
+          this.buySoloTraderReplacementIfPossible(trader.company, trader, day);
         } else if (trader.company instanceof PoliceFleet) {
-          this.buyPoliceReplacementImmediately(trader.company, trader);
+          this.buyPoliceReplacementImmediately(trader.company, trader, day);
         } else if (trader.company instanceof Company) {
-          this.buyCompanyReplacementIfPossible(trader.company, trader);
+          this.buyCompanyReplacementIfPossible(trader.company, trader, day);
         }
       }
     }
@@ -946,6 +963,17 @@ export class World {
         if (member === captain) continue;
         member.shoreLeave();
       }
+      captain.shoreLeaveGrantedToday = day;
     }
+
+    // Ship's Log -- the true final act of the day: one narrative entry per
+    // Captain still around tonight, built off everything recorded above
+    // (tradeLog/agentEventLog/the shore-leave flag just set) plus the
+    // arrivedToday/repairedToday/newShipDay flags set earlier in today's
+    // act()/acquireShip calls -- see Captain.recordShipLog. A Captain whose
+    // Ship sank today isn't in `this.captains` any more by this point (see
+    // the post-act() cleanup above), so it already got its own final entry
+    // written directly by Faction.sinkAtSea/sinkInPort instead.
+    for (const captain of this.captains) captain.recordShipLog(day);
   }
 }

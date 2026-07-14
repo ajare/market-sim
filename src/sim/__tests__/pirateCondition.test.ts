@@ -12,7 +12,7 @@ import { SHIP_CLASSES } from "../transport";
 
 /** Reaches World's private buyPoliceReplacementImmediately -- exercised directly since driving a full day through World.step() to naturally land a specific pirate/police encounter would need much more scripted setup than the behavior itself warrants. */
 interface WorldPoliceReplacementAccess {
-  buyPoliceReplacementImmediately(policeFleet: PoliceFleet, captain: Captain): void;
+  buyPoliceReplacementImmediately(policeFleet: PoliceFleet, captain: Captain, day: number): void;
 }
 
 /** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
@@ -144,7 +144,7 @@ describe("PirateBrigade sinking has no auto-replacement (fleet just shrinks)", (
     // this session's "no self-damage" decision -- and nothing else ever
     // touches a docked pirate's condition), so the only real path to a
     // pirate Ship sinking at all is transit decay, always fatal.
-    brigade.sinkAtSea(pirateCaptain);
+    brigade.sinkAtSea(pirateCaptain, 1);
 
     expect(pirateCaptain.transport).toBeNull();
     expect(brigade.inactiveCaptains).not.toContain(pirateCaptain); // fatal -- never benched
@@ -167,10 +167,10 @@ describe("PoliceFleet unconditional immediate auto-replacement", () => {
     // Bench the Captain directly (mirrors what a pirate attack's sinkInPort
     // would do) -- isolates the replacement-purchase behavior itself from
     // the randomness of actually landing a qualifying attack.
-    policeFleet.sinkInPort(captain);
+    policeFleet.sinkInPort(captain, 1);
     expect(policeFleet.inactiveCaptains).toContain(captain);
 
-    (world as unknown as WorldPoliceReplacementAccess).buyPoliceReplacementImmediately(policeFleet, captain);
+    (world as unknown as WorldPoliceReplacementAccess).buyPoliceReplacementImmediately(policeFleet, captain, 1);
 
     expect(policeFleet.captains).toHaveLength(shipsBefore); // replaced, net count unchanged
     expect(policeFleet.inactiveCaptains).not.toContain(captain); // reactivated, not left benched
@@ -191,12 +191,12 @@ describe("PoliceFleet unconditional immediate auto-replacement", () => {
     const shipsBefore = policeFleet.captains.length;
 
     transport.status = "InTransit"; // sinkAtSea only applies mid-voyage
-    policeFleet.sinkAtSea(captain);
+    policeFleet.sinkAtSea(captain, 1);
     expect(captain.transport).toBeNull();
     expect(policeFleet.captains).not.toContain(captain);
     expect(policeFleet.inactiveCaptains).not.toContain(captain); // dead, never benched
 
-    (world as unknown as WorldPoliceReplacementAccess).buyPoliceReplacementImmediately(policeFleet, captain);
+    (world as unknown as WorldPoliceReplacementAccess).buyPoliceReplacementImmediately(policeFleet, captain, 1);
 
     expect(policeFleet.captains).toHaveLength(shipsBefore); // replaced, net count unchanged
     const replacement = policeFleet.captains.find((c) => c !== captain && c.locationName === location.name);

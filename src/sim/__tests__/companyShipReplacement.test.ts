@@ -6,7 +6,7 @@ import { Ship, SHIP_CLASSES } from "../transport";
 
 /** Reaches World's private buyCompanyReplacementIfPossible -- exercised directly since driving a full day through World.step() to naturally land a specific sinking would need much more scripted setup than the behavior itself warrants (mirrors the WorldSoloTraderReplacementAccess/WorldPoliceReplacementAccess pattern already used elsewhere). */
 interface WorldCompanyReplacementAccess {
-  buyCompanyReplacementIfPossible(company: Company, captain: Captain): void;
+  buyCompanyReplacementIfPossible(company: Company, captain: Captain, day: number): void;
 }
 
 /** A Captain crewing a plain (non-SoloTrader) multi-ship Company's Ship -- optionally filtered to a specific cargoCapacity, to pin down exactly which SHIP_CLASSES entry is "the same kind" for a test. */
@@ -30,11 +30,11 @@ describe("Company auto ship replacement", () => {
     const location = transport.location!;
     const shipsBefore = company.captains.length;
 
-    company.sinkInPort(captain);
+    company.sinkInPort(captain, 1);
     expect(company.inactiveCaptains).toContain(captain);
     expect(captain.lastTransport).toBe(transport);
 
-    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain);
+    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain, 1);
 
     expect(company.captains).toHaveLength(shipsBefore); // replaced, net count unchanged
     expect(company.inactiveCaptains).not.toContain(captain); // reactivated, not left benched
@@ -55,12 +55,12 @@ describe("Company auto ship replacement", () => {
     const shipsBefore = company.captains.length;
     const captainsBefore = new Set(company.captains);
 
-    company.sinkAtSea(captain);
+    company.sinkAtSea(captain, 1);
     expect(captain.transport).toBeNull();
     expect(company.captains).not.toContain(captain);
     expect(company.inactiveCaptains).not.toContain(captain); // fatal -- never benched
 
-    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain);
+    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain, 1);
 
     expect(company.captains).toHaveLength(shipsBefore); // replaced, net count unchanged
     const replacement = company.captains.find((c) => !captainsBefore.has(c));
@@ -78,11 +78,11 @@ describe("Company auto ship replacement", () => {
     const transport = captain.transport as Ship;
     const location = transport.location!;
 
-    company.sinkInPort(captain);
+    company.sinkInPort(captain, 1);
     // Enough for Panamax (10,000) but not Capesize (17,500).
     company.cash = SHIP_CLASSES.Panamax.purchasePrice;
 
-    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain);
+    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain, 1);
 
     expect(captain.transport).not.toBeNull();
     expect(captain.locationName).toBe(location.name);
@@ -96,10 +96,10 @@ describe("Company auto ship replacement", () => {
     const company = captain.company as Company;
     const shipsBefore = company.captains.length;
 
-    company.sinkInPort(captain);
+    company.sinkInPort(captain, 1);
     company.cash = 0;
 
-    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain);
+    (world as unknown as WorldCompanyReplacementAccess).buyCompanyReplacementIfPossible(company, captain, 1);
 
     expect(company.captains).toHaveLength(shipsBefore - 1); // no replacement bought
     expect(company.inactiveCaptains).toContain(captain); // still benched
