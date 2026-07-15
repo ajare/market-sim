@@ -107,3 +107,26 @@ Leave, and known inconsistencies).
 Architecture.md §7 (the whole event system, §7.1-§7.4 per kind), §10.1
 (`runDay`'s trigger ordering), §16.3 (tuning reference -- all six
 probabilities and every template list in one table).
+
+## Weather and storms
+
+Only applies to a `World` built with a `WeatherSystem` -- `buildWorld()`'s
+procedural default has no weather at all; only an editor-authored world
+loaded via `buildWorldFromJson` can have one (set the world's
+`weatherProfile` in the editor).
+
+| I want to... | Touch this |
+| --- | --- |
+| Add/tune a climate (temperature, wind, rainfall, prevailing wind) | `weather.ts`'s `WEATHER_PROFILES` (`WeatherProfile` -- warm/cool latitude anchors, storm cooling/wind boost, prevailing wind heading + spread, wet-season peak + amplitude) |
+| Change how much wind speeds up/slows down a Ship | `captain.ts`'s `WIND_EFFECT_REFERENCE_SPEED`/`WIND_EFFECT_MAX_FRACTION` |
+| Change how likely storms are to spawn | `storms.ts`'s `setStormFrequency`/`getStormFrequency` (`STORM_FREQUENCY_MULTIPLIER`, runtime-settable, survives `reset()`) or, for the underlying base rate, `BASE_SPAWN_PROBABILITY`/`MIN_STORM_SEPARATION` |
+| Change a storm's lifecycle (growth/plateau/decay length, max lifespan) | `storms.ts`'s `GROWTH_DAYS`/`PLATEAU_DAYS`/`DECAY_DAYS`/`MAX_LIFESPAN_DAYS` |
+| Change when a storm escalates into a cyclone | `storms.ts`'s `CYCLONE_MIN_TEMPERATURE_C`/`CYCLONE_MIN_LATITUDE`/`CYCLONE_MAX_LATITUDE`/`CYCLONE_MIN_INTENSITY`/`CYCLONE_SUSTAIN_DAYS` |
+| Change a storm's speed penalty or condition damage on a Ship departing into it | `captain.ts`'s `STORM_SPEED_MULTIPLIER`/`CYCLONE_SPEED_MULTIPLIER`/`STORM_CONDITION_DAMAGE`/`CYCLONE_CONDITION_DAMAGE` (`applyStormDamageOnDeparture`) |
+| Tell a Transport's condition-loss history apart by cause (transit/pirate/storm/repair) | `transport.ts`'s `Transport.conditionHistory`/`recordCondition` -- read by `TransportConditionHistoryPanel`'s red/blue markers |
+| Change the map's weather overlay or storm/cyclone markers | `src/components/NetworkView.tsx` -- the overlay dropdown and always-on storm circles |
+| Change the yearly climate bar charts | `src/components/WeatherClimatePanel.tsx` |
+
+Architecture.md §18 (the whole weather/wind/storm system, §18.1-§18.4 per
+part), §16.8 (tuning reference), §5.1 (`Transport.conditionHistory`), §13
+(the three UI panels).

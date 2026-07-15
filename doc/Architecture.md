@@ -65,7 +65,10 @@ unhired `Sailor`s both draw from and return to -- §8.5) rather than earlier
 in the chain.
 
 `contracts.ts` sits beside `faction.ts`/`captain.ts` (both depend on it, and
-`World` orchestrates it) rather than earlier in the chain. `buildWorld.ts`
+`World` orchestrates it) rather than earlier in the chain. `weather.ts` is
+entirely standalone (no dependency on any other `src/sim/` module); `storms.ts`
+depends only on `weather.ts`; both are optional inputs `World`/`Captain`
+consult if present rather than links in the core chain (§18). `buildWorld.ts`
 and the `src/state/` + `src/components/` UI layer sit on top of everything.
 
 | Module | Responsibility |
@@ -74,6 +77,8 @@ and the `src/state/` + `src/components/` UI layer sit on top of everything.
 | `politicalEntity.ts` | `PoliticalEntity` -- groups Locations, shares one cash balance among them (§3.6), and carries a `nationality` (§8.4) |
 | `commodity.ts` | `Commodity` -- per-commodity base price/sensitivity/deficit-and-excess-boost/event-templates, and `buildCommodities()` |
 | `distance.ts` | The flat (Euclidean) vs. globe (great-circle) distance model and its `DistanceConfig` (§4.2) |
+| `weather.ts` | `WeatherSystem` -- pure, stateless temperature/wind/rainfall queries as a function of `(timeOfYear, position)`, shaped by a `WeatherProfile` (§18.1) |
+| `storms.ts` | `StormSystem`/`Storm` -- stateful, day-by-day storm/cyclone entities layered on top of `WeatherSystem` (§18.2) |
 | `nationality.ts` | `Nationality` and `NATIONALITY_POOLS` -- the map from each nationality to its person/ship/company name pools (§8.4) |
 | `worldData.ts` | The commodity roster (`COMMODITIES`), procedurally generated geography (`LOCATIONS`, `LOCATION_COORDINATES`, `getLocation`, `distanceBetween`, `travelDaysBetween`, `generateLocations`, `generateCoordinates`, `assignPoliticalEntities`), and the active `DISTANCE_CONFIG` (`setDistanceConfig`, §4.2) |
 | `routes.ts` | `Route`/`RouteType`, the route network `ROUTES: Map<string, Route[]>` (multiple routes of different types per pair, §4.1), `generateRoutes`, `getRoutes`, `getRoute`, `addRouteToNetwork` |
@@ -582,6 +587,18 @@ today only `Ship` ever overrides `handlesZeroCondition()`, so a
 `WagonTrain`/`Plane`/`Lorry`/`FreightTrain`/`Spaceship` fleet's `condition`
 field sits inert at 1 forever, completely exempt from decay/repair/sinking.
 
+`Transport` also keeps `conditionHistory: ConditionRecord[]` -- a day-by-day
+`{ day, condition, cause }` log, `cause` one of `"transit"` / `"pirate"` /
+`"storm"` / `"repair"`, appended by `recordCondition(day, cause)` at each of
+the (exactly four) places `condition` is ever actually mutated: transit
+decay and a repair reset in `Captain.act`, storm damage in
+`applyStormDamageOnDeparture` (§18.3), and pirate damage in `Faction.attack`
+(§8.2). Like every other day-stamped history array in the codebase, it's
+pruned by `historyRetention.ts`'s `trimHistory` on each append. It exists
+purely to feed the web UI's Transport-condition chart (§13), which needs to
+tell "lost condition to a pirate" from "lost condition to a storm" apart in
+the same series `Transport.condition` alone can't distinguish.
+
 ### 5.2 `Person`/`Sailor` (`person.ts`/`sailor.ts`)
 
 `Person` (`person.ts`) is the base identity/placement layer for anyone who
@@ -673,7 +690,12 @@ path Dijkstra returns for that Transport: cargo cost at the current buy
 price, fuel cost leg by leg (each priced at *that* leg's origin's live Fuel
 price, since a path may be multi-hop), the Transport's flat
 `fixedShipmentCost`, and crew wages for every day the voyage takes
-(`Crew.dailyWages`, owed only while `InTransit`). A route is infeasible
+(`Crew.dailyWages`, owed only while `InTransit`). Every leg's travel time
+(`routeTravelDays`) is computed from `currentSpeedUnitsPerDay`, which folds
+in that day's wind alignment and any storm the Ship's currently sitting in
+before departure (§18.3) -- so a Captain planning a voyage already sees
+today's weather baked into the time/wage estimate, not just the raw
+`Transport.speedUnitsPerDay`. A route is infeasible
 (`dailyReturnPct = -1`) if no path exists at all, or if **any single leg**
 of the (one) path found needs more fuel than the Transport's tank could
 ever hold -- refueling actually happens automatically at each intermediate
@@ -1162,7 +1184,13 @@ of this actually happens for a given Ship:
 
 While genuinely `InTransit`, a decaying Ship loses `CONDITION_DECAY_PER_TRANSIT_DAY`
 (0.02, so 25 uninterrupted transit days from full to needing repair) each day
-(`Captain.act`). A docked Ship below `CONDITION_REPAIR_THRESHOLD` (0.5) is
+(`Captain.act`). A Ship departing a port a Storm currently covers takes a
+second, one-time hit on top of this (§18.3, `applyStormDamageOnDeparture`) --
+so a Ship can also reach zero condition purely from bad weather, with no
+pirate attack involved. `Transport.conditionHistory` (§5.1, §18.4) tags each
+day's condition against which of these it came from (transit decay, a pirate
+attack, a storm, or a repair reset), read by the web UI's Transport-condition
+chart (§13). A docked Ship below `CONDITION_REPAIR_THRESHOLD` (0.5) is
 issued a whole-day `REPAIR` Directive ahead of any trade/contract/patrol/
 reposition logic (`Faction.partitionForRepair`, shared by
 `Company`/`PirateBrigade`/`PoliceFleet`'s `directFleet`) and can't depart
@@ -1440,31 +1468,37 @@ passes these explicit values, which agree except where noted):
    spanning the board and every fulfiller's unfulfilled contracts), before
    any Faction acts, so Factions see today's fresh postings and never a
    stale/expired one (§9).
-2. **Tick location closures** -- reopen anything whose duration expired,
+2. **Simulate today's storms** -- `this.storms.simulateDay(day, this.weather,
+   getWorldStartDate())` (only if `World` was built with a `WeatherSystem`,
+   §18.2): moves/ages/escalates every existing Storm, drops any that
+   dissipated, then rolls new spawns -- before crew hiring or any Faction
+   plans, so today's storm positions are settled before anyone reads them
+   (§18.3).
+3. **Tick location closures** -- reopen anything whose duration expired,
    before anyone acts today.
-3. **Tick broad (Global/Location/Worldwide) MarketEvents** down a day.
-4. **Maybe trigger a new location closure.**
-5. **Maybe trigger CompanyEvents** -- independently per plain Company.
-6. **Faction direction**: call `directFleet()` on every Faction, passing the
+4. **Tick broad (Global/Location/Worldwide) MarketEvents** down a day.
+5. **Maybe trigger a new location closure.**
+6. **Maybe trigger CompanyEvents** -- independently per plain Company.
+7. **Faction direction**: call `directFleet()` on every Faction, passing the
    shared `bulletinBoard` (a plain `Faction` just returns an empty `Map`,
    which falls through to autonomous behavior); merge every returned
    directive into `directedRoutes`.
-7. **Agent action loop**: `agentOrderFn(captains, day)` decides today's
+8. **Agent action loop**: `agentOrderFn(captains, day)` decides today's
    acting order (default: fresh shuffle); each Captain's `act()` is called
-   with `directedRoutes.get(trader)`. Every event a Captain logged today is
-   pulled into `World.eventLog`.
-8. **Maybe trigger a Global MarketEvent, a Location-wide one, then a
+   with `directedRoutes.get(trader)`, and today's `weather`/`storms` (§18).
+   Every event a Captain logged today is pulled into `World.eventLog`.
+9. **Maybe trigger a Global MarketEvent, a Location-wide one, then a
    Worldwide one** (each independently probabilistic).
-9. **Apply one day of production/consumption** to every Location
-   (`location.dailyUpdate()`) -- unconditionally, even for a closed
-   location.
-10. **Clear every Market** (`market.simulateDay`) -- this is where each
+10. **Apply one day of production/consumption** to every Location
+    (`location.dailyUpdate()`) -- unconditionally, even for a closed
+    location.
+11. **Clear every Market** (`market.simulateDay`) -- this is where each
     `(location, commodity, side)`'s price for the day actually updates, and
     where the Local per-Market MarketEvent scope rolls.
-11. **Record every Captain's portfolio snapshot**, then every Faction's net
+12. **Record every Captain's portfolio snapshot**, then every Faction's net
     worth snapshot, for the day.
 
-Step 7 (agents act) happens *before* steps 9/10 (stockpiles update, prices
+Step 8 (agents act) happens *before* steps 10/11 (stockpiles update, prices
 clear) -- so every day, agents make their buy/sell decisions against
 **yesterday's closing price**, and the market moves in response to both
 today's production/consumption *and* whatever they just traded, ready for
@@ -1682,7 +1716,29 @@ bare `version` counter bumped on every `step()`; components subscribe to
   location they currently occupy -- colored by transport kind (Ship/Train/
   Plane, matching the route-type palette) and underlined when actually
   docked (not in transit). Hovering a Transport marker shows a tooltip
-  (name, kind, Company, status/destination, cargo, cash).
+  (name, kind, Company, status/destination, cargo, cash). A short horizontal
+  bar drawn just above each Transport marker -- green/orange/red at the same
+  `0.75`/`0.25` `condition` thresholds as the repair system (§8.5.3) -- gives
+  an at-a-glance fleet-health read without opening `FleetPanel`; docked ships
+  stacked at one Location use a taller row pitch than their column spacing so
+  a lower row's bar isn't covered by the row above it. For a `World` built
+  with a `WeatherSystem` (an editor-authored world, §11.2/§18), a dropdown
+  overlays today's temperature, wind speed, or rainfall as a background raster
+  recomputed once per simulated day (§18.1), and every active Storm/cyclone is
+  always drawn as a translucent circle (§18.2) regardless of that dropdown's
+  setting, hoverable for its own tooltip (position, radius, intensity, age).
+- **`WeatherClimatePanel`** -- three small bar charts (Jan-Dec, one bar per
+  month), showing the whole map's average temperature/wind speed/rainfall
+  across the year, sampled several times per month across every Location
+  (§18.1) -- a seasonal climate reference, not a day-by-day readout. Only
+  rendered for a `World` with a `WeatherSystem`.
+- **`TransportConditionHistoryPanel`** -- one low-opacity line per
+  currently-live Transport, plotting `Transport.conditionHistory` (§5.1) on a
+  fixed `[0, 1]` axis; every `"pirate"`-caused reading gets a small red dot
+  and every `"storm"`-caused one a blue dot, drawn on top and always visible
+  (not just on hover), so a spike of either color is legible even amid dozens
+  of overlapping lines. Hovering shows a crosshair/tooltip for the nearest
+  reading, same interaction pattern as `NetWorthHistoryPanel`.
 - **`EventsPanel`** -- every `Event` in `World.eventLog`, sorted
   newest-first, with Day/Type/Scope/Subject/Message/Duration columns; rows
   outside their own `[day, day + duration)` window are dimmed. Deliberately
@@ -1970,6 +2026,49 @@ The *magnitude* of each shock lives in its template list:
   Land scale) prunes the network to a denser web of shorter hops,
   forcing more multi-hop Dijkstra routing.
 
+### 16.8 Weather, wind, and storms
+
+Only relevant to a `World` built with a `WeatherSystem` (an editor-authored
+world, §11.2) -- `buildWorld`'s procedural default has no weather at all, so
+none of this applies to it. Full behavior described in §18.
+
+- **`WeatherProfile`** (`weather.ts`'s `WEATHER_PROFILES`, keyed by
+  `WeatherProfileName`) -- every climate constant (temperature/wind-speed
+  anchors at two reference latitudes, storm cooling/wind boost, prevailing
+  wind heading + spread, wet-season peak + amplitude) lives on the profile an
+  authored world is tagged with, not scattered constants; add a new named
+  profile here to give the editor a new climate to pick from (§18.1).
+- **`WIND_EFFECT_REFERENCE_SPEED`** (`captain.ts`, `300`) /
+  **`WIND_EFFECT_MAX_FRACTION`** (`0.15`) -- how strongly wind alignment
+  changes a Ship's effective speed: up to `+-15%` at a following/head-on wind
+  at or above the reference speed, tapering to `0%` at right angles or calm
+  wind (§18.3).
+- **`STORM_FREQUENCY_MULTIPLIER`** (`storms.ts`, default `1.0`, runtime-settable
+  via `setStormFrequency`/`getStormFrequency`) -- a flat multiplier on every
+  candidate point's daily spawn chance; `0` disables new storms entirely
+  (existing ones still move/intensify/decay normally), `2` doubles the odds.
+  Module-level like `historyRetention.ts`'s `HISTORY_RETENTION_DAYS` or
+  `captain.ts`'s `SHIP_LOG_ENABLED` -- a pure tuning knob, not part of any one
+  World's own data, so it survives `reset()`/`loadWorldFromJson()` (§18.2).
+- **`STORM_SPEED_MULTIPLIER`** (`captain.ts`, `0.75`) /
+  **`CYCLONE_SPEED_MULTIPLIER`** (`0.55`) -- the speed penalty applied for the
+  rest of a voyage a Ship departs a storm-covered port into (§18.3).
+- **`STORM_CONDITION_DAMAGE`** (`0.08`) / **`CYCLONE_CONDITION_DAMAGE`**
+  (`0.2`) -- the one-time `condition` hit taken on that same departure
+  (§18.3).
+- **`BASE_SPAWN_PROBABILITY`** (`storms.ts`, `0.02`) / **`MIN_STORM_SEPARATION`**
+  (`800`) -- a candidate point's spawn chance at rainfall `1.0` and the
+  default frequency multiplier, and the minimum distance a new Storm must
+  keep from every existing one.
+- **`GROWTH_DAYS`/`PLATEAU_DAYS`/`DECAY_DAYS`** (`4`/`3`/`6`) -- a Storm's
+  intensity ramp/hold/decay lifecycle; **`MAX_LIFESPAN_DAYS`** (`20`) is a
+  hard cap, not expected to bind under the ramp/plateau/decay numbers (they
+  sum to 13).
+- **`CYCLONE_MIN_TEMPERATURE_C`** (`26`) / **`CYCLONE_MIN_LATITUDE`**/
+  **`CYCLONE_MAX_LATITUDE`** (`5`/`30`) / **`CYCLONE_MIN_INTENSITY`** (`0.6`) /
+  **`CYCLONE_SUSTAIN_DAYS`** (`3`) -- every criterion a Storm must meet, for
+  this many consecutive days, to escalate into a cyclone (§18.2).
+
 ## 17. The World editor (`editor/`)
 
 `editor/` is a standalone Vite + React + Zustand app (package `editor`,
@@ -2005,3 +2104,232 @@ normalized `[0,1]` and stored as world positions (`× worldScale`) on the way
 out, divided back on the way in; older files load with sensible defaults for
 newer fields (distance mode, entity nationality). That exported JSON is
 exactly what the simulation's `buildWorldFromJson` (§11.2) consumes.
+
+## 18. Weather, wind, and storms
+
+**Only a `World` built with a `WeatherSystem` has any of this at all.**
+`buildWorld()`'s procedural default never constructs one, so the default
+world has no weather, no wind effect on speed, and no storms -- every
+mechanic in this section is opt-in, wired up only when a `World` is built
+from an editor-authored JSON that specifies a `weatherProfile` (§11.2). A
+`World` with `storms === null` (or `weather === null`) behaves byte-for-byte
+as it did before this system existed: `windSpeedMultiplier`/
+`stormSpeedMultiplier` both short-circuit to `1.0`, `applyStormDamageOnDeparture`
+is a no-op, and `NetworkView`'s weather-overlay dropdown/storm markers simply
+don't render.
+
+### 18.1 `WeatherSystem` (`weather.ts`) -- a pure, queryable climate field
+
+`WeatherSystem` is deliberately **not a simulated process** -- it has no
+per-day state of its own, no `tick()`, nothing `World.runDay` needs to
+advance. It's a pure function of `(timeOfYear, position)`, queried fresh
+wherever a temperature/wind/rainfall reading is needed (a Captain sampling
+today's wind at departure, `NetworkView`'s overlay raster, `StormSystem`
+deciding where to spawn or which way to drift):
+
+```ts
+class WeatherSystem {
+  constructor(seed: number, bounds: Bounds, profile: WeatherProfile) {}
+  latitudeDeg(position): number;      // real-world latitude this position maps to
+  temperature(timeOfYear, position): number;  // deg C
+  rainfall(timeOfYear, position): number;     // [0, 1] storminess
+  windSpeed(timeOfYear, position): number;    // world-units/day
+  windDirection(timeOfYear, position): number; // [0, 360) deg clockwise from north, "arrow points this way"
+}
+```
+
+Determinism comes from **hashed value noise** (`hash3`/`valueNoise3D`), not
+the `Rng`/`simRandom` classes the rest of the sim uses for day-to-day
+randomness -- a `WeatherSystem` query is a pure function of its inputs, so
+repeated calls at the same `(timeOfYear, position)` always return the exact
+same value regardless of call order or how many other queries happened in
+between. Noise is sampled on an 8-cell spatial x 12-cell temporal lattice
+(`SPATIAL_CELLS`/`TEMPORAL_CELLS`) and smoothly interpolated, so weather
+varies gradually across both the map and the year rather than flickering
+point to point or day to day; the temporal axis wraps with period 12 so a
+`timeOfYear` cycle (`dayToTimeOfYear`, below) stays seamless year over year.
+
+**A `WeatherProfile` (`WEATHER_PROFILES`, keyed by `WeatherProfileName`)
+owns every climate constant** -- what kind of climate a `World` has is a
+data choice (which profile it's tagged with), not a code change. Two ship
+today:
+
+- **`"default"`** -- reproduces the original hardcoded behavior byte for
+  byte: a full equator-to-pole gradient (warm anchor at 0deg, cool at 90deg),
+  fully random wind direction (no prevailing heading), no rainfall
+  seasonality.
+- **`"caribbean"`** -- a narrow ~10-25degN tropical band, consistent NE trade
+  winds (`prevailingWindDirectionDeg: 245`, i.e. blowing *from* the ENE
+  *toward* the WSW, `windDirectionSpreadDeg: 35`), and an Aug-Sep wet season
+  (`wetSeasonPeakTimeOfYear: 0.67`, `wetSeasonAmplitude: 0.35`) -- tuned to
+  reliably produce storms within the first ~40 simulated days, useful for
+  quickly exercising the storm system.
+
+A profile anchors every climate quantity to two **reference latitudes**
+("warm" and "cool") rather than hardcoded equator/pole values, so it can
+represent a narrow real-world band instead of always spanning a full
+hot-equator-to-cold-pole gradient. `latitudeDeg(position)` converts a
+position's world-unit distance from the map's vertical center into actual
+degrees (`MILES_PER_DEGREE_LATITUDE = 69`, since world units are miles),
+offset by the profile's `centerLatitudeDeg` and clamped to `+-90` -- so a
+small map genuinely doesn't span much real latitude, and a large one can
+span a full hemisphere. `temperature`/`windSpeed` both interpolate between
+the warm and cool anchors by `latitudeFraction` (clamped at both ends, no
+extrapolation past either anchor), then layer a seasonal cosine term
+(`temperature`, peaking at `timeOfYear` 0.5 -- July -- troughing at 0/1 --
+January) and a shared **storminess** field on top.
+
+**`storminess(timeOfYear, position)`** ([0, 1]) is the one noise field
+`rainfall`, `windSpeed`'s boost, and `temperature`'s cooling term all read
+from together, so a stormy day is simultaneously wetter, windier, and
+cooler than baseline -- not three independently-rolled numbers that could
+disagree. A profile's wet-season bias (if `wetSeasonAmplitude > 0`) adds a
+raised-cosine term on top, peaking at `wetSeasonPeakTimeOfYear` and
+troughing exactly half a year later.
+
+`dayToTimeOfYear(day, startDate)` (a free function, not a `WeatherSystem`
+method) converts a simulated day number (1-indexed, matching `World.runDay`'s
+`day` param) into `WeatherSystem`'s `[0, 1)` `timeOfYear` convention, given
+the `World`'s own day-1 calendar date -- kept as a pure function with no
+dependency on `worldData.ts`'s module state, so `weather.ts` stays fully
+standalone (§2); callers (`World`, `StormSystem`) pass their own start date
+(`worldData.ts`'s `getWorldStartDate()`).
+
+**The web UI's weather overlay** (`NetworkView`, §13) recomputes its
+temperature/wind-speed/rainfall raster once per simulated day (keyed off the
+live `date`, not just `world`), reading a fresh `timeOfYear` each time --
+so the map always shows *today's* weather, not a year-round average.
+`WeatherClimatePanel` (§13) instead samples several points per month across
+every Location to chart a whole-year seasonal average (temperature/wind
+speed/rainfall, one bar per month) -- a climate reference distinct from the
+daily overlay.
+
+### 18.2 `StormSystem`/`Storm` (`storms.ts`) -- stateful hazards on top of the field
+
+Unlike `WeatherSystem`, `StormSystem` genuinely simulates a day-to-day
+process: it owns a live `storms: Storm[]` array, and `World.runDay` calls
+`simulateDay(day, weather, startDate)` once per day (§10.1 step 2) to
+move/age/escalate every existing `Storm` and roll new spawns. Each `Storm`
+is a discrete, tracked entity (position, radius, intensity, age, cyclone
+status) -- **not** derived on the fly from `WeatherSystem`'s noise field the
+way the overlay raster is; a Storm you're currently near is the same Storm
+object tomorrow, continuing whatever trajectory it's already on.
+
+**Spawning** (`trySpawn`): each day, `SPAWN_CANDIDATES_PER_DAY` (20) random
+points are sampled across the map; a candidate's chance of actually spawning
+a Storm is `BASE_SPAWN_PROBABILITY * rainfall^2 * STORM_FREQUENCY_MULTIPLIER`
+-- squaring `rainfall` means spawn odds stay negligible outside a genuinely
+stormy day/season and ramp up sharply once it is one. A candidate within
+`MIN_STORM_SEPARATION` (800 world units) of an existing Storm is skipped, so
+the map doesn't clump with overlapping storms. A new Storm's `radius` is
+fixed for its whole life (`lerp(STORM_MIN_RADIUS, STORM_MAX_RADIUS,
+peakIntensity)`, 300-700 units) and its `peakIntensity` is rolled once,
+uniformly, in `[MIN_PEAK_INTENSITY, MAX_PEAK_INTENSITY]` (0.4-1.0) -- every
+spawned Storm ramps to *some* real strength, none trivially weak.
+
+**Movement** (`advanceExisting`): each existing Storm drifts
+`MOVEMENT_SPEED` (150 units/day) along the local prevailing wind
+(`weather.windDirection` sampled at the Storm's own position) plus a random
+`+-MOVEMENT_WOBBLE_DEG` (25deg) wobble each day, so its track follows the
+weather but isn't perfectly straight.
+
+**Intensity lifecycle** (`intensityCurveFraction`): `age` increments once
+per `simulateDay` call; `intensity = intensityCurveFraction(age) *
+peakIntensity` -- 0 at spawn, ramping linearly to `peakIntensity` over
+`GROWTH_DAYS` (4), holding there for `PLATEAU_DAYS` (3), decaying linearly
+back to 0 over `DECAY_DAYS` (6), then staying 0. A Storm is dropped
+(`advanceExisting`'s `survivors` filter) once it's past its ramp/plateau and
+`intensity < 0.02`, or unconditionally at `MAX_LIFESPAN_DAYS` (20, a safety
+net -- the ramp+plateau+decay numbers above only sum to 13, so this
+shouldn't normally bind).
+
+**Cyclone escalation**: every day, a Storm checks whether it currently meets
+*every* criterion -- `temperature > CYCLONE_MIN_TEMPERATURE_C` (26degC,
+matching the real-world ~26.5degC tropical-cyclone threshold),
+`CYCLONE_MIN_LATITUDE < |latitude| < CYCLONE_MAX_LATITUDE` (5-30deg, warm
+enough water but far enough from the equator for the Coriolis effect to
+organize rotation), and `intensity > CYCLONE_MIN_INTENSITY` (0.6).
+`cycloneStreak` counts consecutive days (any single miss resets it to 0);
+once it reaches `CYCLONE_SUSTAIN_DAYS` (3), `isCyclone` flips permanently
+`true` -- a real cyclone doesn't un-become one just because it later drifts
+somewhere that no longer qualifies.
+
+**`stormAt(storms, position)`** returns the most intense Storm (if any)
+whose `radius` currently covers `position` -- what a Captain departing from
+that position is "caught in" (§18.3); ties broken by intensity, not
+insertion order.
+
+Randomness throughout `storms.ts` draws from the **shared `simRandom`
+stream** (`randRandom`/`randUniform`), the same one `Market`'s daily price
+noise and `Faction`'s piracy tick use -- not a private `Rng` instance -- so a
+`World`'s own `seed` (§14) governs storm generation exactly the way it
+governs everything else simulated day to day.
+
+**`STORM_FREQUENCY_MULTIPLIER`** (module-level, `setStormFrequency`/
+`getStormFrequency`) is a global tuning knob on spawn odds -- see §16.8 for
+the full constant reference.
+
+### 18.3 Effects on `Captain`/`Ship` (`captain.ts`)
+
+Both effects below are sampled **once per `act()` call, for the Captain's
+current port on the current simulated day only** -- never resampled mid-voyage.
+`Captain.act` stashes `day`/`weather`/`storms` into private
+`currentDay`/`currentWeather`/`currentStorms` fields at the very top of the
+call; every helper below reads those fields for the rest of that same call,
+rather than threading `weather`/`storms` as parameters through every
+route-evaluation/departure helper (`routeEconomics`, `leavePort`, `arrive`,
+`departEmptyTo`, ...). This mirrors the existing same-day-flag pattern
+(`arrivedToday`/`repairedToday`) already used elsewhere in `captain.ts` for
+the same reason: neither weather nor a Ship's storm exposure changes
+mid-turn, so there's no need to re-sample partway through.
+
+**Wind changes travel time** (`currentSpeedUnitsPerDay`/`windSpeedMultiplier`,
+Ships only -- a no-op for any other Transport type or a `World` with no
+`WeatherSystem`): the Ship's base `speedUnitsPerDay` is scaled by how well
+today's wind at its current port aligns with the heading of the leg it's
+about to sail (`headingBetween`, a flat "clockwise from north" heading
+helper). A following wind speeds a Ship up, a headwind slows it down, a
+crosswind has no effect -- `alignment = cos(windDirection - heading)`,
+scaled by how strong the wind is relative to `WIND_EFFECT_REFERENCE_SPEED`
+(300, clamped at 1.0 so an extreme wind speed can't runaway the effect) and
+capped at `+-WIND_EFFECT_MAX_FRACTION` (15%) at full alignment and full
+reference strength. This feeds every travel-time calculation in the file --
+`routeEconomics`'s cost/time estimate, the actual `daysRemaining` set on
+departure, multi-hop continuation legs -- so a Captain's route planning
+already reflects today's wind, not just the Ship's raw nameplate speed.
+
+**A Storm imposes a speed penalty and one-time condition damage on
+departure** (`stormSpeedMultiplier`/`applyStormDamageOnDeparture`, Ships
+only): `stormAtCurrentPort()` (shared, read-only for the speed multiplier,
+mutating for the damage call) looks up `stormAt(currentStorms.storms,
+position)` for wherever the Ship currently sits. If one covers the port,
+`stormSpeedMultiplier` returns `STORM_SPEED_MULTIPLIER` (0.75) or, if it's
+escalated to a cyclone, the harsher `CYCLONE_SPEED_MULTIPLIER` (0.55) --
+folded into `currentSpeedUnitsPerDay` alongside the wind effect, for the
+whole voyage this departure kicks off (a storm passing through mid-voyage
+doesn't retroactively slow an already-departed Ship; only the storm exposure
+at the moment of departure counts). Separately, **`applyStormDamageOnDeparture(day)`**
+applies a one-time `condition` hit (`STORM_CONDITION_DAMAGE` 0.08, or
+`CYCLONE_CONDITION_DAMAGE` 0.2) the instant the Ship actually leaves --
+deliberately *not* during route evaluation (`routeEconomics` only reads the
+speed penalty, side-effect-free), so a Captain merely considering a route it
+never actually takes is never punished for it. It's called from exactly
+three sites: `leavePort`, `arrive()`'s next-hop continuation (a multi-hop
+voyage passing back out through a storm-covered intermediate stop), and
+`departEmptyTo` (repositioning) -- each records the new condition via
+`Transport.recordCondition(day, "storm")` (§5.1) and returns `false`,
+reusing `arrive()`'s existing "stop touching `this`, the Ship may have just
+sunk" convention, if the damage brought `condition` to zero (§8.5.3).
+
+### 18.4 Recap: how this feeds the web UI
+
+Nothing above is UI-only plumbing -- weather/storms genuinely change route
+economics and Ship survival -- but three panels exist specifically to make
+it visible (full descriptions in §13): `NetworkView`'s weather-overlay
+dropdown and always-on storm/cyclone circles (reading `WeatherSystem`/
+`StormSystem` live, once per day), `WeatherClimatePanel`'s year-round
+seasonal bar charts (reading `WeatherSystem` alone, no storm involvement),
+and `TransportConditionHistoryPanel`'s red/blue markers (reading
+`Transport.conditionHistory`'s `"pirate"`/`"storm"` tags, §5.1) -- the one
+place a storm's *consequence*, as opposed to its presence, is charted over
+time.
