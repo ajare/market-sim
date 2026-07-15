@@ -18,6 +18,7 @@ import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, worldDistance, type DistanceConfig,
 } from "./distance";
 import { DEFAULT_START_DATE } from "@market-sim/shared/world";
+import { DEFAULT_DISTANCE_UNIT, type DistanceUnit } from "@market-sim/shared/units";
 
 export const FUEL_BASE_PRICE = 1.25;
 
@@ -45,6 +46,25 @@ export function setDistanceConfig(config: DistanceConfig): void {
 
 export function getDistanceConfig(): DistanceConfig {
   return DISTANCE_CONFIG;
+}
+
+/**
+ * The real-world unit every distance/speed readout in the viewer is DISPLAYED
+ * in (see @market-sim/shared/units) -- purely a display conversion, never
+ * consulted by any sim math (Route.distance/Transport.speedUnitsPerDay/
+ * WeatherSystem stay in abstract world units throughout). Module-level (like
+ * DISTANCE_CONFIG) for the same reason: read from many display-only call
+ * sites. buildWorldFromJson sets it from the authored World's distanceUnit;
+ * buildWorld resets it to the default (miles).
+ */
+let DISPLAY_DISTANCE_UNIT: DistanceUnit = DEFAULT_DISTANCE_UNIT;
+
+export function setDisplayDistanceUnit(unit: DistanceUnit): void {
+  DISPLAY_DISTANCE_UNIT = unit;
+}
+
+export function getDisplayDistanceUnit(): DistanceUnit {
+  return DISPLAY_DISTANCE_UNIT;
 }
 
 /**

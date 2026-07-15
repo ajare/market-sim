@@ -18,6 +18,8 @@
     "./commodity": "./src/commodity.ts",
     "./politicalEntity": "./src/politicalEntity.ts",
     "./world": "./src/world.ts",
-    "./bezier": "./src/bezier.ts"
+    "./bezier": "./src/bezier.ts",
+    "./units": "./src/units.ts",
+    "./weatherProfiles": "./src/weatherProfiles.ts"
   }
 }

@@ -8,6 +8,7 @@ import { MarketEvent } from "./events";
 import type { Location } from "./location";
 import { randGauss } from "./simRandom";
 import { round2 } from "./utils";
+import { trimHistory } from "./historyRetention";
 
 export type MarketSide = "buy" | "sell";
 
@@ -207,6 +208,7 @@ export class Market {
         maxStockpileDiscounted: false,
       };
       this.history.push(record);
+      trimHistory(this.history, day);
       this.volumeTradedToday = 0.0;
       return record;
     }
@@ -232,6 +234,7 @@ export class Market {
         maxStockpileDiscounted: this.side === "buy" && this.location.discount(this.commodityName) > 0,
       };
       this.history.push(record);
+      trimHistory(this.history, day);
       this.updateEvents();
       this.volumeTradedToday = 0.0;
       return record;
@@ -275,6 +278,7 @@ export class Market {
       maxStockpileDiscounted: this.side === "buy" && this.location.discount(this.commodityName) > 0,
     };
     this.history.push(record);
+    trimHistory(this.history, day);
 
     this.price = newPrice;
     this.updateEvents();

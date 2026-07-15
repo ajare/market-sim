@@ -8,6 +8,7 @@ export function ControlsPanel() {
   const date = useSimStore((s) => s.date);
   const secondsPerDay = useSimStore((s) => s.secondsPerDay);
   const contractStrategy = useSimStore((s) => s.contractStrategy);
+  const shipLogEnabled = useSimStore((s) => s.shipLogEnabled);
   const factions = useSimStore((s) => s.factions);
   const world = useSimStore((s) => s.world);
   const version = useSimStore((s) => s.version);
@@ -17,6 +18,7 @@ export function ControlsPanel() {
   const setPlaying = useSimStore((s) => s.setPlaying);
   const setSecondsPerDay = useSimStore((s) => s.setSecondsPerDay);
   const setContractStrategy = useSimStore((s) => s.setContractStrategy);
+  const setShipLogEnabled = useSimStore((s) => s.setShipLogEnabled);
   const addPirateShip = useSimStore((s) => s.addPirateShip);
   const removePirateShip = useSimStore((s) => s.removePirateShip);
   const addPoliceShip = useSimStore((s) => s.addPoliceShip);
@@ -111,6 +113,14 @@ export function ControlsPanel() {
           <option value="compare">Compare by profit</option>
           <option value="prioritise">Prioritise over arbitrage</option>
         </select>
+      </label>
+      <label className="speed-control">
+        <input
+          type="checkbox"
+          checked={shipLogEnabled}
+          onChange={(e) => setShipLogEnabled(e.target.checked)}
+        />
+        Ship's Log
       </label>
       <label className="speed-control">
         Pirates: {pirateCount}

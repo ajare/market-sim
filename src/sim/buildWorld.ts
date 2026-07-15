@@ -9,8 +9,11 @@ import {
   ALL_LOCATION_NAMES, COMMODITIES, FUEL_DEPOT_NAMES, WORLD_GEN_SEED,
   DEFAULT_MIN_STOCKPILE_DAYS, DEFAULT_CONSUMED_STOCKPILE_FACTOR, DEFAULT_LOCATIONS_PER_POLITICAL_ENTITY,
   generateLocations, generateCoordinates, setGeography, assignPoliticalEntities, setDistanceConfig,
-  setWorldStartDate, getLocation,
+  setWorldStartDate, getLocation, setDisplayDistanceUnit, COORDINATE_SPREAD,
 } from "./worldData";
+import { DEFAULT_DISTANCE_UNIT } from "@market-sim/shared/units";
+import { WeatherSystem, WEATHER_PROFILES } from "./weather";
+import { StormSystem } from "./storms";
 import { DEFAULT_GLOBE_LON_SPAN, DEFAULT_START_DATE } from "@market-sim/shared";
 import type { Commodity } from "./commodity";
 import type { PoliticalEntity } from "./politicalEntity";
@@ -212,6 +215,9 @@ export function buildWorld(
   // mode -- otherwise route-generation pruning and Route lengths below would
   // silently inherit that world's mode.
   setDistanceConfig({ mode: "flat", radius: 1, lonSpan: DEFAULT_GLOBE_LON_SPAN, worldScale: 1 });
+  // Same reasoning as the distance-config reset above -- a prior
+  // buildWorldFromJson may have left the display unit set to something else.
+  setDisplayDistanceUnit(DEFAULT_DISTANCE_UNIT);
 
   let locations = generateLocations(
     locationNames, commodities, WORLD_GEN_SEED, consumedStockpileFactor, minPerRole, maxPerRole, minStockpileDays,
@@ -353,6 +359,10 @@ export function buildWorld(
     numPirateShips,
     pirateStartingCash: pirateCashPerShip * numPirateShips,
     contractOptions: options.contractOptions,
+    weather: new WeatherSystem(
+      seed, { x0: 0, y0: 0, x1: COORDINATE_SPREAD, y1: COORDINATE_SPREAD }, WEATHER_PROFILES.default,
+    ),
+    storms: new StormSystem(),
   });
 
   return { world, factions, politicalEntities };

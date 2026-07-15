@@ -28,7 +28,7 @@ import {
 } from "./sailor";
 import {
   LOCATIONS, LOCATION_COORDINATES, COMMODITIES, setGeography, getLocation, getDistanceConfig, FUEL_BASE_PRICE,
-  setWorldStartDate,
+  setWorldStartDate, getWorldStartDate,
 } from "./worldData";
 import { Route, ROUTES, setRoutes, addRouteToNetwork, routeKey } from "./routes";
 import {
@@ -49,6 +49,9 @@ function randomCaptainPersonFields(
   return { name, gender, nationality, dateOfBirth };
 }
 import { round2, clamp01 } from "./utils";
+import { WeatherSystem } from "./weather";
+import { StormSystem } from "./storms";
+import { trimHistory } from "./historyRetention";
 
 // Locations must fall within this range. Calibrated via seed-averaged
 // stockpile-ratio sweeps (see analysis.ts / npm run sweep): below ~20 total
@@ -119,6 +122,10 @@ export interface WorldInit {
   contractOptions?: TenderContractsOptions;
   /** The in-world date/time of day 1, as an ISO 8601 string -- see startDate/currentDate. Default DEFAULT_START_DATE. */
   startDate?: string;
+  /** A standalone weather field bounded to this World's map -- see weather.ts. Null (default) for a World with no bounds to query weather against, e.g. a JSON world that predates this field. */
+  weather?: WeatherSystem | null;
+  /** Discrete storm/cyclone entities driven by `weather` -- see storms.ts. Null (default) if this World has no WeatherSystem to drive them (StormSystem needs one; the two are always constructed together). */
+  storms?: StormSystem | null;
 }
 
 export { DEFAULT_START_DATE };
@@ -147,6 +154,8 @@ export class World {
   agentOrderFn: AgentOrderFn;
   bulletinBoard = new BulletinBoard();
   contractOptions: TenderContractsOptions;
+  weather: WeatherSystem | null;
+  storms: StormSystem | null;
   /** Per-ship average starting cash, remembered from init.pirateStartingCash so addPirateShip can give a freshly recruited ship the same average stake as the initial fleet. */
   private pirateShipStartingCash: number;
   /**
@@ -202,6 +211,8 @@ export class World {
     this.localEventProbability = localEventProbability;
     this.startDate = new Date(init.startDate ?? DEFAULT_START_DATE);
     setWorldStartDate(this.startDate);
+    this.weather = init.weather ?? null;
+    this.storms = init.storms ?? null;
 
     this.factions = init.factions ? [...init.factions] : [];
 
@@ -843,6 +854,16 @@ export class World {
     this.tickLocationClosures();
     this.tickBroadEvents();
 
+    // Storms/cyclones (see storms.ts) move/intensify/spawn/dissipate before
+    // any Captain acts today, so a departure this turn sees today's actual
+    // storm positions, not yesterday's stale ones. Needs `weather` to drive
+    // spawn odds/movement/cyclone formation -- the two are always
+    // constructed together (see buildWorld.ts/buildWorldFromJson.ts), so a
+    // World with `storms` but no `weather` is not expected to occur.
+    if (this.storms !== null && this.weather !== null) {
+      this.storms.simulateDay(day, this.weather, getWorldStartDate());
+    }
+
     const closedLocations = new Set(this.closedLocations.keys());
 
     // Formal day-order step 2 (see CLAUDE.md): crew hiring for every ship
@@ -872,7 +893,7 @@ export class World {
     for (const trader of todaysOrder) {
       trader.act(
         day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations,
-        directedRoutes.get(trader) ?? null, this.pirateBrigade,
+        directedRoutes.get(trader) ?? null, this.pirateBrigade, this.weather, this.storms,
       );
       for (const e of trader.eventLog) {
         if (e.day === day) this.eventLog.push(e);
@@ -930,6 +951,10 @@ export class World {
       this.combinedHistory.push(record);
       if (market.lastTriggeredEvent !== null) this.eventLog.push(market.lastTriggeredEvent);
     }
+    // One trim per day (not per market) -- combinedHistory is day-ordered
+    // across the whole batch just pushed above, so a single pass here is
+    // equivalent to trimming after every push but far cheaper.
+    trimHistory(this.combinedHistory, day);
 
     for (const trader of this.captains) trader.recordPortfolioSnapshot(day, this.sellMarkets);
     for (const faction of this.factions) faction.recordNetWorthSnapshot(day, this.sellMarkets);

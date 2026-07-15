@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSimStore } from "../state/useSimStore";
-import { LOCATION_COORDINATES, FUEL_DEPOT_NAMES, travelDaysBetween } from "../sim/worldData";
+import { LOCATION_COORDINATES, FUEL_DEPOT_NAMES, travelDaysBetween, getDisplayDistanceUnit } from "../sim/worldData";
+import { convertSpeed, speedUnitLabel } from "@market-sim/shared/units";
 import { ROUTES, getRoute, routeTravelDays, type Point, type Route, type RouteType } from "../sim/routes";
 import { Ship, WagonTrain, Plane, type Transport } from "../sim/transport";
 import type { Captain } from "../sim/captain";
@@ -10,6 +11,8 @@ import type { PoliticalEntity } from "../sim/politicalEntity";
 import type { MarketEvent } from "../sim/events";
 import { MAX_LOCATIONS, type World } from "../sim/world";
 import { findShortestPath, pathNodeSequence } from "../sim/pathfinding";
+import type { WeatherSystem, Position, Bounds } from "../sim/weather";
+import type { Storm } from "../sim/storms";
 
 /**
  * Sensible default max-distance/detour-distance thresholds for the new-Location
@@ -136,6 +139,267 @@ function transportKind(transport: Transport): string {
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value === "" ? fallback : value;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const n = parseInt(full, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+type OverlayMetric = "temperature" | "windSpeed" | "rainfall";
+
+/**
+ * A calendar Date converted to WeatherSystem's timeOfYear convention (0 =
+ * Jan 1, 1 = the following Jan 1 -- see weather.ts), dividing by the actual
+ * number of days in that specific year so a leap year doesn't skew the
+ * fraction.
+ */
+function timeOfYearFromDate(date: Date): number {
+  const startOfYear = Date.UTC(date.getUTCFullYear(), 0, 1);
+  const startOfNextYear = Date.UTC(date.getUTCFullYear() + 1, 0, 1);
+  return (date.getTime() - startOfYear) / (startOfNextYear - startOfYear);
+}
+
+function sampleMetric(weather: WeatherSystem, position: Position, metric: OverlayMetric, timeOfYear: number): number {
+  switch (metric) {
+    case "temperature":
+      return weather.temperature(timeOfYear, position);
+    case "windSpeed":
+      return weather.windSpeed(timeOfYear, position);
+    case "rainfall":
+      return weather.rainfall(timeOfYear, position);
+  }
+}
+
+/** The (noise-sampled) values of an evenly-spaced grid of today's weather points spanning a WeatherSystem's bounds, plus their observed range. */
+interface WeatherGrid {
+  cols: number;
+  rows: number;
+  bounds: Bounds;
+  values: Float32Array;
+  min: number;
+  max: number;
+}
+
+/** Hard ceiling on grid cells regardless of the requested spacing, so a tiny spacing value on a huge map can't hang the tab -- see buildWeatherGrid. */
+const MAX_WEATHER_GRID_CELLS = 300 * 300;
+
+/**
+ * Samples `metric` (temperature or wind speed) as of `timeOfYear` on an
+ * evenly-spaced grid across a WeatherSystem's bounds, `spacingUnits`
+ * world-units apart on each axis (clamped up, never down, so the actual cell
+ * count never exceeds MAX_WEATHER_GRID_CELLS). This is the slow part (noise
+ * sampling) -- kept separate from colorizing it into pixels so the color
+ * mapping can react to a live theme change without re-sampling the whole
+ * grid (see the weatherGrid useMemo / draw()). Callers re-run this once per
+ * simulated day (timeOfYear changes daily), so the overlay always reflects
+ * today's actual weather rather than a static average.
+ */
+function buildWeatherGrid(weather: WeatherSystem, spacingUnits: number, metric: OverlayMetric, timeOfYear: number): WeatherGrid {
+  const { bounds } = weather;
+  const xSpan = Math.max(1, bounds.x1 - bounds.x0);
+  const ySpan = Math.max(1, bounds.y1 - bounds.y0);
+  let spacing = Math.max(1, spacingUnits);
+  let cols = Math.floor(xSpan / spacing) + 1;
+  let rows = Math.floor(ySpan / spacing) + 1;
+  if (cols * rows > MAX_WEATHER_GRID_CELLS) {
+    spacing = Math.sqrt((xSpan * ySpan) / MAX_WEATHER_GRID_CELLS);
+    cols = Math.floor(xSpan / spacing) + 1;
+    rows = Math.floor(ySpan / spacing) + 1;
+  }
+
+  const values = new Float32Array(cols * rows);
+  let min = Infinity;
+  let max = -Infinity;
+  for (let ry = 0; ry < rows; ry++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const x = bounds.x0 + cx * spacing;
+      const y = bounds.y0 + ry * spacing;
+      const v = sampleMetric(weather, { x, y }, metric, timeOfYear);
+      values[ry * cols + cx] = v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  return { cols, rows, bounds, values, min, max };
+}
+
+/** Overlay opacity for the weather raster -- translucent enough that routes/icons/labels drawn on top stay legible. */
+const WEATHER_OVERLAY_ALPHA = 140;
+
+/**
+ * Colorizes a (cheap, already-sampled) WeatherGrid into a same-size offscreen
+ * canvas, diverging blue (cold) -> neutral gray -> red (hot) across an
+ * explicit [min, max] domain (its midpoint is the neutral point) -- diverging
+ * because "cold vs hot" is a polarity, not a plain magnitude (see the
+ * dataviz skill's diverging-pair guidance). The domain is passed in rather
+ * than read off the grid's own observed min/max so a caller can pin it to a
+ * fixed, physically-meaningful scale (e.g. temperature's 0-40 deg C) instead
+ * of one that silently rescales between worlds. Re-run on every draw() call
+ * (cheap: pure arithmetic over an already-computed grid) so a live theme
+ * switch is reflected immediately, unlike the expensive noise sampling in
+ * buildWeatherGrid.
+ */
+function colorizeDiverging(grid: WeatherGrid, min: number, max: number, cold: string, neutral: string, hot: string): HTMLCanvasElement {
+  const [cr, cg, cb] = hexToRgb(cold);
+  const [nr, ng, nb] = hexToRgb(neutral);
+  const [hr, hg, hb] = hexToRgb(hot);
+  const mid = (min + max) / 2;
+  const range = max - min;
+
+  const raster = document.createElement("canvas");
+  raster.width = grid.cols;
+  raster.height = grid.rows;
+  const rctx = raster.getContext("2d")!;
+  const imageData = rctx.createImageData(grid.cols, grid.rows);
+  for (let i = 0; i < grid.values.length; i++) {
+    const v = grid.values[i];
+    let r = nr;
+    let g = ng;
+    let b = nb;
+    if (range > 0) {
+      if (v <= mid) {
+        const t = Math.max(0, Math.min(1, (v - min) / (mid - min || 1)));
+        r = cr + (nr - cr) * t;
+        g = cg + (ng - cg) * t;
+        b = cb + (nb - cb) * t;
+      } else {
+        const t = Math.max(0, Math.min(1, (v - mid) / (max - mid || 1)));
+        r = nr + (hr - nr) * t;
+        g = ng + (hg - ng) * t;
+        b = nb + (hb - nb) * t;
+      }
+    }
+    const o = i * 4;
+    imageData.data[o] = r;
+    imageData.data[o + 1] = g;
+    imageData.data[o + 2] = b;
+    imageData.data[o + 3] = WEATHER_OVERLAY_ALPHA;
+  }
+  rctx.putImageData(imageData, 0, 0);
+  return raster;
+}
+
+/** Fixed color-scale domain for the temperature overlay, degrees Celsius -- see colorizeDiverging. */
+const TEMPERATURE_SCALE_MIN_C = 0;
+const TEMPERATURE_SCALE_MAX_C = 40;
+
+/** Fixed color-scale domain for the rainfall overlay -- WeatherSystem.rainfall is already a natural [0,1] intensity, so (unlike wind speed) there's a real fixed scale to pin the ramp to rather than rescaling per-World. */
+const RAINFALL_SCALE_MIN = 0;
+const RAINFALL_SCALE_MAX = 1;
+
+/**
+ * Colorizes a WeatherGrid into a same-size offscreen canvas as a single-hue
+ * sequential ramp, light (near `min`) -> dark (near `max`) -- a pure
+ * magnitude with no "opposite pole" the way cold/hot are, so this is a
+ * sequential rather than diverging encoding (see the dataviz skill's
+ * color-formula guidance). The domain is passed in rather than read off the
+ * grid's own observed min/max so a caller can pin it to a fixed, physically-
+ * meaningful scale (e.g. rainfall's natural 0-1 intensity) instead of one
+ * that silently rescales between worlds -- mirrors colorizeDiverging's own
+ * explicit-domain reasoning.
+ */
+function colorizeSequential(grid: WeatherGrid, min: number, max: number, low: string, high: string): HTMLCanvasElement {
+  const [lr, lg, lb] = hexToRgb(low);
+  const [hr, hg, hb] = hexToRgb(high);
+  const range = max - min;
+
+  const raster = document.createElement("canvas");
+  raster.width = grid.cols;
+  raster.height = grid.rows;
+  const rctx = raster.getContext("2d")!;
+  const imageData = rctx.createImageData(grid.cols, grid.rows);
+  for (let i = 0; i < grid.values.length; i++) {
+    const v = grid.values[i];
+    const t = range > 0 ? Math.max(0, Math.min(1, (v - min) / range)) : 0;
+    const o = i * 4;
+    imageData.data[o] = lr + (hr - lr) * t;
+    imageData.data[o + 1] = lg + (hg - lg) * t;
+    imageData.data[o + 2] = lb + (hb - lb) * t;
+    imageData.data[o + 3] = WEATHER_OVERLAY_ALPHA;
+  }
+  rctx.putImageData(imageData, 0, 0);
+  return raster;
+}
+
+/** An evenly-spaced grid of today's wind DIRECTIONS (degrees, not a magnitude) -- rendered as rotated arrow icons rather than a colorized raster, so it's kept as its own grid shape rather than reusing WeatherGrid's min/max-normalized value array. */
+interface DirectionGrid {
+  cols: number;
+  rows: number;
+  bounds: Bounds;
+  /** The actual (possibly clamped-up) spacing between sample points -- see buildDirectionGrid. Cell (cx, ry)'s world position is bounds.x0 + cx*spacing, bounds.y0 + ry*spacing. */
+  spacing: number;
+  degrees: Float32Array;
+}
+
+/**
+ * Hard ceiling on grid cells for the wind-direction overlay -- much lower
+ * than MAX_WEATHER_GRID_CELLS (raster pixels) because each cell here is an
+ * individually drawn, individually legible arrow icon: packed as densely as
+ * the raster cap allows, arrows would just overlap into an unreadable smear.
+ */
+const MAX_DIRECTION_GRID_CELLS = 30 * 30;
+
+/**
+ * Samples WeatherSystem.windDirection as of `timeOfYear` on an evenly-spaced
+ * grid -- see buildWeatherGrid, whose spacing-clamping logic this mirrors
+ * (against MAX_DIRECTION_GRID_CELLS instead) and whose "re-run once per
+ * simulated day" cadence this follows too.
+ */
+function buildDirectionGrid(weather: WeatherSystem, spacingUnits: number, timeOfYear: number): DirectionGrid {
+  const { bounds } = weather;
+  const xSpan = Math.max(1, bounds.x1 - bounds.x0);
+  const ySpan = Math.max(1, bounds.y1 - bounds.y0);
+  let spacing = Math.max(1, spacingUnits);
+  let cols = Math.floor(xSpan / spacing) + 1;
+  let rows = Math.floor(ySpan / spacing) + 1;
+  if (cols * rows > MAX_DIRECTION_GRID_CELLS) {
+    spacing = Math.sqrt((xSpan * ySpan) / MAX_DIRECTION_GRID_CELLS);
+    cols = Math.floor(xSpan / spacing) + 1;
+    rows = Math.floor(ySpan / spacing) + 1;
+  }
+
+  const degrees = new Float32Array(cols * rows);
+  for (let ry = 0; ry < rows; ry++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const x = bounds.x0 + cx * spacing;
+      const y = bounds.y0 + ry * spacing;
+      degrees[ry * cols + cx] = weather.windDirection(timeOfYear, { x, y });
+    }
+  }
+  return { cols, rows, bounds, spacing, degrees };
+}
+
+/**
+ * Draws one wind-direction arrow centered at (x, y), rotated so it points
+ * `angleDegrees` clockwise from north -- matching averageWindDirection's
+ * convention and canvas's own clockwise-positive rotate(), so 0 deg points
+ * straight up on screen with no sign flip needed.
+ */
+function drawWindArrow(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, angleDegrees: number, color: string): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((angleDegrees * Math.PI) / 180);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(0, size * 0.55);
+  ctx.lineTo(0, -size * 0.55);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.62);
+  ctx.lineTo(-size * 0.26, -size * 0.12);
+  ctx.lineTo(size * 0.26, -size * 0.12);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
 }
 
 /** Anchor -- Port (and Platform, the other Sea-compatible terminal). Ring, shaft, crossbar, and two hook curls. */
@@ -273,6 +537,13 @@ interface LocationMarker {
   r: number;
 }
 
+interface StormMarker {
+  storm: Storm;
+  x: number;
+  y: number;
+  r: number;
+}
+
 interface CaptainHoverState {
   kind: "captain";
   captain: Captain;
@@ -290,7 +561,14 @@ interface LocationHoverState {
   y: number;
 }
 
-type HoverState = CaptainHoverState | LocationHoverState;
+interface StormHoverState {
+  kind: "storm";
+  storm: Storm;
+  x: number;
+  y: number;
+}
+
+type HoverState = CaptainHoverState | LocationHoverState | StormHoverState;
 
 /** Every currently active MarketEvent touching any commodity market at `location`, deduped by name+daysRemaining -- a broad (Global/Location/Worldwide) event is applied as a separate MarketEvent instance to each affected market, so the same logical event otherwise shows up once per commodity/side. */
 function locationActiveEvents(world: World, location: string): MarketEvent[] {
@@ -321,6 +599,7 @@ interface PlaceMenuState {
 export function NetworkView() {
   const world = useSimStore((s) => s.world);
   const version = useSimStore((s) => s.version);
+  const date = useSimStore((s) => s.date);
   const politicalEntities = useSimStore((s) => s.politicalEntities);
   const addLocationAction = useSimStore((s) => s.addLocation);
   const selectedCaptain = useSimStore((s) => s.selectedCaptain);
@@ -329,6 +608,27 @@ export function NetworkView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [placeMenu, setPlaceMenu] = useState<PlaceMenuState | null>(null);
+  const [overlayMode, setOverlayMode] = useState<OverlayMetric | "none">("none");
+  const [showWindDirection, setShowWindDirection] = useState(false);
+  const [overlaySpacing, setOverlaySpacing] = useState(50);
+
+  // Re-sampled every simulated day (date advances once per step()) so the
+  // overlay always shows TODAY's actual weather, not a static average --
+  // colorizing it into pixels (cheap, theme-reactive) still happens
+  // separately in draw().
+  const weatherGrid = useMemo(() => {
+    if (world === null || world.weather === null || overlayMode === "none" || date === null) return null;
+    return buildWeatherGrid(world.weather, overlaySpacing, overlayMode, timeOfYearFromDate(date));
+  }, [world, overlayMode, overlaySpacing, date]);
+
+  // Independent of the raster dropdown above -- a separate toggle, drawn on
+  // top of everything else (see draw()), so it can be combined with a
+  // temperature/wind-speed raster or shown on its own. Also re-sampled daily
+  // (see weatherGrid above).
+  const directionGrid = useMemo(() => {
+    if (world === null || world.weather === null || !showWindDirection || date === null) return null;
+    return buildDirectionGrid(world.weather, overlaySpacing, timeOfYearFromDate(date));
+  }, [world, showWindDirection, overlaySpacing, date]);
 
   // Closing the popup on Escape, same as the editor's placement menu.
   useEffect(() => {
@@ -359,6 +659,7 @@ export function NetworkView() {
 
     let markers: Marker[] = [];
     let locationMarkers: LocationMarker[] = [];
+    let stormMarkers: StormMarker[] = [];
     let highlightedCaptain: Captain | null = null;
     // Set at the top of every draw() call -- lets handleClick invert a
     // click's pixel position back to world coordinates for placing a new
@@ -395,6 +696,76 @@ export function NetworkView() {
         return [pad + (x - minX) * scaleX, pad + (y - minY) * scaleY];
       };
       const project = (name: string): [number, number] => projectPoint(LOCATION_COORDINATES[name]);
+
+      // Weather overlay -- an evenly-spaced grid of today's temperature or
+      // wind speed points (see weatherGrid/buildWeatherGrid), rasterized to
+      // an offscreen canvas and blitted with image smoothing off so each
+      // grid cell reads as a distinct point rather than a smoothly blurred
+      // blob. Drawn first (background layer) so routes/icons/labels stay on
+      // top. Only available for a World with a WeatherSystem (JSON-loaded
+      // worlds -- see buildWorldFromJson); the dropdown is hidden otherwise.
+      if (weatherGrid !== null) {
+        const raster = overlayMode === "temperature"
+          ? colorizeDiverging(
+              weatherGrid,
+              TEMPERATURE_SCALE_MIN_C,
+              TEMPERATURE_SCALE_MAX_C,
+              cssVar("--temp-cold", "#2a78d6"),
+              cssVar("--temp-neutral", "#f0efec"),
+              cssVar("--temp-hot", "#e34948"),
+            )
+          : overlayMode === "windSpeed"
+          ? colorizeSequential(
+              weatherGrid,
+              weatherGrid.min,
+              weatherGrid.max,
+              cssVar("--wind-calm", "#dff5ee"),
+              cssVar("--wind-strong", "#1baf7a"),
+            )
+          : colorizeSequential(
+              weatherGrid,
+              RAINFALL_SCALE_MIN,
+              RAINFALL_SCALE_MAX,
+              cssVar("--rain-light", "#b7d3f6"),
+              cssVar("--rain-heavy", "#184f95"),
+            );
+        const [px0, py0] = projectPoint([weatherGrid.bounds.x0, weatherGrid.bounds.y0]);
+        const [px1, py1] = projectPoint([weatherGrid.bounds.x1, weatherGrid.bounds.y1]);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(raster, px0, py0, px1 - px0, py1 - py0);
+        ctx.imageSmoothingEnabled = true;
+      }
+
+      // Storms/cyclones (see storms.ts) -- always drawn when present, not
+      // gated by the "Weather overlay" dropdown (these are discrete hazard
+      // entities, not a continuous field). Background layer like the
+      // weather raster above, so routes/icons/labels stay legible on top;
+      // a saturated fill/border keeps them noticeable even under that.
+      stormMarkers = [];
+      if (world!.storms !== null) {
+        const stormColor = cssVar("--storm", "#ec835a");
+        const cycloneColor = cssVar("--cyclone", "#d03b3b");
+        for (const storm of world!.storms.storms) {
+          const [sx, sy] = projectPoint([storm.x, storm.y]);
+          // scaleX/scaleY can go negative for one draw if the container is
+          // narrower than `pad * 2` mid-layout -- ctx.ellipse throws on a
+          // negative radius, so clamp rather than crash the whole canvas.
+          const rx = Math.max(0, storm.radius * scaleX);
+          const ry = Math.max(0, storm.radius * scaleY);
+          const r = (rx + ry) / 2;
+          const color = storm.isCyclone ? cycloneColor : stormColor;
+          ctx.beginPath();
+          ctx.ellipse(sx, sy, rx, ry, 0, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.15 + 0.25 * storm.intensity;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = storm.isCyclone ? 2.5 : 1.5;
+          ctx.stroke();
+          stormMarkers.push({ storm, x: sx, y: sy, r });
+        }
+      }
 
       const border = cssVar("--border", "#999999");
       const textColor = cssVar("--muted", "#666666");
@@ -493,11 +864,33 @@ export function NetworkView() {
       // they're at; ships in transit are placed on their route line below.
       const markerRadius = 4;
       const cellSize = 11;
+      // Taller than cellSize -- the condition bar sits ~10px above each
+      // marker's center, so a plain cellSize row pitch would let the row
+      // above land right on top of the bar below it.
+      const rowSize = 24;
       const gridCols = 4;
       const gridGap = 20;
 
       /** Draws one ship marker at (mx, my) -- shared by the docked grid and the in-transit route placement below. Docked ships get a halo ring; in-transit ones don't (their position on the route line already conveys that). */
       function drawShipMarker(captain: Captain, mx: number, my: number, docked: boolean): void {
+        // Condition bar -- a short horizontal line above the marker, colored
+        // by which band the Transport's condition ([0,1]) falls into. Drawn
+        // first (before the marker itself) so it never overlaps the
+        // selection ring, which extends further out (see below).
+        const condition = captain.transport!.condition;
+        const conditionColor =
+          condition > 0.75 ? cssVar("--condition-good", "#0ca30c")
+          : condition > 0.25 ? cssVar("--condition-warning", "#fab219")
+          : cssVar("--condition-critical", "#d03b3b");
+        const conditionBarHalfWidth = markerRadius + 2;
+        const conditionBarY = my - markerRadius - 6;
+        ctx!.strokeStyle = conditionColor;
+        ctx!.lineWidth = 1.5;
+        ctx!.beginPath();
+        ctx!.moveTo(mx - conditionBarHalfWidth, conditionBarY);
+        ctx!.lineTo(mx + conditionBarHalfWidth, conditionBarY);
+        ctx!.stroke();
+
         ctx!.beginPath();
         ctx!.arc(mx, my, markerRadius, 0, Math.PI * 2);
         ctx!.fillStyle = factionColor(captain, muted);
@@ -545,7 +938,7 @@ export function NetworkView() {
           const col = i % cols;
           const rowWidth = (itemsInRow - 1) * cellSize;
           const mx = cx - rowWidth / 2 + col * cellSize;
-          const my = bottomRowY - row * cellSize;
+          const my = bottomRowY - row * rowSize;
           drawShipMarker(captain, mx, my, true);
         });
       }
@@ -624,13 +1017,37 @@ export function NetworkView() {
       }
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
+
+      // Wind direction overlay -- a separate toggle from the temperature/wind
+      // speed raster dropdown above (can be shown together with it or on its
+      // own): a rotated arrow icon per grid point, drawn as the very last
+      // layer so it renders on top of routes/icons/labels/ships instead of
+      // being obscured by them.
+      if (directionGrid !== null) {
+        const windColor = cssVar("--wind-strong", "#1baf7a");
+        // Arrows are sized off the grid's actual ON-SCREEN pitch (not a fixed
+        // pixel constant) so a dense grid on a small canvas shrinks its
+        // arrows instead of letting them overlap into an unreadable smear --
+        // scaleX/scaleY (in scope from the projection above) convert the
+        // grid's world-unit spacing straight to a pixel pitch.
+        const pixelPitch = Math.min(directionGrid.spacing * scaleX, directionGrid.spacing * scaleY);
+        const arrowSize = Math.max(4, Math.min(12, pixelPitch * 0.7));
+        for (let ry = 0; ry < directionGrid.rows; ry++) {
+          for (let cx = 0; cx < directionGrid.cols; cx++) {
+            const x = directionGrid.bounds.x0 + cx * directionGrid.spacing;
+            const y = directionGrid.bounds.y0 + ry * directionGrid.spacing;
+            const [px, py] = projectPoint([x, y]);
+            drawWindArrow(ctx, px, py, arrowSize, directionGrid.degrees[ry * directionGrid.cols + cx], windColor);
+          }
+        }
+      }
     }
 
     draw();
     const resizeObserver = new ResizeObserver(draw);
     resizeObserver.observe(container);
 
-    let hoveredKey: Captain | Location | null = null;
+    let hoveredKey: Captain | Location | Storm | null = null;
     function handleMouseMove(e: MouseEvent): void {
       const rect = canvas!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -667,6 +1084,18 @@ export function NetworkView() {
           x: locationHit.x,
           y: locationHit.y,
         });
+        return;
+      }
+
+      const stormHit = stormMarkers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r);
+      if (stormHit !== undefined) {
+        if (hoveredKey === stormHit.storm) return;
+        hoveredKey = stormHit.storm;
+        if (highlightedCaptain !== null) {
+          highlightedCaptain = null;
+          draw();
+        }
+        setHover({ kind: "storm", storm: stormHit.storm, x: stormHit.x, y: stormHit.y });
         return;
       }
 
@@ -718,14 +1147,86 @@ export function NetworkView() {
       canvas.removeEventListener("mouseleave", handleMouseLeave);
       canvas.removeEventListener("click", handleClick);
     };
-  }, [world, version, politicalEntities, selectedCaptain, selectTransport]);
+  }, [world, version, politicalEntities, selectedCaptain, selectTransport, weatherGrid, directionGrid, overlayMode, showWindDirection]);
 
   if (world === null) return null;
+
+  const displayDistanceUnit = getDisplayDistanceUnit();
+  const speedLabel = speedUnitLabel(displayDistanceUnit);
 
   return (
     <div className="panel network-panel">
       <h2>Network</h2>
+      {world.weather !== null && (
+        <div className="network-temperature-controls">
+          <label className="network-temperature-toggle">
+            Weather overlay
+            <select
+              value={overlayMode}
+              onChange={(e) => setOverlayMode(e.target.value as OverlayMetric | "none")}
+            >
+              <option value="none">None</option>
+              <option value="temperature">Temperature</option>
+              <option value="windSpeed">Wind speed</option>
+              <option value="rainfall">Rainfall</option>
+            </select>
+          </label>
+          <label className="network-temperature-toggle">
+            <input
+              type="checkbox"
+              checked={showWindDirection}
+              onChange={(e) => setShowWindDirection(e.target.checked)}
+            />
+            Show wind direction
+          </label>
+          {(overlayMode !== "none" || showWindDirection) && (
+            <label className="network-temperature-toggle">
+              Point spacing
+              <input
+                type="number"
+                min={1}
+                value={overlaySpacing}
+                onChange={(e) => setOverlaySpacing(Math.max(1, Number(e.target.value)))}
+              />
+              units
+            </label>
+          )}
+        </div>
+      )}
       <div className="network-legend">
+        {overlayMode === "temperature" && world.weather !== null && (
+          <span>
+            <i className="legend-swatch" style={{ background: "var(--temp-cold)" }} />{TEMPERATURE_SCALE_MIN_C}°C ·{" "}
+            <i className="legend-swatch" style={{ background: "var(--temp-neutral)" }} />
+            {(TEMPERATURE_SCALE_MIN_C + TEMPERATURE_SCALE_MAX_C) / 2}°C ·{" "}
+            <i className="legend-swatch" style={{ background: "var(--temp-hot)" }} />{TEMPERATURE_SCALE_MAX_C}°C
+          </span>
+        )}
+        {overlayMode === "windSpeed" && world.weather !== null && weatherGrid !== null && (
+          <span>
+            <i className="legend-swatch" style={{ background: "var(--wind-calm)" }} />
+            Calm ({convertSpeed(weatherGrid.min, displayDistanceUnit).toFixed(0)} {speedLabel}) ·{" "}
+            <i className="legend-swatch" style={{ background: "var(--wind-strong)" }} />
+            Strong ({convertSpeed(weatherGrid.max, displayDistanceUnit).toFixed(0)} {speedLabel})
+          </span>
+        )}
+        {overlayMode === "rainfall" && world.weather !== null && (
+          <span>
+            <i className="legend-swatch" style={{ background: "var(--rain-light)" }} />
+            {(RAINFALL_SCALE_MIN * 100).toFixed(0)}% ·{" "}
+            <i className="legend-swatch" style={{ background: "var(--rain-heavy)" }} />
+            {(RAINFALL_SCALE_MAX * 100).toFixed(0)}%
+          </span>
+        )}
+        {showWindDirection && world.weather !== null && (
+          <span>Arrows point in today's wind direction at each grid point</span>
+        )}
+        {world.storms !== null && world.storms.storms.length > 0 && (
+          <span>
+            <i className="legend-swatch" style={{ background: "var(--storm)" }} />Storm ·{" "}
+            <i className="legend-swatch" style={{ background: "var(--cyclone)" }} />Cyclone
+          </span>
+        )}
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Sea }} />Sea route</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Land }} />Land route</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Air }} />Air route</span>
@@ -850,6 +1351,14 @@ export function NetworkView() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+        {hover !== null && hover.kind === "storm" && (
+          <div className="network-tooltip" style={{ left: hover.x, top: hover.y }}>
+            <div className="network-tooltip-title">{hover.storm.isCyclone ? "Cyclone" : "Storm"}</div>
+            <div>Intensity: {(hover.storm.intensity * 100).toFixed(0)}%</div>
+            <div>Age: {hover.storm.age}d</div>
+            <div>Radius: {hover.storm.radius.toFixed(0)}</div>
           </div>
         )}
       </div>

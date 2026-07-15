@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { Location } from "../location";
 import { Company } from "../faction";
-import { Captain } from "../captain";
+import { Captain, setShipLogEnabled } from "../captain";
 import { Ship } from "../transport";
 import { setGeography, getLocation } from "../worldData";
 import { Route, addRouteToNetwork, setRoutes } from "../routes";
 import { setSailorPool } from "../sailorPool";
 import { buildWorld } from "../buildWorld";
+
+// Ship's Log is off by default app-wide (see captain.ts's isShipLogEnabled) --
+// this whole file is specifically about that feature's content, so it's
+// switched on for every test here. Module state is isolated per test file,
+// so this doesn't leak into other suites.
+setShipLogEnabled(true);
 
 /** A Captain at `homeLocationName` (already registered via setGeography) -- gender/birth date are test-irrelevant fixed values. */
 function makeCaptain(name: string, homeLocationName: string): Captain {
@@ -32,6 +38,26 @@ function makeTwoPortWorld(): { home: Location; dest: Location } {
   setSailorPool(new Map());
   return { home, dest };
 }
+
+describe("Ship's Log -- enable/disable toggle", () => {
+  it("recordShipLog is a no-op while disabled (isShipLogEnabled false)", () => {
+    // Undo this file's module-level setShipLogEnabled(true) just for this test.
+    setShipLogEnabled(false);
+    try {
+      makeTwoPortWorld();
+      const transport = new Ship({ name: "Runner", crewRequirement: 1 });
+      const captain = makeCaptain("Cap", "Home");
+      new Company("Acme", [[transport, captain, "Home"]], 0);
+
+      captain.act(1, new Map(), new Map(), [], new Set());
+      captain.recordShipLog(1);
+
+      expect(captain.shipLog).toEqual([]);
+    } finally {
+      setShipLogEnabled(true);
+    }
+  });
+});
 
 describe("Ship's Log -- ambient filler (nothing else happened today)", () => {
   it("describes a quiet day at anchor for a docked Captain with nothing to do", () => {

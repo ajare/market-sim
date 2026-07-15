@@ -2,6 +2,8 @@
   "version": 5,
   "worldScale": 1000,
   "distanceMode": "flat",
+  "distanceUnit": "miles",
+  "weatherProfile": "caribbean",
   "globeRadius": 31.83,
   "globeLonSpan": 180,
   "politicalEntities": [

@@ -17,3 +17,5 @@ export * from "./commodity";
 export * from "./politicalEntity";
 export * from "./world";
 export * from "./bezier";
+export * from "./units";
+export * from "./weatherProfiles";

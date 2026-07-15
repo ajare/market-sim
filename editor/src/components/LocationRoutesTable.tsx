@@ -11,6 +11,7 @@
 import { useEditorStore } from "../state/useEditorStore";
 import type { EditorLocation } from "../types";
 import { routeWorldLength } from "../distance";
+import { convertDistance, distanceUnitLabel } from "../units";
 
 export function LocationRoutesTable({ locationId }: { locationId: string }) {
   const locations = useEditorStore((s) => s.locations);
@@ -22,6 +23,7 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
   const globeRadius = useEditorStore((s) => s.globeRadius);
   const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
   const worldScale = useEditorStore((s) => s.worldScale);
+  const distanceUnit = useEditorStore((s) => s.distanceUnit);
   const config = { mode: distanceMode, radius: globeRadius, lonSpan: globeLonSpan, worldScale };
 
   const location = locations.find((loc) => loc.id === locationId);
@@ -52,7 +54,7 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
             <tr>
               <th>To</th>
               <th>Type</th>
-              <th>Distance</th>
+              <th>Distance ({distanceUnitLabel(distanceUnit)})</th>
               <th />
             </tr>
           </thead>
@@ -61,7 +63,7 @@ export function LocationRoutesTable({ locationId }: { locationId: string }) {
               <tr key={route.id}>
                 <td className="routes-table-name-cell">{other.name}</td>
                 <td>{route.routeType}</td>
-                <td>{routeWorldLength(location, other, route.controlPoints, config).toFixed(1)}</td>
+                <td>{convertDistance(routeWorldLength(location, other, route.controlPoints, config), distanceUnit).toFixed(1)}</td>
                 <td>
                   <button type="button" onClick={() => removeRoute(route.id)}>
                     Delete

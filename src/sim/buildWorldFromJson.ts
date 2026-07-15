@@ -21,10 +21,15 @@ import { Company, SoloTrader, type Faction, type FleetCrew } from "./faction";
 import { World } from "./world";
 import {
   setCommodities, setGeography, setDistanceConfig, getLocation, COORDINATE_SPREAD, setWorldStartDate,
+  setDisplayDistanceUnit,
 } from "./worldData";
 import { locationSupportsFleet, locationSupportsTransport, defaultCompanyHomeLocation } from "./companyHome";
 import { setRoutes } from "./routes";
-import { DEFAULT_GLOBE_LON_SPAN, DEFAULT_START_DATE, type DistanceConfig, type DistanceMode } from "@market-sim/shared";
+import {
+  DEFAULT_GLOBE_LON_SPAN, DEFAULT_START_DATE, type DistanceConfig, type DistanceMode,
+  DEFAULT_DISTANCE_UNIT, DISTANCE_UNITS, type DistanceUnit,
+  DEFAULT_WEATHER_PROFILE_NAME, isWeatherProfileName, type WeatherProfileName,
+} from "@market-sim/shared";
 import { Rng } from "./rng";
 import { randomGender, randomPersonName } from "./names";
 import { randomShipName } from "./shipNames";
@@ -38,6 +43,8 @@ import {
 } from "./buildWorld";
 import { randomBirthDate } from "./person";
 import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
+import { WeatherSystem, WEATHER_PROFILES } from "./weather";
+import { StormSystem } from "./storms";
 
 /**
  * Optional fleet overrides for buildWorldFromJson -- all default to
@@ -166,6 +173,10 @@ interface JsonWorld {
   distanceMode?: string;
   globeRadius?: number;
   globeLonSpan?: number;
+  /** Real-world unit distances/speeds are DISPLAYED in (miles/nauticalMiles/kilometers) -- purely cosmetic, never affects sim math. Absent in pre-distanceUnit files, which default to miles. See @market-sim/shared/units. */
+  distanceUnit?: string;
+  /** Which named WeatherProfile (see weather.ts) shapes this World's WeatherSystem. Absent in pre-weatherProfile files, which default to "default". */
+  weatherProfile?: string;
   /** In-world date/time of day 1, as an ISO 8601 string. Absent in pre-startDate files, which default to World's own DEFAULT_START_DATE. */
   startDate?: string;
   commodities?: JsonCommodity[];
@@ -301,6 +312,19 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     worldScale,
   };
   setDistanceConfig(distanceConfig);
+
+  // Display-only (see worldData.ts's DISPLAY_DISTANCE_UNIT doc comment) --
+  // never consulted by any sim math, only by viewer/editor readouts.
+  const distanceUnit: DistanceUnit = DISTANCE_UNITS.includes(world.distanceUnit as DistanceUnit)
+    ? (world.distanceUnit as DistanceUnit)
+    : DEFAULT_DISTANCE_UNIT;
+  setDisplayDistanceUnit(distanceUnit);
+
+  // Which named WeatherProfile (see weather.ts) this World's WeatherSystem
+  // (constructed below, after fleet synthesis) is shaped by.
+  const weatherProfileName: WeatherProfileName = isWeatherProfileName(world.weatherProfile)
+    ? world.weatherProfile
+    : DEFAULT_WEATHER_PROFILE_NAME;
 
   // Every Transport speed default (transport.ts, SHIP_CLASSES) is calibrated
   // against the procedural world's COORDINATE_SPREAD-unit flat map (see
@@ -544,6 +568,13 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     numPirateShips,
     pirateStartingCash: pirateCashPerShip * numPirateShips,
     numPoliceShips: options.numPoliceShips ?? DEFAULT_NUM_POLICE_SHIPS,
+    // Bounds match worldScale, the JSON's own coordinate span (see the
+    // worldScale/distanceConfig setup above) -- 0,0 is always the map's
+    // origin corner for a JSON-authored world.
+    weather: new WeatherSystem(
+      options.seed ?? 0, { x0: 0, y0: 0, x1: worldScale, y1: worldScale }, WEATHER_PROFILES[weatherProfileName],
+    ),
+    storms: new StormSystem(),
   });
 
   return { world: builtWorld, factions, politicalEntities };

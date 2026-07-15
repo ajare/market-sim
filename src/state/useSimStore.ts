@@ -19,7 +19,7 @@ import type { PoliticalEntity } from "../sim/politicalEntity";
 import { Company, type ContractStrategy, type Faction } from "../sim/faction";
 import type { Transport } from "../sim/transport";
 import type { Sailor } from "../sim/sailor";
-import type { Captain } from "../sim/captain";
+import { isShipLogEnabled, setShipLogEnabled as setSimShipLogEnabled, type Captain } from "../sim/captain";
 import type { Person } from "../sim/person";
 
 interface SimStore {
@@ -32,6 +32,9 @@ interface SimStore {
   playing: boolean;
   secondsPerDay: number;
   contractStrategy: ContractStrategy;
+  /** Whether Captains record Ship's Log entries -- off by default (see sim/captain.ts's isShipLogEnabled). Mirrors the module-level flag so the UI checkbox re-renders; setShipLogEnabled keeps both in sync. */
+  shipLogEnabled: boolean;
+  setShipLogEnabled: (enabled: boolean) => void;
   version: number;
   /** The Captain currently selected in the Fleet panel, highlighted in the Network view -- null when nothing's selected. Cleared whenever a new World is built/loaded, since the old fleet's Captain objects no longer apply. */
   selectedCaptain: Captain | null;
@@ -100,6 +103,11 @@ export const useSimStore = create<SimStore>((set, get) => ({
   playing: false,
   secondsPerDay: 1.0,
   contractStrategy: "compare",
+  shipLogEnabled: isShipLogEnabled(),
+  setShipLogEnabled: (enabled: boolean) => {
+    setSimShipLogEnabled(enabled);
+    set({ shipLogEnabled: enabled });
+  },
   version: 0,
   selectedCaptain: null,
   selectTransport: (captain) => set((s) => ({ selectedCaptain: s.selectedCaptain === captain ? null : captain })),

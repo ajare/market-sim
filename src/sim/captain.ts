@@ -9,16 +9,53 @@ import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
 import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus } from "./transport";
-import { distanceBetween, travelDaysBetween, getLocation } from "./worldData";
+import { distanceBetween, travelDaysBetween, getLocation, getWorldStartDate, LOCATION_COORDINATES } from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
 import { round2 } from "./utils";
+import { trimHistory } from "./historyRetention";
+import { dayToTimeOfYear, type WeatherSystem, type Position } from "./weather";
+import { stormAt, type StormSystem, type Storm } from "./storms";
 import type { PersonInit } from "./person";
 import type { Location } from "./location";
 import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
+
+/**
+ * "Clockwise from north" heading (degrees [0,360)) from one Location's
+ * position toward another -- the same convention as WeatherSystem.
+ * windDirection's "arrow points this way" (see weather.ts), so a heading and
+ * a wind direction can be compared directly. Flat world-coordinate math
+ * (unlike distance.ts's own globe-mode bearing() helper) since wind is
+ * already a flat-map noise field, not a spherical quantity. Returns null if
+ * either Location's coordinates are missing (defensive; not expected for a
+ * real path/route origin or destination).
+ */
+function headingBetween(fromName: string, toName: string): number | null {
+  const from = LOCATION_COORDINATES[fromName];
+  const to = LOCATION_COORDINATES[toName];
+  if (from === undefined || to === undefined) return null;
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+  return deg < 0 ? deg + 360 : deg;
+}
+
+/** Wind speed (world-units/day) at which the wind-alignment effect below reaches its full configured magnitude -- roughly a "strong" wind under either built-in WeatherProfile (Default's storm-boosted max is ~480, Caribbean's ~810). */
+const WIND_EFFECT_REFERENCE_SPEED = 300;
+/** Max fraction a perfectly-aligned (following) or perfectly-opposed (head-on) wind at WIND_EFFECT_REFERENCE_SPEED changes a Ship's effective speed by -- e.g. 0.15 means +/-15% at full alignment and full reference strength, tapering to 0 at right angles or calm wind. */
+const WIND_EFFECT_MAX_FRACTION = 0.15;
+
+/** Effective-speed multiplier for a Ship departing a port currently inside an active Storm's radius (see storms.ts) -- on top of the wind-alignment effect above, since a storm churns from every direction at once, not just a clean headwind. */
+const STORM_SPEED_MULTIPLIER = 0.75;
+/** Same, for a Storm that has escalated into a cyclone -- strictly more severe than a plain Storm. */
+const CYCLONE_SPEED_MULTIPLIER = 0.55;
+/** Condition fraction lost, once, the moment a Ship departs a port currently inside an active Storm's radius -- on top of ordinary transit decay. Can sink the Ship (see Faction.sinkAtSea) exactly like transit decay bottoming out. */
+const STORM_CONDITION_DAMAGE = 0.08;
+/** Same, for a cyclone. */
+const CYCLONE_CONDITION_DAMAGE = 0.2;
 
 export interface CargoState {
   commodity: string;
@@ -82,6 +119,26 @@ export interface AgentEventLogEntry {
 export interface ShipLogEntry {
   day: number;
   text: string;
+}
+
+/**
+ * Whether Captains record Ship's Log entries at all (see recordShipLog and
+ * Faction.sinkAtSea/sinkInPort's final-entry writes) -- off by default since
+ * this is a narrative/flavor feature with a real per-day cost (building a
+ * sentence for every Captain, every day) that most callers don't need.
+ * Module-level (like worldData.ts's DISPLAY_DISTANCE_UNIT) rather than a
+ * World field: it's a pure UI preference, not part of a World's own data, so
+ * it should survive a reset()/loadWorldFromJson() the same way the viewer's
+ * contractStrategy setting does (see useSimStore.ts).
+ */
+let SHIP_LOG_ENABLED = false;
+
+export function setShipLogEnabled(enabled: boolean): void {
+  SHIP_LOG_ENABLED = enabled;
+}
+
+export function isShipLogEnabled(): boolean {
+  return SHIP_LOG_ENABLED;
 }
 
 export interface PortfolioSnapshot {
@@ -185,6 +242,11 @@ export class Captain extends Sailor {
   cargo: CargoState | null = null;
   path: Route[] = [];
   private dailyFuelBurn = 0.0;
+
+  /** Today's simulated day number and the World's WeatherSystem (if any) -- set once at the top of act(), read by currentSpeedUnitsPerDay/windSpeedMultiplier for the rest of that same call. Not threaded as a parameter through every route-evaluation/departure helper (routeEconomics, leavePort, arrive, departEmptyTo, ...) since neither changes mid-turn, the same reasoning as the arrivedToday/repairedToday same-day flags below. */
+  private currentDay = 0;
+  private currentWeather: WeatherSystem | null = null;
+  private currentStorms: StormSystem | null = null;
 
   activeAgentEvents: TransportEvent[] = [];
   eventLog: TransportEvent[] = [];
@@ -300,14 +362,96 @@ export class Captain extends Sailor {
   }
 
   /**
-   * Effective speed given how fully crewed this Transport currently is.
-   * Ships only: 50% of speedUnitsPerDay with just the Captain aboard, up to
-   * 100% at a full complement (crewRequirement), linear in between (see
-   * hireCrewIfPossible). Every other Transport type is unaffected -- always
-   * its plain speedUnitsPerDay.
+   * Effective speed given how fully crewed this Transport currently is, and
+   * (Ships only, when `headingDeg` is supplied) today's wind and any active
+   * Storm at this Captain's current port -- see windSpeedMultiplier/
+   * stormSpeedMultiplier. Crew fullness: 50% of speedUnitsPerDay with just
+   * the Captain aboard, up to 100% at a full complement (crewRequirement),
+   * linear in between (see hireCrewIfPossible). Every other Transport type
+   * is unaffected by any of these factors -- always its plain
+   * speedUnitsPerDay.
    */
-  private currentSpeedUnitsPerDay(): number {
-    return this.transport!.speedUnitsPerDay * crewSpeedFraction(this.transport!);
+  private currentSpeedUnitsPerDay(headingDeg: number | null = null): number {
+    const base = this.transport!.speedUnitsPerDay * crewSpeedFraction(this.transport!);
+    if (headingDeg === null) return base;
+    return base * this.windSpeedMultiplier(headingDeg) * this.stormSpeedMultiplier();
+  }
+
+  /**
+   * Speed multiplier from wind at this Captain's current port (LOCATION_COORDINATES[this.locationName]),
+   * sampled once for TODAY's date only (this.currentDay/this.currentWeather,
+   * set at the top of act() -- never resampled mid-voyage or at any other
+   * position, per the feature's own spec). A following wind (blowing toward
+   * `headingDeg`, the direction of travel) speeds the Ship up; a headwind
+   * (blowing back at it) slows it down; a crosswind is roughly neutral.
+   * Ships only -- 1.0 (no effect) for every other Transport type, or when
+   * there's no WeatherSystem (e.g. a World built without one, or a test
+   * Captain driven directly with no `weather` passed to act()).
+   */
+  private windSpeedMultiplier(headingDeg: number): number {
+    if (this.currentWeather === null || !(this.transport instanceof Ship)) return 1.0;
+    const position = LOCATION_COORDINATES[this.locationName];
+    if (position === undefined) return 1.0;
+    const pos: Position = { x: position[0], y: position[1] };
+    const t = dayToTimeOfYear(this.currentDay, getWorldStartDate());
+    const windSpeed = this.currentWeather.windSpeed(t, pos);
+    const windDirection = this.currentWeather.windDirection(t, pos);
+    let angleDiff = (headingDeg - windDirection) % 360;
+    if (angleDiff > 180) angleDiff -= 360;
+    if (angleDiff < -180) angleDiff += 360;
+    const alignment = Math.cos((angleDiff * Math.PI) / 180); // 1 = tailwind, -1 = headwind
+    const strength = Math.min(1, windSpeed / WIND_EFFECT_REFERENCE_SPEED);
+    return 1 + alignment * strength * WIND_EFFECT_MAX_FRACTION;
+  }
+
+  /**
+   * Speed multiplier from an active Storm/cyclone (see storms.ts) currently
+   * covering this Captain's port, read-only (safe to call many times during
+   * route evaluation, unlike applyStormDamageOnDeparture below) -- a storm
+   * churns from every direction at once, so unlike wind this doesn't depend
+   * on heading. Ships only; 1.0 (no effect) with no active Storm there, no
+   * StormSystem, or any other Transport type.
+   */
+  private stormSpeedMultiplier(): number {
+    const storm = this.stormAtCurrentPort();
+    if (storm === null) return 1.0;
+    return storm.isCyclone ? CYCLONE_SPEED_MULTIPLIER : STORM_SPEED_MULTIPLIER;
+  }
+
+  /** The Storm (if any) currently covering this Captain's port -- shared by stormSpeedMultiplier (read-only) and applyStormDamageOnDeparture (mutating). Ships only; null with no StormSystem or any other Transport type. */
+  private stormAtCurrentPort(): Storm | null {
+    if (this.currentStorms === null || !(this.transport instanceof Ship)) return null;
+    const position = LOCATION_COORDINATES[this.locationName];
+    if (position === undefined) return null;
+    return stormAt(this.currentStorms.storms, { x: position[0], y: position[1] });
+  }
+
+  /**
+   * A one-time condition hit (on top of ordinary transit decay) if this
+   * Captain's port is currently inside an active Storm's radius -- called
+   * exactly once per ACTUAL departure (leavePort/arrive's next-hop
+   * continuation/departEmptyTo), never during route evaluation (which only
+   * reads the speed penalty via stormSpeedMultiplier, a side-effect-free
+   * read -- applying damage there would punish a Captain for merely
+   * considering a route it never took). Sinks the Ship immediately
+   * (Faction.sinkAtSea) if this drops condition to <= 0, exactly like
+   * ordinary transit-decay does. Returns false if the Ship just sank (the
+   * caller must stop touching `this` immediately, same convention as the
+   * InTransit condition-decay check in act()); true otherwise (including
+   * when there's no storm/no effect to apply at all).
+   */
+  private applyStormDamageOnDeparture(day: number): boolean {
+    if (this.company?.decaysCondition !== true) return true;
+    const storm = this.stormAtCurrentPort();
+    if (storm === null) return true;
+    const damage = storm.isCyclone ? CYCLONE_CONDITION_DAMAGE : STORM_CONDITION_DAMAGE;
+    this.transport!.condition -= damage;
+    this.transport!.recordCondition(day, "storm");
+    if (this.transport!.condition <= 0) {
+      this.company!.sinkAtSea(this, day);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -379,6 +523,7 @@ export class Captain extends Sailor {
     for (let i = 0; i < path.length; i++) {
       const legOrigin = nodes[i];
       const route = path[i];
+      const legDestination = route.origin === legOrigin ? route.destination : route.origin;
       const legFuelUnits = route.distance * fuelRate * quantity;
       if (legFuelUnits > this.transport!.fuelCapacity) {
         return infeasible;
@@ -388,7 +533,7 @@ export class Captain extends Sailor {
       const legFuelPrice = legFuelMarket !== undefined ? legFuelMarket.price : fuelPrice;
 
       totalDistance += route.distance;
-      totalDays += routeTravelDays(route, this.currentSpeedUnitsPerDay());
+      totalDays += routeTravelDays(route, this.currentSpeedUnitsPerDay(headingBetween(legOrigin, legDestination)));
       totalFuelUnits += legFuelUnits;
       totalFuelCost += legFuelUnits * legFuelPrice;
       if (!routeTypes.includes(route.routeType)) routeTypes.push(route.routeType);
@@ -426,7 +571,17 @@ export class Captain extends Sailor {
     closedLocations: ReadonlySet<string> = new Set(),
     directedRoute: Directive | null = null,
     pirateBrigade: PirateBrigade | null = null,
+    weather: WeatherSystem | null = null,
+    storms: StormSystem | null = null,
   ): void {
+    // Read by currentSpeedUnitsPerDay/windSpeedMultiplier/
+    // applyStormDamageOnDeparture for the rest of this call -- see their doc
+    // comments (today's wind/storms are sampled at most once per port/day,
+    // never resampled mid-voyage).
+    this.currentDay = day;
+    this.currentWeather = weather;
+    this.currentStorms = storms;
+
     // No new TransportEvent is ever randomly rolled here -- events are
     // disabled -- but any already-active event (from a loaded scenario)
     // still applies and ticks down below.
@@ -455,6 +610,7 @@ export class Captain extends Sailor {
       // this fires, so nothing else in act() may run afterward.
       if (this.transport!.handlesZeroCondition() && this.company?.decaysCondition === true) {
         this.transport!.condition -= CONDITION_DECAY_PER_TRANSIT_DAY;
+        this.transport!.recordCondition(day, "transit");
         if (this.transport!.condition <= 0) {
           this.company.sinkAtSea(this, day);
           return;
@@ -512,6 +668,7 @@ export class Captain extends Sailor {
           // this. Free (no cash cost); see Company.directFleet, the only
           // source of this Directive.
           this.transport!.condition = 1.0;
+          this.transport!.recordCondition(day, "repair");
           this.repairedToday = day;
         } else if (isRepositionDirective(directedRoute)) {
           this.executeDirectedReposition(directedRoute.destination, day, buyMarkets);
@@ -531,12 +688,20 @@ export class Captain extends Sailor {
     this.transport!.arriveAt(getLocation(this.destination!)!);
 
     if (this.cargo !== null && this.path.length > 0) {
+      // Continuing on to the next leg from this intermediate stop is itself
+      // a departure -- if it's currently sitting inside an active Storm,
+      // that's just as dangerous as departing the original port was (see
+      // leavePort). A sunk Ship here is reported the same way "not a
+      // genuine final arrival" already is -- the caller (act()) just
+      // returns either way, so reusing `false` for both is correct, not a
+      // loss of information.
+      if (!this.applyStormDamageOnDeparture(day)) return false;
       const nextRoute = this.path.shift()!;
       const nextNode = nextRoute.origin === this.locationName ? nextRoute.destination : nextRoute.origin;
       const legFuelUnits = this.refuelAtStop(day, buyMarkets, nextRoute.distance, closedLocations);
       this.transport!.refuel(legFuelUnits);
       this.destination = nextNode;
-      this.daysRemaining = routeTravelDays(nextRoute, this.currentSpeedUnitsPerDay());
+      this.daysRemaining = routeTravelDays(nextRoute, this.currentSpeedUnitsPerDay(headingBetween(this.locationName, nextNode)));
       this.dailyFuelBurn = this.daysRemaining > 0 ? legFuelUnits / this.daysRemaining : 0.0;
       return false;
     }
@@ -909,8 +1074,11 @@ export class Captain extends Sailor {
     const deliveryPath = findShortestPath(producer, contract.location, canUse);
     if (deliveryPath === null) return null;
     let deliveryDays = 0;
+    let cursor = producer;
     for (const leg of deliveryPath) {
-      deliveryDays += routeTravelDays(leg, this.currentSpeedUnitsPerDay());
+      const legDestination = leg.origin === cursor ? leg.destination : leg.origin;
+      deliveryDays += routeTravelDays(leg, this.currentSpeedUnitsPerDay(headingBetween(cursor, legDestination)));
+      cursor = legDestination;
     }
 
     let repositionDays = 0;
@@ -918,7 +1086,9 @@ export class Captain extends Sailor {
     if (producer !== this.locationName) {
       const repositionPath = findShortestPath(this.locationName, producer, canUse);
       if (repositionPath === null) return null;
-      repositionDays = travelDaysBetween(this.locationName, producer, this.currentSpeedUnitsPerDay());
+      repositionDays = travelDaysBetween(
+        this.locationName, producer, this.currentSpeedUnitsPerDay(headingBetween(this.locationName, producer)),
+      );
       const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
       const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
       repositionFuelCost = distanceBetween(this.locationName, producer) * this.currentRepositionFuelRate() * fuelPrice;
@@ -938,18 +1108,23 @@ export class Captain extends Sailor {
    * function call, not fused, so a future step can be inserted between
    * buying and departing without threading more state through one call.
    * Shared by executeLocalRoute and executeContractDelivery -- both buy then
-   * hand off to this for the actual departure bookkeeping.
+   * hand off to this for the actual departure bookkeeping. Returns false if
+   * departing straight into an active Storm just sank the Ship (see
+   * applyStormDamageOnDeparture) -- the caller must stop touching `this`
+   * immediately, same convention as arrive()'s own return value.
    */
-  private leavePort(path: Route[], originLocation: string, leg1FuelUnits: number): void {
+  private leavePort(path: Route[], originLocation: string, leg1FuelUnits: number, day: number): boolean {
     this.status = "InTransit";
     this.transport!.refuel(leg1FuelUnits);
+    if (!this.applyStormDamageOnDeparture(day)) return false;
 
     const firstLeg = path[0];
     this.path = path.slice(1);
     const nextNode = firstLeg.origin === originLocation ? firstLeg.destination : firstLeg.origin;
     this.destination = nextNode;
-    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay());
+    this.daysRemaining = routeTravelDays(firstLeg, this.currentSpeedUnitsPerDay(headingBetween(originLocation, nextNode)));
     this.dailyFuelBurn = this.daysRemaining > 0 ? leg1FuelUnits / this.daysRemaining : 0.0;
+    return true;
   }
 
   private executeLocalRoute(
@@ -1034,7 +1209,7 @@ export class Captain extends Sailor {
       profit: null,
     });
 
-    this.leavePort(path, originLocation, leg1FuelUnits);
+    this.leavePort(path, originLocation, leg1FuelUnits, day);
   }
 
   /**
@@ -1070,11 +1245,14 @@ export class Captain extends Sailor {
     // quantity, only on how many days the trip takes.
     let totalDistance = 0.0;
     let totalDays = 0;
+    let cursor = originLocation;
     const routeTypes: RouteType[] = [];
     for (const leg of path) {
+      const legDestination = leg.origin === cursor ? leg.destination : leg.origin;
       totalDistance += leg.distance;
-      totalDays += routeTravelDays(leg, this.currentSpeedUnitsPerDay());
+      totalDays += routeTravelDays(leg, this.currentSpeedUnitsPerDay(headingBetween(cursor, legDestination)));
       if (!routeTypes.includes(leg.routeType)) routeTypes.push(leg.routeType);
+      cursor = legDestination;
     }
     // Crew wages for the whole trip are paid upfront here -- there's no
     // later daily deduction while InTransit any more (see act()).
@@ -1145,7 +1323,7 @@ export class Captain extends Sailor {
       profit: null,
     });
 
-    this.leavePort(path, originLocation, leg1FuelUnits);
+    this.leavePort(path, originLocation, leg1FuelUnits, day);
   }
 
   private planAndDepart(
@@ -1226,7 +1404,9 @@ export class Captain extends Sailor {
     const fuelMarketHere = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
     const repositionDistance = distanceBetween(this.locationName, best.targetLoc);
-    const repositionDays = travelDaysBetween(this.locationName, best.targetLoc, this.currentSpeedUnitsPerDay());
+    const repositionDays = travelDaysBetween(
+      this.locationName, best.targetLoc, this.currentSpeedUnitsPerDay(headingBetween(this.locationName, best.targetLoc)),
+    );
     const repositionFuelUnits = repositionDistance * this.currentRepositionFuelRate();
     const repositionFuelCost = repositionFuelUnits * fuelPriceHere;
     const repositionCrewCost = this.dailyCrewCost() * repositionDays;
@@ -1261,7 +1441,9 @@ export class Captain extends Sailor {
     const fuelMarketHere = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPriceHere = fuelMarketHere !== undefined ? fuelMarketHere.price : 0.0;
     const repositionDistance = distanceBetween(this.locationName, destination);
-    const repositionDays = travelDaysBetween(this.locationName, destination, this.currentSpeedUnitsPerDay());
+    const repositionDays = travelDaysBetween(
+      this.locationName, destination, this.currentSpeedUnitsPerDay(headingBetween(this.locationName, destination)),
+    );
     const repositionRouteTypes: RouteType[] = [];
     for (const leg of path) if (!repositionRouteTypes.includes(leg.routeType)) repositionRouteTypes.push(leg.routeType);
     const repositionRouteType: string = repositionRouteTypes.join("+");
@@ -1281,6 +1463,7 @@ export class Captain extends Sailor {
     const originLocation = this.locationName;
     this.status = "InTransit";
     this.transport!.refuel(repositionFuelUnits);
+    if (!this.applyStormDamageOnDeparture(day)) return false;
     this.destination = destination;
     this.daysRemaining = repositionDays;
     this.dailyFuelBurn = repositionDays > 0 ? repositionFuelUnits / repositionDays : 0.0;
@@ -1331,6 +1514,11 @@ export class Captain extends Sailor {
       realizedProfit: round2(this.realizedProfit),
       totalFuelSpent: round2(this.totalFuelSpent),
     });
+    // Called once per Captain per day (see World.runDay), so this is also
+    // the natural place to trim tradeLog -- it isn't otherwise touched on a
+    // fixed once-a-day cadence (trades can happen 0-N times a day).
+    trimHistory(this.portfolioHistory, day);
+    trimHistory(this.tradeLog, day);
   }
 
   /** One narrative sentence for a single `tradeLog` entry -- see recordShipLog. */
@@ -1374,6 +1562,7 @@ export class Captain extends Sailor {
    * sinkInPort, the only two writers of shipLog outside this method).
    */
   recordShipLog(day: number): void {
+    if (!isShipLogEnabled()) return;
     const clauses: string[] = [];
 
     if (this.newShipDay === day) {
@@ -1411,6 +1600,7 @@ export class Captain extends Sailor {
     }
 
     this.shipLog.push({ day, text: clauses.join(" ") });
+    trimHistory(this.shipLog, day);
     this.arrivedToday = null;
     this.repairedToday = null;
     this.shoreLeaveGrantedToday = null;

@@ -39,6 +39,40 @@
   --political-entity-7: #e87ba4;
   --political-entity-8: #eb6834;
 
+  /* Temperature overlay (Network view) -- the dataviz diverging blue/red pair
+     with a neutral gray midpoint, since "cold" and "hot" read as opposite
+     poles rather than a single low->high magnitude. */
+  --temp-cold: #2a78d6;
+  --temp-neutral: #f0efec;
+  --temp-hot: #e34948;
+
+  /* Wind speed overlay (Network view) -- a sequential single-hue ramp (aqua,
+     the next categorical slot after temperature's blue/red, so the two
+     overlays read as visually distinct) since wind speed is a pure
+     magnitude (calm->strong) with no "opposite pole" the way cold/hot are. */
+  --wind-calm: #dff5ee;
+  --wind-strong: #1baf7a;
+
+  /* Rainfall chart (Yearly Climate panel) -- a sequential blue ramp (the
+     dataviz palette's default sequential hue, steps 150/600), distinct from
+     wind's aqua and temperature's blue/red diverging pair since each is its
+     own separate chart, not sharing a legend. */
+  --rain-light: #b7d3f6;
+  --rain-heavy: #184f95;
+
+  /* Storm/cyclone map markers (Network view) -- the dataviz status palette's
+     "serious"/"critical" steps (fixed, never themed -- same value in light
+     and dark), since these are hazard indicators, not ordinary chart data. */
+  --storm: #ec835a;
+  --cyclone: #d03b3b;
+
+  /* Transport condition bar (Network view) -- the dataviz status palette's
+     good/warning/critical steps (fixed, never themed), for the same reason
+     as storm/cyclone above: a hazard/health indicator, not chart data. */
+  --condition-good: #0ca30c;
+  --condition-warning: #fab219;
+  --condition-critical: #d03b3b;
+
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
@@ -81,6 +115,16 @@
     --political-entity-6: #e66767;
     --political-entity-7: #d55181;
     --political-entity-8: #d95926;
+
+    --temp-cold: #3987e5;
+    --temp-neutral: #383835;
+    --temp-hot: #e66767;
+
+    --wind-calm: #16241f;
+    --wind-strong: #199e70;
+
+    --rain-light: #104281;
+    --rain-heavy: #6da7ec;
   }
 }
 

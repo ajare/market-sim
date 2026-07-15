@@ -3,6 +3,8 @@ import { useEditorStore } from "./state/useEditorStore";
 import { WorldCanvas } from "./components/WorldCanvas";
 import { WorldScaleControl } from "./components/WorldScaleControl";
 import { DistanceModeControl } from "./components/DistanceModeControl";
+import { DistanceUnitControl } from "./components/DistanceUnitControl";
+import { WeatherProfileControl } from "./components/WeatherProfileControl";
 import { StartDateControl } from "./components/StartDateControl";
 import { AutoConnectRoutesControl } from "./components/AutoConnectRoutesControl";
 import { LocationList } from "./components/LocationList";
@@ -19,6 +21,8 @@ function App() {
   const distanceMode = useEditorStore((s) => s.distanceMode);
   const globeRadius = useEditorStore((s) => s.globeRadius);
   const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
+  const distanceUnit = useEditorStore((s) => s.distanceUnit);
+  const weatherProfile = useEditorStore((s) => s.weatherProfile);
   const startDate = useEditorStore((s) => s.startDate);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
   const locations = useEditorStore((s) => s.locations);
@@ -38,7 +42,7 @@ function App() {
 
   function currentWorldJson(): string {
     return worldToJson({
-      worldScale, distanceMode, globeRadius, globeLonSpan, startDate,
+      worldScale, distanceMode, globeRadius, globeLonSpan, distanceUnit, weatherProfile, startDate,
       politicalEntities, locations, commodities, companies, routes,
     });
   }
@@ -87,6 +91,10 @@ function App() {
         <WorldScaleControl />
         <span className="toolbar-divider" />
         <DistanceModeControl />
+        <span className="toolbar-divider" />
+        <DistanceUnitControl />
+        <span className="toolbar-divider" />
+        <WeatherProfileControl />
         <span className="toolbar-divider" />
         <StartDateControl />
         <span className="toolbar-divider" />

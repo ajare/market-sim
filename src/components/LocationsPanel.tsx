@@ -1,6 +1,8 @@
 import { useSimStore } from "../state/useSimStore";
 import { marketKey } from "../sim/markets";
 import { ROUTES, type Route } from "../sim/routes";
+import { getDisplayDistanceUnit } from "../sim/worldData";
+import { convertDistance, distanceUnitLabel } from "@market-sim/shared/units";
 import { pirateNote } from "./pirateNote";
 
 /** Every Route touching `location`, paired with the Location at its other end -- sorted by distance so the nearest connections show first. */
@@ -21,6 +23,8 @@ function connectionsFor(location: string): Array<{ other: string; route: Route }
 export function LocationsPanel() {
   const world = useSimStore((s) => s.world);
   if (world === null) return null;
+  const unit = getDisplayDistanceUnit();
+  const unitLabel = distanceUnitLabel(unit);
 
   return (
     <div className="panel locations-panel">
@@ -54,7 +58,7 @@ export function LocationsPanel() {
                       <ul className="mini-list">
                         {connections.map(({ other, route }) => (
                           <li key={`${route.routeType}-${other}`}>
-                            {other} ({route.routeType}, {route.distance.toFixed(0)})
+                            {other} ({route.routeType}, {convertDistance(route.distance, unit).toFixed(0)} {unitLabel})
                           </li>
                         ))}
                       </ul>

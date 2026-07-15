@@ -13,7 +13,8 @@
  * `Faction.__init__`. A getter on the prototype chain is resolved
  * dynamically (like Python's MRO), so it works correctly here.
  */
-import { Captain, type Directive, type TradeDirective } from "./captain";
+import { Captain, isShipLogEnabled, type Directive, type TradeDirective } from "./captain";
+import { trimHistory } from "./historyRetention";
 import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE, JOURNEYS_PER_HIRE } from "./sailor";
 import {
   Ship, MIN_ATTACK_CONDITION_DAMAGE, MAX_ATTACK_CONDITION_DAMAGE, CONDITION_REPAIR_THRESHOLD, type Transport,
@@ -167,8 +168,11 @@ export class Faction {
     // This Captain's final Ship's Log entry -- World.runDay's own end-of-day
     // recordShipLog pass never runs for it (already spliced out of
     // world.captains by the time that pass would reach it), so this is the
-    // only place this ever gets written.
-    captain.shipLog.push({ day, text: `The ${sunkTransport.name} went down at sea with all hands -- lost with everyone aboard.` });
+    // only place this ever gets written. Gated the same as recordShipLog
+    // itself (see isShipLogEnabled) -- off by default.
+    if (isShipLogEnabled()) {
+      captain.shipLog.push({ day, text: `The ${sunkTransport.name} went down at sea with all hands -- lost with everyone aboard.` });
+    }
   }
 
   /**
@@ -201,7 +205,11 @@ export class Faction {
     // spliced out of world.captains by the time that pass would reach it).
     // If a replacement Ship is bought later this same turn (see
     // World.acquireShip), that gets its own fresh entry via newShipDay.
-    captain.shipLog.push({ day, text: `The ${transport.name} was lost at ${location.name} -- ${captain.name} and crew made it ashore safely.` });
+    // Gated the same as recordShipLog itself (see isShipLogEnabled) -- off
+    // by default.
+    if (isShipLogEnabled()) {
+      captain.shipLog.push({ day, text: `The ${transport.name} was lost at ${location.name} -- ${captain.name} and crew made it ashore safely.` });
+    }
   }
 
   /**
@@ -461,6 +469,7 @@ export class Faction {
 
   recordNetWorthSnapshot(day: number, sellMarkets: Map<string, Market>): void {
     this.netWorthHistory.push({ day, cash: this.totalCash(), netWorth: this.netWorth(sellMarkets) });
+    trimHistory(this.netWorthHistory, day);
   }
 
   /**
@@ -1129,6 +1138,7 @@ export class PirateBrigade extends Faction {
     let sinks = false;
     if (victimCaptain.transport!.handlesZeroCondition() && victimCaptain.company?.decaysCondition === true) {
       victimCaptain.transport!.condition -= randUniform(MIN_ATTACK_CONDITION_DAMAGE, MAX_ATTACK_CONDITION_DAMAGE);
+      victimCaptain.transport!.recordCondition(day, "pirate");
       sinks = victimCaptain.transport!.condition <= 0;
     }
 

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useSimStore } from "../state/useSimStore";
 import { Company, SoloTrader } from "../sim/faction";
 import { SHIP_CLASSES } from "../sim/transport";
+import { getDisplayDistanceUnit } from "../sim/worldData";
+import { convertSpeed, speedUnitLabel } from "@market-sim/shared/units";
 
 /**
  * Manual "Buy Ship" action for a Company (see World.buyShipForCompany) --
@@ -40,6 +42,8 @@ export function BuyShipPanel() {
 
   if (world === null) return null;
 
+  const unit = getDisplayDistanceUnit();
+  const unitLabel = speedUnitLabel(unit);
   const selectedCompany = companies[companyIndex] ?? null;
   const shipClass = SHIP_CLASSES[shipClassName];
   const price = shipClass?.purchasePrice ?? 0;
@@ -90,7 +94,8 @@ export function BuyShipPanel() {
             <select value={shipClassName} onChange={(e) => setShipClassName(e.target.value)}>
               {shipClassNames.map((name) => (
                 <option key={name} value={name}>
-                  {name} (${SHIP_CLASSES[name].purchasePrice.toLocaleString()})
+                  {name} (${SHIP_CLASSES[name].purchasePrice.toLocaleString()},{" "}
+                  {convertSpeed(SHIP_CLASSES[name].speedUnitsPerDay, unit).toFixed(0)} {unitLabel})
                 </option>
               ))}
             </select>

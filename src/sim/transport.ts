@@ -7,8 +7,19 @@
 import type { Route, RouteType } from "./routes";
 import type { Sailor } from "./sailor";
 import type { Location } from "./location";
+import { trimHistory } from "./historyRetention";
 
 export type TransportStatus = "AtLocation" | "InTransit" | "Inactive";
+
+/** Why a condition-history entry was recorded -- see Transport.recordCondition/conditionHistory. "transit" is ordinary day-by-day decay while underway; "repair" is the jump back to 1.0 a REPAIR Directive gives. */
+export type ConditionChangeCause = "transit" | "pirate" | "storm" | "repair";
+
+/** One day's condition-history entry -- see Transport.conditionHistory. */
+export interface ConditionRecord {
+  day: number;
+  condition: number;
+  cause: ConditionChangeCause;
+}
 
 // Tunable knobs for Ship condition -- see the `condition` field doc on
 // Transport. Apply to every decaysCondition Faction's Ships (Company/
@@ -63,6 +74,8 @@ export class Transport {
    * cargo, or Company.
    */
   condition: number;
+  /** Day-by-day condition readings, tagged with why each one was recorded (see recordCondition/ConditionChangeCause) -- read by the viewer's Transport Condition History chart to plot a line per Transport and mark pirate-attack/storm-caused drops distinctly from ordinary transit decay. Empty for a Transport whose condition has never changed (e.g. one that's never left port). */
+  conditionHistory: ConditionRecord[] = [];
   crew: Sailor[] = [];
   /**
    * Where this Transport currently is -- the settled Location once docked,
@@ -103,6 +116,12 @@ export class Transport {
    */
   handlesZeroCondition(): boolean {
     return false;
+  }
+
+  /** Appends today's condition reading, tagged with `cause` -- called right after every place `condition` is actually mutated (transit decay, a REPAIR Directive, a pirate attack, storm/cyclone damage), never speculatively. Trimmed to the global history-retention window like every other day-stamped log (see historyRetention.ts). */
+  recordCondition(day: number, cause: ConditionChangeCause): void {
+    this.conditionHistory.push({ day, condition: this.condition, cause });
+    trimHistory(this.conditionHistory, day);
   }
 
   /** Marks this Transport as currently at/passing through `location` -- keeps `location` (object) and `currentNode` (its name) in sync in one place, called on initial homing and every arrival (including intermediate multi-hop stops). */

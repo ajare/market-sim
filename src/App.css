@@ -74,6 +74,25 @@
   overflow-y: auto;
 }
 
+.network-temperature-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.network-temperature-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.network-temperature-toggle input[type="number"] {
+  width: 4.5rem;
+}
+
 .ship-log {
   margin: 0;
   display: flex;
@@ -447,4 +466,17 @@
 .chart-tooltip {
   transform: translateX(-50%);
   top: 8px;
+}
+
+.weather-climate-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.weather-climate-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+  margin-bottom: 4px;
 }

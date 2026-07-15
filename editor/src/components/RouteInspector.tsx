@@ -8,6 +8,7 @@
 import { useEditorStore } from "../state/useEditorStore";
 import { compatibleRouteTypes, sortRouteControlPoints, type RouteType } from "../types";
 import { routeWorldLength } from "../distance";
+import { convertDistance, distanceUnitLabel } from "../units";
 
 export function RouteInspector() {
   const route = useEditorStore((s) => s.routes.find((r) => r.id === s.selectedRouteId));
@@ -19,6 +20,7 @@ export function RouteInspector() {
   const globeRadius = useEditorStore((s) => s.globeRadius);
   const globeLonSpan = useEditorStore((s) => s.globeLonSpan);
   const worldScale = useEditorStore((s) => s.worldScale);
+  const distanceUnit = useEditorStore((s) => s.distanceUnit);
 
   // Nothing selected (or a dangling id) -> show nothing in the panel.
   if (route === undefined) return null;
@@ -66,7 +68,7 @@ export function RouteInspector() {
       <dl className="route-inspector-info">
         <div>
           <dt>Length</dt>
-          <dd>{length.toFixed(1)}</dd>
+          <dd>{convertDistance(length, distanceUnit).toFixed(1)} {distanceUnitLabel(distanceUnit)}</dd>
         </div>
       </dl>
 

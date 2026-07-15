@@ -18,12 +18,14 @@ import { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, sortRouteControlPoints } from 
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
 } from "./distance";
+import { DEFAULT_DISTANCE_UNIT, DISTANCE_UNITS, type DistanceUnit } from "./units";
+import { DEFAULT_WEATHER_PROFILE_NAME, isWeatherProfileName, type WeatherProfileName } from "./weatherProfiles";
 import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGenerators";
 import { DEFAULT_START_DATE } from "@market-sim/shared/world";
 export { DEFAULT_START_DATE };
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE). */
-export const WORLD_JSON_VERSION = 7;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"). */
+export const WORLD_JSON_VERSION = 9;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -33,6 +35,10 @@ export interface EditorWorld {
   distanceMode: DistanceMode;
   globeRadius: number;
   globeLonSpan: number;
+  /** Real-world unit distances/speeds are DISPLAYED in (miles/nauticalMiles/kilometers) -- purely cosmetic, never affects distance math. Defaults to "miles" for files predating this field. See units.ts. */
+  distanceUnit: DistanceUnit;
+  /** Which named WeatherProfile (see src/sim/weather.ts) shapes this World's simulated weather. Defaults to "default" for files predating this field. See weatherProfiles.ts. */
+  weatherProfile: WeatherProfileName;
   /** The in-world date/time of day 1, as an ISO 8601 string. Defaults to DEFAULT_START_DATE for files predating this field. */
   startDate: string;
   politicalEntities: PoliticalEntity[];
@@ -127,6 +133,12 @@ export function parseWorldJson(text: string): EditorWorld {
     throw new Error("Missing or invalid 'worldScale'.");
   }
   const distanceMode: DistanceMode = obj.distanceMode === "globe" ? "globe" : DEFAULT_DISTANCE_MODE;
+  const distanceUnit: DistanceUnit = DISTANCE_UNITS.includes(obj.distanceUnit as DistanceUnit)
+    ? (obj.distanceUnit as DistanceUnit)
+    : DEFAULT_DISTANCE_UNIT;
+  const weatherProfile: WeatherProfileName = isWeatherProfileName(obj.weatherProfile)
+    ? obj.weatherProfile
+    : DEFAULT_WEATHER_PROFILE_NAME;
   const globeRadius =
     typeof obj.globeRadius === "number" && Number.isFinite(obj.globeRadius) && obj.globeRadius > 0
       ? obj.globeRadius
@@ -141,6 +153,8 @@ export function parseWorldJson(text: string): EditorWorld {
     distanceMode,
     globeRadius,
     globeLonSpan,
+    distanceUnit,
+    weatherProfile,
     startDate: typeof obj.startDate === "string" && !Number.isNaN(Date.parse(obj.startDate)) ? obj.startDate : DEFAULT_START_DATE,
     // Default a missing/invalid nationality (files predating v4) to English.
     politicalEntities: asArray<PoliticalEntity>(obj.politicalEntities).map((pe) => ({

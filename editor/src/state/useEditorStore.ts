@@ -16,6 +16,8 @@ import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius,
   type DistanceConfig, type DistanceMode,
 } from "../distance";
+import { DEFAULT_DISTANCE_UNIT, type DistanceUnit } from "../units";
+import { DEFAULT_WEATHER_PROFILE_NAME, type WeatherProfileName } from "../weatherProfiles";
 import { DEFAULT_NATIONALITY, type Nationality } from "../nameGenerators";
 import { defaultCompanyHomeLocation, refreshCompanyHomeLocations, resolveCompanyHomeLocation } from "../companyHome";
 
@@ -80,6 +82,14 @@ interface EditorStore {
   setGlobeLonSpan: (lonSpan: number) => void;
   /** The active distance settings bundled for distance.ts's helpers. */
   distanceConfig: () => DistanceConfig;
+
+  /** Real-world unit distances/speeds are DISPLAYED in -- purely cosmetic (route length/speed readouts), never affects distance math. See units.ts. */
+  distanceUnit: DistanceUnit;
+  setDistanceUnit: (unit: DistanceUnit) => void;
+
+  /** Which named WeatherProfile (see src/sim/weather.ts) shapes this World's simulated weather. See weatherProfiles.ts. */
+  weatherProfile: WeatherProfileName;
+  setWeatherProfile: (profile: WeatherProfileName) => void;
 
   /** The in-world date/time of day 1, as an ISO 8601 string -- set via the header's start-date control, exported/imported verbatim (see worldJson.ts). */
   startDate: string;
@@ -202,6 +212,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     return { mode: s.distanceMode, radius: s.globeRadius, lonSpan: s.globeLonSpan, worldScale: s.worldScale };
   },
 
+  distanceUnit: DEFAULT_DISTANCE_UNIT,
+  setDistanceUnit: (unit) => set({ distanceUnit: unit }),
+
+  weatherProfile: DEFAULT_WEATHER_PROFILE_NAME,
+  setWeatherProfile: (profile) => set({ weatherProfile: profile }),
+
   startDate: DEFAULT_START_DATE,
   setStartDate: (startDate) => {
     if (Number.isNaN(Date.parse(startDate))) return;
@@ -316,6 +332,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       distanceMode: world.distanceMode,
       globeRadius: world.globeRadius > 0 ? world.globeRadius : defaultGlobeRadius(worldScale),
       globeLonSpan: clamp(world.globeLonSpan, 1, 360),
+      distanceUnit: world.distanceUnit,
+      weatherProfile: world.weatherProfile,
       startDate: Number.isNaN(Date.parse(world.startDate)) ? DEFAULT_START_DATE : world.startDate,
       locations,
       politicalEntities: world.politicalEntities,

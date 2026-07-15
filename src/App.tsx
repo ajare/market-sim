@@ -11,6 +11,8 @@ import { ContractsPanel } from "./components/ContractsPanel";
 import { StockHistoryPanel } from "./components/StockHistoryPanel";
 import { PriceHistoryPanel } from "./components/PriceHistoryPanel";
 import { NetWorthHistoryPanel } from "./components/NetWorthHistoryPanel";
+import { TransportConditionHistoryPanel } from "./components/TransportConditionHistoryPanel";
+import { WeatherClimatePanel } from "./components/WeatherClimatePanel";
 import { NetworkView } from "./components/NetworkView";
 import { TransportHeatmapPanel } from "./components/TransportHeatmapPanel";
 import { StockLevelHeatmapPanel } from "./components/StockLevelHeatmapPanel";
@@ -29,6 +31,7 @@ function App() {
       <h1>Commodity Sim</h1>
       <ControlsPanel />
       <NetworkView />
+      <WeatherClimatePanel />
       <TransportHeatmapPanel />
       <PirateAttackHeatmapPanel />
       <EventsPanel />
@@ -36,6 +39,7 @@ function App() {
       <StockHistoryPanel />
       <PriceHistoryPanel />
       <NetWorthHistoryPanel />
+      <TransportConditionHistoryPanel />
       <div className="panels">
         <PoliticalEntitiesPanel />
         <LocationsPanel />
