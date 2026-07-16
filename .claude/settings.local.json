@@ -40,7 +40,9 @@
       "Bash(npm run *)",
       "Bash(cd /d/Code/Projects/market-sim)",
       "Bash(.venv/Scripts/python.exe main.py --help)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git -C \"C:\\\\Code\\\\Projects\\\\market-sim\" log --oneline -20)",
+      "Bash(git -C \"C:\\\\Code\\\\Projects\\\\market-sim\" show --stat HEAD)"
     ]
   }
 }

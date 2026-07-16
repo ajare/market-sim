@@ -22,7 +22,7 @@ function makeVillage(name: string): Location {
     basePriceModifiers: { Ivory: 1, Cloth: 1 },
     fuelPrice: 0,
     terminalTypes: new Set(["Market"]),
-    settlementType: "Village",
+    settlementType: "Native village",
   });
 }
 

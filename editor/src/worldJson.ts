@@ -12,9 +12,11 @@
  * this module hands the store is always normalized.
  */
 import type {
-  Commodity, CommodityType, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity,
+  Commodity, CommodityType, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity, SettlementType,
 } from "./types";
-import { COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, sortRouteControlPoints } from "./types";
+import {
+  COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, SETTLEMENT_TYPES, DEFAULT_SETTLEMENT_TYPE, sortRouteControlPoints,
+} from "./types";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
 } from "./distance";
@@ -24,8 +26,8 @@ import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGene
 import { DEFAULT_START_DATE } from "@market-sim/shared/world";
 export { DEFAULT_START_DATE };
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"). */
-export const WORLD_JSON_VERSION = 9;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"); version 10 added Location.settlementType (absent in older files, which default to "Town"). */
+export const WORLD_JSON_VERSION = 10;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -163,7 +165,13 @@ export function parseWorldJson(text: string): EditorWorld {
         ? ((pe as unknown as { nationality: Nationality }).nationality)
         : DEFAULT_NATIONALITY,
     })),
-    locations: locationsToNormalized(asArray<EditorLocation>(obj.locations), worldScale),
+    // Default a missing/invalid settlementType (files predating v10) to "Town".
+    locations: locationsToNormalized(asArray<EditorLocation>(obj.locations), worldScale).map((loc) => ({
+      ...loc,
+      settlementType: (SETTLEMENT_TYPES as readonly string[]).includes(loc.settlementType ?? "")
+        ? ((loc as unknown as { settlementType: SettlementType }).settlementType)
+        : DEFAULT_SETTLEMENT_TYPE,
+    })),
     // Default a missing/invalid type (files predating v6) to "General".
     commodities: asArray<Commodity>(obj.commodities).map((c) => ({
       ...c,

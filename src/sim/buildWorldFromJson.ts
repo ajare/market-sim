@@ -35,6 +35,7 @@ import { randomGender, randomPersonName, type Gender } from "./names";
 import { Chieftain } from "./chieftain";
 import { Explorer } from "./explorer";
 import type { SettlementType } from "./location";
+import { SETTLEMENT_TYPES } from "@market-sim/shared/settlement";
 import { randomShipName } from "./shipNames";
 import { randomCompanyName } from "./companyNames";
 import {
@@ -221,7 +222,7 @@ interface JsonWorld {
 
 const VALID_POLITICAL_ENTITY_TYPES = new Set<PoliticalEntityType>(["Universal", "Planet", "Country", "State", "Tribe"]);
 const VALID_ROUTE_TYPES = new Set<RouteType>(["Land", "Air", "Sea", "Space", "Road", "Railroad", "Trail"]);
-const VALID_SETTLEMENT_TYPES = new Set<SettlementType>(["Village", "Town", "City"]);
+const VALID_SETTLEMENT_TYPES = new Set<SettlementType>(SETTLEMENT_TYPES);
 const VALID_GENDERS = new Set<Gender>(["Male", "Female"]);
 /** Placeholder birth date for a JSON-authored Chieftain/Explorer with no dateOfBirth -- the editor doesn't author one today; only age display is affected. */
 const DEFAULT_PERSON_BIRTH_DATE = "1950-01-01";

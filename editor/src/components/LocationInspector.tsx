@@ -1,7 +1,7 @@
 /** Edit form for the currently selected Location -- name, position, terminal types, and commodity maps. */
 import { useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
-import { TERMINAL_TYPES } from "../types";
+import { TERMINAL_TYPES, SETTLEMENT_TYPES } from "../types";
 import { NATIONALITIES, generateLocationName, type Nationality } from "../nameGenerators";
 import { CommodityMapEditor } from "./CommodityMapEditor";
 import { LocationRoutesTable } from "./LocationRoutesTable";
@@ -81,6 +81,19 @@ export function LocationInspector() {
             {politicalEntities.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Settlement type
+          <select
+            value={location.settlementType}
+            onChange={(e) => updateLocation(location.id, { settlementType: e.target.value as typeof location.settlementType })}
+          >
+            {SETTLEMENT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
               </option>
             ))}
           </select>

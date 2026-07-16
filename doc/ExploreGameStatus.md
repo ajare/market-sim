@@ -26,8 +26,9 @@ skeleton:
   stockpile, distinct from `CargoState`) that only `PorterParty` populates.
   `Commodity.weightPerUnit` added (default 1.0, backward-compatible).
 - **`Location.settlementType`/`ruler`, `Chieftain`** (EXP-4): settlement scale
-  (Village/Town/City, defaults to Town), an optional personal ruler whose authority
-  takes precedence over the owning `PoliticalEntity`.
+  (Native village/Settlement/Town/Outpost, defaults to Town), an optional personal
+  ruler whose authority takes precedence over the owning `PoliticalEntity`. Editable
+  in the standalone World editor's Location inspector (a "Settlement type" dropdown).
 - **`Explorer`** (EXP-5): `Person` subtype, boards its `PorterParty` immediately,
   player-picked single-leg movement (`departFor`/`tick`, no autonomous route
   planning), `buy`/`sell` against a `Market` (new, simple methods — no price-impact/

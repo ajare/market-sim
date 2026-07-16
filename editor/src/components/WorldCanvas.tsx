@@ -7,7 +7,8 @@
  * no shift is needed: plain-drag its handle to move it, or plain-click it
  * (no drag) to remove it (the rendered curve -- see routeRenderPoints --
  * follows directly from the control point count, smoothing automatically
- * as it changes).
+ * as it changes). Mousewheel/trackpad scroll zooms, centered on the cursor
+ * (see the `camera` state); "h" resets the view (zoom 1, centered).
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
@@ -21,6 +22,23 @@ const CONTROL_POINT_SIZE = 5;
 
 /** Screen-pixel movement below which releasing a dragged control point counts as a click (remove it) rather than a drag (leave it at its moved position). */
 const CONTROL_POINT_CLICK_THRESHOLD_PX = 4;
+
+/**
+ * Zoom bounds. MIN_ZOOM is 1, not some fraction below it: `size.w`/`size.h`
+ * double as both the canvas's actual screen-pixel dimensions AND the
+ * world's own extent (Locations are normalized [0,1] then scaled by that
+ * same `size`, and the world-bounds rect is drawn at exactly (0,0)-(size.w,
+ * size.h)) -- so world-pixel-units-per-screen-pixel is exactly `zoom`,
+ * meaning zoom 1 is precisely the point where the world fills the canvas.
+ * Anything below 1 would render the world smaller than the canvas, leaving
+ * empty margin around it -- exactly what this clamp prevents. MAX_ZOOM (20x
+ * in) is just a practical cap for placing tightly-clustered Locations.
+ */
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 20;
+
+/** deltaY-to-zoom-factor sensitivity: a standard mouse wheel notch (deltaY ~= 100) gives roughly a 10% step; trackpad pinch/scroll (many small deltaY events) zooms smoothly. */
+const ZOOM_SENSITIVITY = 0.001;
 
 export function WorldCanvas() {
   const locations = useEditorStore((s) => s.locations);
@@ -38,11 +56,20 @@ export function WorldCanvas() {
   const moveRouteControlPoint = useEditorStore((s) => s.moveRouteControlPoint);
   const removeRouteControlPoint = useEditorStore((s) => s.removeRouteControlPoint);
   const svgRef = useRef<SVGSVGElement>(null);
-  // The canvas is rendered in pixel space: the viewBox equals the SVG's own
-  // pixel size, so 1 user unit == 1px. Locations/control points are stored
-  // NORMALIZED in [0,1] and rendered at (n.x * size.w, n.y * size.h); a click
-  // maps back to normalized by dividing by the same size.
+  // The canvas is rendered in world-pixel space: at camera zoom 1/offset 0,
+  // the viewBox equals the SVG's own pixel size, so 1 user unit == 1px (see
+  // `camera` below for how zoom/pan shift the viewBox away from that).
+  // Locations/control points are stored NORMALIZED in [0,1] and rendered at
+  // (n.x * size.w, n.y * size.h) -- always against this base `size`,
+  // independent of the current camera; a click maps back to normalized by
+  // dividing by the same size, after first mapping through the camera via
+  // toPixelPoint/getScreenCTM.
   const [size, setSize] = useState({ w: 1, h: 1 });
+  // Pan/zoom viewport, in world-pixel space (same units as `size` -- offsetX/
+  // offsetY are the world-pixel coordinate at the viewBox's top-left corner,
+  // zoom 1 shows exactly `size` world-pixels). Local/transient view state,
+  // not part of the authored World -- resets on remount, never saved.
+  const [camera, setCamera] = useState({ zoom: 1, offsetX: 0, offsetY: 0 });
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
   /** The moving end of an in-progress connection line, in PIXEL coordinates. */
@@ -79,6 +106,61 @@ export function WorldCanvas() {
     const observer = new ResizeObserver(update);
     observer.observe(svg);
     return () => observer.disconnect();
+  }, []);
+
+  // Mousewheel/trackpad-gesture zoom, centered on the cursor -- registered as
+  // a native (non-passive) listener so preventDefault actually stops the page
+  // itself from scrolling/pinch-zooming (React's onWheel is passive and can't
+  // do this). getScreenCTM() is read live at event time, so it always
+  // reflects the viewBox as of the current render regardless of when this
+  // effect last ran -- no dependency on `camera`/`size` needed.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (svg === null) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const point = svg.createSVGPoint();
+      point.x = e.clientX;
+      point.y = e.clientY;
+      const ctm = svg.getScreenCTM();
+      if (ctm === null) return;
+      // The world-pixel point currently under the cursor -- held fixed on
+      // screen as zoom changes, so zooming feels anchored to the cursor
+      // rather than the canvas center.
+      const cursorWorld = point.matrixTransform(ctm.inverse());
+      const zoomFactor = Math.exp(-e.deltaY * ZOOM_SENSITIVITY);
+      setCamera((prev) => {
+        const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.zoom * zoomFactor));
+        const scale = prev.zoom / newZoom;
+        return {
+          zoom: newZoom,
+          offsetX: cursorWorld.x - (cursorWorld.x - prev.offsetX) * scale,
+          offsetY: cursorWorld.y - (cursorWorld.y - prev.offsetY) * scale,
+        };
+      });
+    };
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  // "h" resets the camera to zoom 1/offset (0,0) -- at MIN_ZOOM the world
+  // exactly fills the canvas (see MIN_ZOOM's own comment), so this both
+  // centers and fully re-fits it in one shortcut, undoing any amount of
+  // prior pan/zoom. Skipped while a text input/select/textarea has focus
+  // (e.g. the Location name field) so typing a name containing "h" doesn't
+  // reset the view out from under the user.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "h" && e.key !== "H") return;
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (active as HTMLElement)?.isContentEditable) {
+        return;
+      }
+      setCamera({ zoom: 1, offsetX: 0, offsetY: 0 });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Escape closes the open placement menu (same as picking "<cancel>").
@@ -187,12 +269,18 @@ export function WorldCanvas() {
       return;
     }
     if (connectingFromId !== null) {
-      // Release lands on a Location if it's within PIN_RADIUS pixels of one.
+      // Release lands on a Location if it's within PIN_RADIUS SCREEN pixels
+      // of one -- release/px are in world-pixel space (via toPixelPoint/
+      // toPx), and a pin now renders at a constant PIN_RADIUS screen size
+      // regardless of zoom (see the location-pin group's scale(1/zoom)
+      // below), so the threshold has to be converted to world-pixel units by
+      // dividing by zoom too, or it'd stop matching the rendered pin size at
+      // any zoom other than 1x.
       const release = toPixelPoint(e.clientX, e.clientY);
       const target = locations.find((loc) => {
         if (loc.id === connectingFromId) return false;
         const px = toPx(loc);
-        return Math.hypot(px.x - release.x, px.y - release.y) <= PIN_RADIUS;
+        return Math.hypot(px.x - release.x, px.y - release.y) <= PIN_RADIUS / camera.zoom;
       });
       if (target !== undefined) addRoute(connectingFromId, target.id);
       setConnectingFromId(null);
@@ -207,8 +295,19 @@ export function WorldCanvas() {
       {backgroundImage !== null && (
         // A plain HTML image sized to the canvas wrapper, behind the SVG. The
         // SVG's own background and world-bounds fill go transparent (see the
-        // has-background class) so this shows through.
-        <img className="canvas-background" src={backgroundImage} alt="" draggable={false} />
+        // has-background class) so this shows through. At camera zoom 1/
+        // offset 0 the image maps 1:1 onto world-pixel space (that's the
+        // reference alignment users trace Locations against), so this
+        // transform -- scale(zoom) then translate by -offset*zoom, matching
+        // the SVG viewBox's own mapping -- keeps it pixel-locked to the SVG
+        // content at any zoom/pan.
+        <img
+          className="canvas-background"
+          src={backgroundImage}
+          alt=""
+          draggable={false}
+          style={{ transform: `translate(${-camera.offsetX * camera.zoom}px, ${-camera.offsetY * camera.zoom}px) scale(${camera.zoom})` }}
+        />
       )}
       {politicalEntities.length === 0 && (
         <div className="canvas-hint">
@@ -223,7 +322,7 @@ export function WorldCanvas() {
       <svg
         ref={svgRef}
         className={`world-canvas${backgroundImage !== null ? " has-background" : ""}`}
-        viewBox={`0 0 ${size.w} ${size.h}`}
+        viewBox={`${camera.offsetX} ${camera.offsetY} ${size.w / camera.zoom} ${size.h / camera.zoom}`}
         preserveAspectRatio="xMidYMid meet"
         onClick={handleBackgroundClick}
         onPointerMove={handlePointerMove}
@@ -274,7 +373,12 @@ export function WorldCanvas() {
               {isSelected && sortedPoints.map((p) => (
                 <g
                   key={p.id}
-                  transform={`translate(${p.x}, ${p.y})`}
+                  // scale(1/zoom) after the translate counters the viewBox's
+                  // own zoom scaling for this subtree, so the handle stays a
+                  // constant screen size while its position still moves
+                  // correctly with zoom/pan (translate is in world-pixel
+                  // coords, mapped by the viewBox exactly as everything else).
+                  transform={`translate(${p.x}, ${p.y}) scale(${1 / camera.zoom})`}
                   onPointerDown={(e) => handleControlPointPointerDown(e, route.id, p.id)}
                   // Actual click-vs-drag handling lives in handlePointerUp
                   // (see CONTROL_POINT_CLICK_THRESHOLD_PX) -- this just stops
@@ -310,7 +414,10 @@ export function WorldCanvas() {
           return (
             <g
               key={loc.id}
-              transform={`translate(${px.x}, ${px.y})`}
+              // scale(1/zoom) after the translate keeps the pin/label a
+              // constant screen size regardless of zoom -- see the matching
+              // comment on the control-point handle above.
+              transform={`translate(${px.x}, ${px.y}) scale(${1 / camera.zoom})`}
               onPointerDown={(e) => handlePinPointerDown(e, loc.id)}
               onClick={(e) => e.stopPropagation()}
               className={`location-pin${loc.id === selectedId ? " selected" : ""}`}

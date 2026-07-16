@@ -30,7 +30,7 @@ function makeWorldWithVillage() {
     basePriceModifiers: {},
     fuelPrice: 0,
     terminalTypes: new Set(["Market"]),
-    settlementType: "Village",
+    settlementType: "Native village",
     ruler: chieftain,
   });
 

@@ -82,19 +82,20 @@ export class Explorer extends Person {
   }
 
   /**
-   * Arrives at `destination`, then -- if it's a Village and nothing else is
-   * already pending -- triggers the passage-tax negotiation decision before
-   * any trading is possible, per doc/ExploreGameIntegration.md's "Triggers
-   * on arrival, before any trading" decision. The `pendingDecision === null`
-   * guard is defensive: World.runDay already refuses to tick anything while
-   * a decision is pending (see World.runDay's own pause gate), so arrive()
-   * should never actually run with one already set.
+   * Arrives at `destination`, then -- if it's a Native village and nothing
+   * else is already pending -- triggers the passage-tax negotiation decision
+   * before any trading is possible, per doc/ExploreGameIntegration.md's
+   * "Triggers on arrival, before any trading" decision. The
+   * `pendingDecision === null` guard is defensive: World.runDay already
+   * refuses to tick anything while a decision is pending (see World.runDay's
+   * own pause gate), so arrive() should never actually run with one already
+   * set.
    */
   private arrive(world: World): void {
     const location = getLocation(this.destination!);
     if (location !== undefined) this.porterParty.arriveAt(location);
     this.destination = null;
-    if (location !== undefined && location.settlementType === "Village" && world.pendingDecision === null) {
+    if (location !== undefined && location.settlementType === "Native village" && world.pendingDecision === null) {
       world.pendingDecision = buildPassageTaxDecision(this, location);
     }
   }

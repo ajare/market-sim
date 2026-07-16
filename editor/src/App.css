@@ -429,6 +429,7 @@ body {
   width: 100%;
   height: 100%;
   position: relative;
+  overflow: hidden;
 }
 
 .canvas-hint {
@@ -513,6 +514,7 @@ body {
   z-index: 0;
   pointer-events: none;
   user-select: none;
+  transform-origin: 0 0;
 }
 
 .world-canvas {
@@ -523,6 +525,7 @@ body {
   cursor: crosshair;
   position: relative;
   z-index: 1;
+  touch-action: none;
 }
 
 /* With a background image behind it, the SVG's own fill goes transparent so

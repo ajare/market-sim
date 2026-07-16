@@ -24,7 +24,7 @@ function makeVillage(name: string, overrides: Partial<ConstructorParameters<type
     basePriceModifiers: {},
     fuelPrice: 0,
     terminalTypes: new Set(["Market"]),
-    settlementType: "Village",
+    settlementType: "Native village",
     ...overrides,
   });
 }

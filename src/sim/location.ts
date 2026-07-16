@@ -21,9 +21,11 @@ import * as worldData from "./worldData";
 import type { TerminalType } from "@market-sim/shared/terminal";
 export type { TerminalType };
 import type { Chieftain } from "./chieftain";
-
-/** Settlement-scale classification, orthogonal to TerminalType -- applies to any Location (European or native), not just villages. */
-export type SettlementType = "Village" | "Town" | "City";
+// Imported AND re-exported so every existing `from "./location"` import of
+// SettlementType keeps working -- the type itself now lives in @market-sim/shared
+// (shared with the editor, see editor/src/types.ts).
+import type { SettlementType } from "@market-sim/shared/settlement";
+export type { SettlementType };
 
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
@@ -84,7 +86,7 @@ export class Location extends ContractIssuer {
   contractThresholdFraction: number;
   /** The PoliticalEntity this Location belongs to, if any. Set by PoliticalEntity's constructor, not this one. */
   politicalEntity: PoliticalEntity | null = null;
-  /** Settlement scale (Village/Town/City) -- orthogonal to terminalTypes (what transport can connect here), purely a scale/presentation classification. */
+  /** Settlement scale (Native village/Settlement/Town/Outpost) -- orthogonal to terminalTypes (what transport can connect here), purely a scale/presentation classification. */
   settlementType: SettlementType;
   /**
    * This Location's personal ruler, if any -- e.g. a native village's

@@ -29,6 +29,11 @@ import {
 } from "@market-sim/shared/politicalEntity";
 export { POLITICAL_ENTITY_TYPES, DEFAULT_POLITICAL_ENTITY_TYPE };
 export type { PoliticalEntityType };
+import {
+  SETTLEMENT_TYPES, DEFAULT_SETTLEMENT_TYPE, type SettlementType,
+} from "@market-sim/shared/settlement";
+export { SETTLEMENT_TYPES, DEFAULT_SETTLEMENT_TYPE };
+export type { SettlementType };
 // The De Casteljau curve math a Route's path is rendered/measured through
 // (also used by src/sim/routes.ts's Route) lives in @market-sim/shared.
 import { sampleBezierCurve, CURVE_SAMPLE_COUNT, type Point } from "@market-sim/shared/bezier";
@@ -134,6 +139,52 @@ export const CARIBBEAN_COMMODITIES: { name: string; basePrice: number; type: Com
   { name: "Gold", basePrice: 520, type: "Precious" },
 ];
 
+/**
+ * Goods traded between native villages and European explorers/settlers in
+ * the mid-19th-century exploration mode (see doc/ExploreGame.md's Trade/
+ * Agriculture/Flora/Common-illnesses sections) -- priced from a Western
+ * merchant's perspective, on the same 6-520 scale as CARIBBEAN_COMMODITIES
+ * (interleaved with it deliberately, so combining both pools in one World
+ * still reads as a coherent price curve). Bulk foodstuffs and raw trade-good
+ * inputs (cowrie shells/beads, cheap to source in quantity even though
+ * they're the natives' own currency) sit at the bottom; industrial/dye/
+ * ornamental materials in the middle; goods with strong or urgent Western
+ * demand at the top -- ivory (luxury manufacturing), vanilla (the era's
+ * costliest spice), and quinine (a refined cinchona-bark extract, priced
+ * highest of all: not just a trade good but the only real treatment for
+ * malaria, see ExploreGame.md's Common illnesses section -- explorers need
+ * it to survive, not just to sell). Used by the "add trade good" button in
+ * the Commodities panel, same as CARIBBEAN_COMMODITIES.
+ */
+export const EXPLORATION_COMMODITIES: { name: string; basePrice: number; type: CommodityType }[] = [
+  { name: "Cowrie shells", basePrice: 6, type: "General" },
+  { name: "Millet", basePrice: 9, type: "Foodstuff" },
+  { name: "Sweet potato", basePrice: 10, type: "Foodstuff" },
+  { name: "Manioc", basePrice: 11, type: "Foodstuff" },
+  { name: "Maize", basePrice: 12, type: "Foodstuff" },
+  { name: "Pumpkin", basePrice: 13, type: "Foodstuff" },
+  { name: "Blue beads", basePrice: 15, type: "General" },
+  { name: "Yam", basePrice: 16, type: "Foodstuff" },
+  { name: "Breadfruit", basePrice: 17, type: "Foodstuff" },
+  { name: "Okra", basePrice: 19, type: "Foodstuff" },
+  { name: "Plantain", basePrice: 20, type: "Foodstuff" },
+  { name: "Mango", basePrice: 21, type: "Foodstuff" },
+  { name: "Pawpaw", basePrice: 22, type: "Foodstuff" },
+  { name: "Oranges", basePrice: 26, type: "Foodstuff" },
+  { name: "Cannabis", basePrice: 32, type: "General" },
+  { name: "Pineapple", basePrice: 40, type: "Foodstuff" },
+  { name: "Tin", basePrice: 49, type: "Metal" },
+  { name: "Furs", basePrice: 58, type: "Textile" },
+  { name: "Ebony", basePrice: 69, type: "General" },
+  { name: "Rubber", basePrice: 86, type: "General" },
+  { name: "Cinchona bark", basePrice: 100, type: "General" },
+  { name: "Cobalt", basePrice: 118, type: "Metal" },
+  { name: "Amber", basePrice: 160, type: "Precious" },
+  { name: "Vanilla", basePrice: 190, type: "General" },
+  { name: "Ivory", basePrice: 250, type: "General" },
+  { name: "Quinine", basePrice: 340, type: "General" },
+];
+
 /** A trading Faction -- mirrors src/sim/faction.ts's Company (TS-only, no Python original). The editor only needs name/starting funds/fleet/home Location; captain strategy params are a simulation-runtime concern. */
 export interface EditorCompany {
   id: string;
@@ -177,6 +228,8 @@ export interface EditorLocation {
   basePriceModifiers: Record<string, number>;
   fuelPrice: number;
   terminalTypes: TerminalType[];
+  /** Settlement scale (exploration mode) -- orthogonal to terminalTypes, purely a scale/presentation classification. Defaults to "Town" (see createLocation). */
+  settlementType: SettlementType;
 }
 
 /** A user-placed bend in a Route's path between its two Locations -- created/moved by shift-dragging on the Route (see WorldCanvas). Mirrors src/sim/routes.ts's Bezier control points; the Route is rendered as a sampled Bezier curve through them (see routeRenderPoints). */
@@ -263,5 +316,6 @@ export function createLocation(
     basePriceModifiers: {},
     fuelPrice: 1,
     terminalTypes: [],
+    settlementType: DEFAULT_SETTLEMENT_TYPE,
   };
 }

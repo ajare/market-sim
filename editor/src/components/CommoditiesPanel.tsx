@@ -1,7 +1,7 @@
 /** Defines the global commodity registry -- name, base price, and base production/consumption rate -- that every Location's commodity dropdowns draw from. */
 import { useState } from "react";
 import { useEditorStore } from "../state/useEditorStore";
-import { CARIBBEAN_COMMODITIES, COMMODITY_TYPES } from "../types";
+import { CARIBBEAN_COMMODITIES, EXPLORATION_COMMODITIES, COMMODITY_TYPES } from "../types";
 
 export function CommoditiesPanel() {
   const commodities = useEditorStore((s) => s.commodities);
@@ -29,18 +29,23 @@ export function CommoditiesPanel() {
     setNewName("");
   }
 
-  // Picks a random Caribbean golden-age-of-piracy trade good not already in the
-  // registry and adds it with its suggested base price (addCommodity is a no-op
-  // on a duplicate name, but filtering first keeps the button useful once some
-  // are already added).
+  // Picks a random trade good from `pool` not already in the registry and
+  // adds it with its suggested base price/type (addCommodity is a no-op on a
+  // duplicate name, but filtering first keeps the button useful once some are
+  // already added). Shared by both trade-good pools below (Caribbean piracy-
+  // era and exploration-mode).
+  function addRandomTradeGood(pool: typeof CARIBBEAN_COMMODITIES) {
+    const available = pool.filter((g) => !commodities.some((c) => c.name === g.name));
+    if (available.length === 0) return;
+    const good = available[Math.floor(Math.random() * available.length)];
+    addCommodity(good.name, good.basePrice, good.type);
+  }
   const availableTradeGoods = CARIBBEAN_COMMODITIES.filter(
     (g) => !commodities.some((c) => c.name === g.name),
   );
-  function handleAddTradeGood() {
-    if (availableTradeGoods.length === 0) return;
-    const good = availableTradeGoods[Math.floor(Math.random() * availableTradeGoods.length)];
-    addCommodity(good.name, good.basePrice, good.type);
-  }
+  const availableExplorationTradeGoods = EXPLORATION_COMMODITIES.filter(
+    (g) => !commodities.some((c) => c.name === g.name),
+  );
 
   return (
     <div className="commodities-panel">
@@ -131,10 +136,19 @@ export function CommoditiesPanel() {
         type="button"
         className="add-trade-good-button"
         title="Add a random Caribbean trade good with a suitable base price"
-        onClick={handleAddTradeGood}
+        onClick={() => addRandomTradeGood(CARIBBEAN_COMMODITIES)}
         disabled={availableTradeGoods.length === 0}
       >
         🎲 add trade good
+      </button>
+      <button
+        type="button"
+        className="add-trade-good-button"
+        title="Add a random mid-19th-century exploration-mode trade good with a suitable base price"
+        onClick={() => addRandomTradeGood(EXPLORATION_COMMODITIES)}
+        disabled={availableExplorationTradeGoods.length === 0}
+      >
+        🗺️ add exploration good
       </button>
     </div>
   );

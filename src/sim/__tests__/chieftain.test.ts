@@ -23,8 +23,8 @@ describe("Location.settlementType", () => {
   });
 
   it("respects an explicit settlementType", () => {
-    const location = makeLocation({ settlementType: "Village" });
-    expect(location.settlementType).toBe("Village");
+    const location = makeLocation({ settlementType: "Native village" });
+    expect(location.settlementType).toBe("Native village");
   });
 });
 
@@ -39,7 +39,7 @@ describe("Location.ruler", () => {
       name: "Chief Ombo", gender: "Male", dateOfBirth: new Date("1950-01-01"),
       passageTaxRate: 0.15, trust: 0.4, giftCategories: ["Tobacco"],
     });
-    const location = makeLocation({ settlementType: "Village", terminalTypes: new Set(["Market"]), ruler: chieftain });
+    const location = makeLocation({ settlementType: "Native village", terminalTypes: new Set(["Market"]), ruler: chieftain });
     expect(location.ruler).toBe(chieftain);
     expect(location.ruler?.passageTaxRate).toBe(0.15);
   });

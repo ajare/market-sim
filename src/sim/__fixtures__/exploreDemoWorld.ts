@@ -1,7 +1,7 @@
 /**
  * A minimal, hand-authored World JSON (the editor's exported shape -- see
  * buildWorldFromJson.ts) built specifically to exercise the exploration
- * mode: a coastal Town, two Market-terminal Villages connected to it by
+ * mode: a coastal Town, two Market-terminal Native villages connected to it by
  * Trail routes (one with a Chieftain ruler, one without -- exercising the
  * PoliticalEntity-only fallback), one Tribe PoliticalEntity owning the
  * villages, and one Explorer/PorterParty starting at the coastal Town.
@@ -14,7 +14,7 @@
  * routes and exist purely to clear that floor.
  */
 
-const FILLER_TOWN_COUNT = 18; // + 1 coastal Town + 2 Villages = 21, clears MIN_LOCATIONS (20).
+const FILLER_TOWN_COUNT = 18; // + 1 coastal Town + 2 Native villages = 21, clears MIN_LOCATIONS (20).
 
 /** Builds the demo world as a plain object (editor JSON shape) -- see buildExploreDemoWorldJson for the paste-ready string form. */
 export function buildExploreDemoWorld() {
@@ -51,7 +51,7 @@ export function buildExploreDemoWorld() {
     basePriceModifiers: { Ivory: 1.0, Cloth: 1.0 },
     fuelPrice: 0,
     terminalTypes: ["Market"],
-    settlementType: "Village",
+    settlementType: "Native village",
     ruler: {
       name: "Chief Ombo",
       passageTaxRate: 0.15,
@@ -75,7 +75,7 @@ export function buildExploreDemoWorld() {
     basePriceModifiers: { Gold: 1.0, Tobacco: 1.0 },
     fuelPrice: 0,
     terminalTypes: ["Market"],
-    settlementType: "Village",
+    settlementType: "Native village",
   };
 
   const fillerTowns = Array.from({ length: FILLER_TOWN_COUNT }, (_, i) => ({

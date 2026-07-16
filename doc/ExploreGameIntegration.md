@@ -33,7 +33,7 @@ a village happens between both natives and explorers.
 
 ### `Location` gets a settlement-type field
 
-A new field on `Location` — e.g. `settlementType: "Village" | "Town" | "City"` —
+A new field on `Location` — `settlementType: "Native village" | "Settlement" | "Town" | "Outpost"` —
 classifies scale/presentation. This is general-purpose, not native-specific: it applies
 to European settlements too (the doc's coastal towns, trading posts, inland
 settlements).

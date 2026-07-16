@@ -54,14 +54,14 @@ describe("buildWorldFromJson -- exploration mode fields", () => {
     expect(explorer.porterParty.animalCount).toBe(1);
 
     const villageWithRuler = world.locations.find((l) => l.name === "Riverbend Village")!;
-    expect(villageWithRuler.settlementType).toBe("Village");
+    expect(villageWithRuler.settlementType).toBe("Native village");
     expect(villageWithRuler.ruler).not.toBeNull();
     expect(villageWithRuler.ruler?.name).toBe("Chief Ombo");
     expect(villageWithRuler.ruler?.passageTaxRate).toBe(0.15);
     expect(villageWithRuler.ruler?.giftCategories).toEqual(["Beads"]);
 
     const villageWithoutRuler = world.locations.find((l) => l.name === "Highland Village")!;
-    expect(villageWithoutRuler.settlementType).toBe("Village");
+    expect(villageWithoutRuler.settlementType).toBe("Native village");
     expect(villageWithoutRuler.ruler).toBeNull();
     expect(villageWithoutRuler.politicalEntity?.name).toBe("River Tribe");
     expect(villageWithoutRuler.politicalEntity?.type).toBe("Tribe");

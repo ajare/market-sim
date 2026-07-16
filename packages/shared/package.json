@@ -17,6 +17,7 @@
     "./routePlanning": "./src/routePlanning.ts",
     "./commodity": "./src/commodity.ts",
     "./politicalEntity": "./src/politicalEntity.ts",
+    "./settlement": "./src/settlement.ts",
     "./world": "./src/world.ts",
     "./bezier": "./src/bezier.ts",
     "./units": "./src/units.ts",
