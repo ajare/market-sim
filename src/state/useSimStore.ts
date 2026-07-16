@@ -21,6 +21,9 @@ import type { Transport } from "../sim/transport";
 import type { Sailor } from "../sim/sailor";
 import { isShipLogEnabled, setShipLogEnabled as setSimShipLogEnabled, type Captain } from "../sim/captain";
 import type { Person } from "../sim/person";
+import type { Explorer } from "../sim/explorer";
+import { buildLegChoiceDecision, type Choice } from "../sim/decisions";
+import { marketKey } from "../sim/markets";
 
 interface SimStore {
   world: World | null;
@@ -44,6 +47,10 @@ interface SimStore {
   selectedPerson: Person | null;
   /** Toggles selection: selecting the already-selected Person again clears it. Pass null to explicitly clear. */
   selectPerson: (person: Person | null) => void;
+  /** The Explorer currently selected in the Explorer panel -- null when nothing's selected. Cleared whenever a new World is built/loaded, since the old World's Explorer objects no longer apply. */
+  selectedExplorer: Explorer | null;
+  /** Toggles selection: selecting the already-selected Explorer again clears it. Pass null to explicitly clear. */
+  selectExplorer: (explorer: Explorer | null) => void;
   reset: () => void;
   /** Builds a fresh World from an editor JSON export (see buildWorldFromJson) and installs it, replacing the current one. Throws if the JSON can't be turned into a valid World -- the caller surfaces the message. */
   loadWorldFromJson: (text: string) => void;
@@ -83,6 +90,28 @@ interface SimStore {
    * Captain.hireCrewIfPossible). No-op if the transport isn't InTransit.
    */
   killCrewMember: (transport: Transport, member: Sailor) => void;
+  /**
+   * Buys `quantity` of `commodity` at `explorer`'s current Location, against
+   * the World's buy-side Market for that (location, commodity) pair -- see
+   * Explorer.buy. No-op (returns 0) if there's no live World or no such
+   * Market. Returns the quantity actually bought.
+   */
+  buyAtVillage: (explorer: Explorer, commodity: string, quantity: number) => number;
+  /** Sell-side counterpart to buyAtVillage -- see Explorer.sell. */
+  sellAtVillage: (explorer: Explorer, commodity: string, quantity: number) => number;
+  /**
+   * Opens the leg-choice decision (see decisions.buildLegChoiceDecision) for
+   * `explorer` -- the "Choose next leg" panel action. No-op if there's no
+   * live World or a decision is already pending (see World.pendingDecision's
+   * own doc comment: only one decision is ever open at a time).
+   */
+  openLegChoice: (explorer: Explorer) => void;
+  /**
+   * Resolves the World's current pendingDecision with `choice` -- calls
+   * choice.resolve, then clears pendingDecision so the simulation can
+   * resume. No-op if there's no live World or nothing is actually pending.
+   */
+  resolveDecision: (choice: Choice) => void;
 }
 
 let accumulator = 0;
@@ -113,6 +142,8 @@ export const useSimStore = create<SimStore>((set, get) => ({
   selectTransport: (captain) => set((s) => ({ selectedCaptain: s.selectedCaptain === captain ? null : captain })),
   selectedPerson: null,
   selectPerson: (person) => set((s) => ({ selectedPerson: s.selectedPerson === person ? null : person })),
+  selectedExplorer: null,
+  selectExplorer: (explorer) => set((s) => ({ selectedExplorer: s.selectedExplorer === explorer ? null : explorer })),
 
   reset: () => {
     const { world, factions, politicalEntities } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
@@ -120,7 +151,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
     accumulator = 0;
     set((s) => ({
       world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false,
-      selectedCaptain: null, selectedPerson: null, version: s.version + 1,
+      selectedCaptain: null, selectedPerson: null, selectedExplorer: null, version: s.version + 1,
     }));
   },
 
@@ -133,7 +164,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
     accumulator = 0;
     set((s) => ({
       world, factions, politicalEntities, day: 0, date: world.currentDate, playing: false,
-      selectedCaptain: null, selectedPerson: null, version: s.version + 1,
+      selectedCaptain: null, selectedPerson: null, selectedExplorer: null, version: s.version + 1,
     }));
   },
 
@@ -204,6 +235,41 @@ export const useSimStore = create<SimStore>((set, get) => ({
   killCrewMember: (transport, member) => {
     if (transport.status !== "InTransit") return;
     transport.removeCrewMember(member);
+    set((s) => ({ version: s.version + 1 }));
+  },
+
+  buyAtVillage: (explorer, commodity, quantity) => {
+    const { world } = get();
+    if (world === null) return 0;
+    const market = world.buyMarkets.get(marketKey(explorer.locationName, commodity));
+    if (market === undefined) return 0;
+    const bought = explorer.buy(commodity, quantity, market);
+    set((s) => ({ version: s.version + 1 }));
+    return bought;
+  },
+
+  sellAtVillage: (explorer, commodity, quantity) => {
+    const { world } = get();
+    if (world === null) return 0;
+    const market = world.sellMarkets.get(marketKey(explorer.locationName, commodity));
+    if (market === undefined) return 0;
+    const sold = explorer.sell(commodity, quantity, market);
+    set((s) => ({ version: s.version + 1 }));
+    return sold;
+  },
+
+  openLegChoice: (explorer) => {
+    const { world } = get();
+    if (world === null || world.pendingDecision !== null) return;
+    world.pendingDecision = buildLegChoiceDecision(explorer);
+    set((s) => ({ version: s.version + 1 }));
+  },
+
+  resolveDecision: (choice) => {
+    const { world } = get();
+    if (world === null || world.pendingDecision === null) return;
+    choice.resolve({ explorer: world.pendingDecision.explorer });
+    world.pendingDecision = null;
     set((s) => ({ version: s.version + 1 }));
   },
 }));

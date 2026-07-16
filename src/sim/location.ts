@@ -20,6 +20,10 @@ import * as worldData from "./worldData";
 // TerminalType keeps working -- the type itself now lives in @market-sim/shared.
 import type { TerminalType } from "@market-sim/shared/terminal";
 export type { TerminalType };
+import type { Chieftain } from "./chieftain";
+
+/** Settlement-scale classification, orthogonal to TerminalType -- applies to any Location (European or native), not just villages. */
+export type SettlementType = "Village" | "Town" | "City";
 
 /** Default multiple of minStockpiles at which a Contract is proactively tendered -- see Location.contractThresholdFraction / needsContractRestock. */
 export const DEFAULT_CONTRACT_THRESHOLD_FRACTION = 1.5;
@@ -53,6 +57,10 @@ export interface LocationInit {
   cash?: number;
   /** Contract-tendering threshold, as a multiple of minStockpiles. Defaults to DEFAULT_CONTRACT_THRESHOLD_FRACTION -- see needsContractRestock. */
   contractThresholdFraction?: number;
+  /** Settlement scale -- defaults to "Town" so every existing Location (none of which pass this) keeps its current classification/behavior. */
+  settlementType?: SettlementType;
+  /** This Location's personal ruler, if any (e.g. a native village's chieftain) -- see the class field's own doc comment for the ruler/PoliticalEntity fallback chain. */
+  ruler?: Chieftain | null;
 }
 
 export class Location extends ContractIssuer {
@@ -76,6 +84,18 @@ export class Location extends ContractIssuer {
   contractThresholdFraction: number;
   /** The PoliticalEntity this Location belongs to, if any. Set by PoliticalEntity's constructor, not this one. */
   politicalEntity: PoliticalEntity | null = null;
+  /** Settlement scale (Village/Town/City) -- orthogonal to terminalTypes (what transport can connect here), purely a scale/presentation classification. */
+  settlementType: SettlementType;
+  /**
+   * This Location's personal ruler, if any -- e.g. a native village's
+   * chieftain. Diplomacy decisions (passage tax, gifts, etc.) read
+   * `location.ruler ?? location.politicalEntity`: a present ruler's own
+   * authority takes precedence over the owning PoliticalEntity (native rule
+   * doesn't work like Western institutional politics -- see
+   * doc/ExploreGameIntegration.md). Null for every Location without a
+   * personally-ruling ally/chieftain (i.e. every Location today).
+   */
+  ruler: Chieftain | null;
   private _ownCash: number;
   /**
    * The stockpile level a PRODUCED commodity's price is measured against
@@ -102,6 +122,8 @@ export class Location extends ContractIssuer {
     this.fenceFraction = init.fenceFraction ?? 0.5;
     this._ownCash = init.cash ?? 10_000_000_000;
     this.contractThresholdFraction = init.contractThresholdFraction ?? DEFAULT_CONTRACT_THRESHOLD_FRACTION;
+    this.settlementType = init.settlementType ?? "Town";
+    this.ruler = init.ruler ?? null;
 
     if (this.terminalTypes.has("Platform") && this.terminalTypes.size > 1) {
       throw new Error(

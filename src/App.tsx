@@ -18,6 +18,8 @@ import { TransportHeatmapPanel } from "./components/TransportHeatmapPanel";
 import { StockLevelHeatmapPanel } from "./components/StockLevelHeatmapPanel";
 import { PirateAttackHeatmapPanel } from "./components/PirateAttackHeatmapPanel";
 import { EventsPanel } from "./components/EventsPanel";
+import { ExplorerPanel } from "./components/ExplorerPanel";
+import { DecisionModal } from "./components/DecisionModal";
 import "./App.css";
 
 function App() {
@@ -48,7 +50,9 @@ function App() {
         <TransportsPanel />
         <PersonPanel />
         <ContractsPanel />
+        <ExplorerPanel />
       </div>
+      <DecisionModal />
     </div>
   );
 }

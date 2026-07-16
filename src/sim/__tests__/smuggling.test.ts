@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { Location } from "../location";
 import { Market, marketKey } from "../markets";
 import { Company, SoloTrader } from "../faction";
-import { Captain, type CargoState } from "../captain";
-import { SHIP_CLASSES } from "../transport";
+import { Captain } from "../captain";
+import { SHIP_CLASSES, type CargoState } from "../transport";
 import { seedSimRandom } from "../simRandom";
 import { setGeography, getLocation } from "../worldData";
 

@@ -7,9 +7,29 @@
 import type { Route, RouteType } from "./routes";
 import type { Sailor } from "./sailor";
 import type { Location } from "./location";
+import type { Contract } from "./contracts";
 import { trimHistory } from "./historyRetention";
 
 export type TransportStatus = "AtLocation" | "InTransit" | "Inactive";
+
+/** In-transit cargo a Transport is currently carrying -- moved here from Captain (see captain.ts's `cargo` getter/setter) since cargo belongs to the physical vehicle, not whichever Captain currently crews it. */
+export interface CargoState {
+  commodity: string;
+  quantity: number;
+  unitCost: number;
+  origin: string;
+  destination: string;
+  distance: number;
+  routeType: string;
+  travelDays: number;
+  fuelPricePaid: number;
+  fuelUnitsConsumed: number;
+  fuelCostTotal: number;
+  totalCost: number;
+  departureDay: number;
+  /** Set when this cargo is being delivered against a supply Contract rather than sold on the open market -- see Captain.fulfillContract. */
+  contract: Contract | null;
+}
 
 /** Why a condition-history entry was recorded -- see Transport.recordCondition/conditionHistory. "transit" is ordinary day-by-day decay while underway; "repair" is the jump back to 1.0 a REPAIR Directive gives. */
 export type ConditionChangeCause = "transit" | "pirate" | "storm" | "repair";
@@ -90,6 +110,10 @@ export class Transport {
   location: Location | null = null;
   /** `location`'s name, kept in sync by arriveAt -- a plain string for the many call sites (pathfinding, market lookups) that key off a location name rather than the object itself. */
   currentNode: string | null = null;
+  /** In-transit cargo this Transport is currently carrying -- see CargoState. Belongs to the Transport, not whichever Captain currently crews it (Captain exposes a `cargo` getter/setter that proxies this field for backward-compatible call sites). Null for a Transport that has never loaded cargo, or once it's been sold/dumped/seized. */
+  cargo: CargoState | null = null;
+  /** A unified multi-commodity stockpile (commodity id -> quantity), the exploration mode's inventory shape -- deliberately NOT CargoState (which is single-commodity/in-transit-trip-shaped). Only PorterParty ever populates this; every other Transport type leaves it null, exactly like `cargo` stays null for a PorterParty. */
+  inventory: Record<string, number> | null = null;
 
   constructor(init: TransportInit = {}) {
     this.name = init.name ?? "Generic Transport";
@@ -319,6 +343,63 @@ export class Spaceship extends Transport {
 
   override allowedRouteTypes(): RouteType[] | null {
     return ["Space"];
+  }
+}
+
+/** cargoCapacity contribution from the party itself, before any porters/pack animals are counted -- see PorterParty. */
+export const PORTER_PARTY_BASE_CAPACITY = 20.0;
+/** cargoCapacity contributed by each porter -- see PorterParty. */
+export const PORTER_PARTY_CAPACITY_PER_PORTER = 15.0;
+/** cargoCapacity contributed by each pack animal -- see PorterParty. */
+export const PORTER_PARTY_CAPACITY_PER_ANIMAL = 40.0;
+
+export interface PorterPartyInit extends TransportInit {
+  porterCount?: number;
+  animalCount?: number;
+}
+
+/**
+ * An on-foot expedition party (explorer game mode) -- travels Trail routes
+ * only, carries a unified weight-capacity inventory (see Transport.inventory)
+ * rather than a single CargoState, and burns no fuel at all (currentFuel
+ * stays null, same treatment as SailingVessel -- needsRefuel() is always
+ * false). cargoCapacity here is WEIGHT capacity, not a plain unit count: it's
+ * computed once at construction from porterCount/animalCount (see
+ * recomputeCapacity) -- dynamically changing headcount (hiring, desertion) is
+ * out of scope for the exploration skeleton.
+ */
+export class PorterParty extends Transport {
+  porterCount: number;
+  animalCount: number;
+
+  constructor(init: PorterPartyInit = {}) {
+    super({
+      name: "Porter Party",
+      speedUnitsPerDay: 60.0,
+      fuelConsumptionPerUnitDistance: 0.0,
+      repositionFuelConsumptionPerDistance: 0.0,
+      fixedShipmentCost: 0.0,
+      fuelCapacity: 0.0,
+      currentFuel: null,
+      crewRequirement: 1,
+      ...init,
+    });
+    this.porterCount = init.porterCount ?? 4;
+    this.animalCount = init.animalCount ?? 0;
+    this.inventory = {};
+    this.recomputeCapacity();
+  }
+
+  override allowedRouteTypes(): RouteType[] | null {
+    return ["Trail"];
+  }
+
+  /** Recomputes cargoCapacity from the current porterCount/animalCount -- call after either changes (not automatic; this skeleton never changes them post-construction). */
+  recomputeCapacity(): void {
+    this.cargoCapacity =
+      PORTER_PARTY_BASE_CAPACITY +
+      PORTER_PARTY_CAPACITY_PER_PORTER * this.porterCount +
+      PORTER_PARTY_CAPACITY_PER_ANIMAL * this.animalCount;
   }
 }
 

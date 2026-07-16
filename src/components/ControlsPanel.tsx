@@ -60,6 +60,7 @@ export function ControlsPanel() {
   const locationCount = world?.locations.length ?? 0;
   // world mutates in place (see useSimStore's docstring) -- `version` is what
   // actually signals these counts changed, `world` itself never does.
+  const decisionPending = world?.pendingDecision !== null && world?.pendingDecision !== undefined;
   void version;
   const pirateCount = world?.pirateBrigade?.captains.length ?? 0;
   const policeCount = world?.policeFleet?.captains.length ?? 0;
@@ -69,7 +70,7 @@ export function ControlsPanel() {
       <button type="button" onClick={() => setPlaying(!playing)}>
         {playing ? "Pause" : "Play"}
       </button>
-      <button type="button" onClick={step} disabled={playing}>
+      <button type="button" onClick={step} disabled={playing || decisionPending}>
         Step
       </button>
       <button type="button" onClick={reset}>
@@ -133,6 +134,7 @@ export function ControlsPanel() {
         <button type="button" onClick={removePoliceShip} disabled={policeCount === 0}>-</button>
       </label>
       <span className="stat">Day {day}</span>
+      {decisionPending && <span className="paste-error" role="status">Awaiting decision -- simulation paused</span>}
       {date !== null && (
         <span className="stat">
           {date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" })}

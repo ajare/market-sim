@@ -1,0 +1,183 @@
+{
+  "description": "Implementation tickets for the exploration game skeleton (movement between villages, trading, passage-tax negotiation). Derived from doc/ExploreGameIntegration.md (design decisions) and the phased implementation plan discussed with Claude. Out of scope for all tickets below: advisor panel/commentary, fog-of-war, pre-arrival village-encounter event, illness/disease events, editor UI for authoring villages/explorers.",
+  "tickets": [
+    {
+      "id": "EXP-1",
+      "title": "Move cargo state off Captain onto Transport",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": [],
+      "description": "Prerequisite refactor. Today `cargoCapacity` lives on Transport (src/sim/transport.ts) but the `cargo: CargoState | null` field and CargoState interface live on Captain (src/sim/captain.ts:60,242). PorterParty's own inventory (EXP-3) needs cargo state to genuinely live on Transport, so this must land first.",
+      "details": [
+        "src/sim/transport.ts: move the CargoState interface here and export it; add `cargo: CargoState | null = null` field to Transport. CargoState.contract needs `import type { Contract } from \"./contracts\"` (safe -- contracts.ts does not import transport.ts, no cycle).",
+        "src/sim/captain.ts: delete the local CargoState interface and the `cargo` field; add a `get cargo()`/`set cargo()` pair that proxies `this.transport!.cargo`. This keeps every existing internal `this.cargo` read/write in captain.ts unchanged (call sites: L636/642/664/690/750/759-761/767/769/787/794-828/842-874/892-946/959-992/1107/1178/1292/1499-1503) while satisfying 'cargo belongs to the Transport, not the Captain' structurally. Lowest-risk path -- avoids a ~40-site rewrite of the trade/sell/smuggle/fence machinery in this pass.",
+        "src/sim/faction.ts: loseCargoAndCash (L127-136), netWorth (L454-468), PirateBrigade.attack (L1148-1189) all read/write captain.cargo -- unchanged via the proxy, verify behavior is identical.",
+        "UI: src/components/ContractsPanel.tsx:37-40, src/components/NetworkView.tsx:64,1311-1320, src/components/PersonPanel.tsx:280-281 read captain.cargo.* -- unchanged via the proxy. No edits needed; note this explicitly in the PR so a reviewer isn't surprised these files are untouched.",
+        "Tests: src/sim/__tests__/smuggling.test.ts:5 imports `type CargoState` from '../captain' -- change to `import type { CargoState } from \"../transport\"`. condition.test.ts and crew.test.ts need no changes (proxy keeps captain.cargo working)."
+      ],
+      "filesToCreate": [],
+      "filesToModify": [
+        "src/sim/transport.ts",
+        "src/sim/captain.ts",
+        "src/sim/faction.ts",
+        "src/sim/__tests__/smuggling.test.ts"
+      ],
+      "verification": "npm run test (full suite, especially smuggling/condition/crew/faction/captain tests) and npm run build must pass unmodified in behavior. Manually run the app, buy a ship, trade, watch a pirate attack, confirm cargo still displays correctly in ContractsPanel/NetworkView/PersonPanel."
+    },
+    {
+      "id": "EXP-2",
+      "title": "Add shared types: Market terminal, Trail route, PorterParty transport, Tribe political entity",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": [],
+      "description": "Add the four new shared type-system values the exploration mode needs, plus every exhaustive record elsewhere in the codebase that the type system forces to be updated in lockstep.",
+      "details": [
+        "packages/shared/src/terminal.ts: add TerminalType \"Market\" (-> TERMINAL_TYPES); add RouteType \"Trail\" (-> ROUTE_TYPES, ROUTE_TERMINAL_COMPATIBILITY.Trail = [\"Market\"]); add TransportType \"PorterParty\" (-> TRANSPORT_TYPES, TRANSPORT_TYPE_LABELS, TRANSPORT_TYPE_ROUTE_TYPES.PorterParty = [\"Trail\"]).",
+        "packages/shared/src/politicalEntity.ts: add PoliticalEntityType \"Tribe\" (-> POLITICAL_ENTITY_TYPES; DEFAULT_POLITICAL_ENTITY_TYPE stays \"Universal\").",
+        "src/sim/routes.ts:25 ROUTE_TYPE_DISTANCE_SCALE needs a Trail entry (Record<RouteType,...> is exhaustive -- this will fail to compile until added).",
+        "src/sim/buildWorldFromJson.ts:189-190 VALID_POLITICAL_ENTITY_TYPES / VALID_ROUTE_TYPES Sets need \"Tribe\" / \"Trail\" added (these are plain Sets, NOT type-checked exhaustive -- easy to silently forget, double check manually).",
+        "src/sim/buildWorldFromJson.ts:203-228 makeTransport() switch needs `case \"PorterParty\"` (else it silently falls back to `new Ship(...)` for any JSON-authored PorterParty -- this case can only be added once EXP-3's PorterParty class exists, but the switch statement's default-case risk should be flagged now)."
+      ],
+      "filesToCreate": [],
+      "filesToModify": [
+        "packages/shared/src/terminal.ts",
+        "packages/shared/src/politicalEntity.ts",
+        "src/sim/routes.ts",
+        "src/sim/buildWorldFromJson.ts"
+      ],
+      "verification": "Run `tsc -b` immediately after this ticket, before EXP-3 touches transport.ts -- the Record<RouteType,...>/Record<TransportType,...> types force every key, so the compiler enumerates every now-broken site. Cross-check against the files listed above; do not rely on the compiler for the two VALID_*_TYPES Sets in buildWorldFromJson.ts since those are plain runtime Sets, not type-exhaustive."
+    },
+    {
+      "id": "EXP-3",
+      "title": "Add PorterParty Transport subclass and Commodity weight field",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": ["EXP-1", "EXP-2"],
+      "description": "New Transport subclass for the expedition party (foot/porter travel on Trail routes), plus a second, independent inventory field on Transport for the exploration mode's unified stockpile (distinct from CargoState, which is single-commodity and wrong for this).",
+      "details": [
+        "src/sim/transport.ts: new `PorterParty extends Transport` class, mirroring the existing Ship/WagonTrain/etc. pattern (transport.ts:208,244,263,282,301,320 for existing allowedRouteTypes() overrides). allowedRouteTypes() returns [\"Trail\"]. No fuel machinery (fuelConsumptionPerUnitDistance: 0, currentFuel: null, same treatment as SailingVessel). Fields: porterCount, animalCount.",
+        "PorterParty cargoCapacity is WEIGHT-capacity, not unit-capacity: base + perPorterCapacity*porterCount + perAnimalCapacity*animalCount (module constants: PORTER_PARTY_BASE_CAPACITY, PORTER_PARTY_CAPACITY_PER_PORTER, PORTER_PARTY_CAPACITY_PER_ANIMAL). Computed once at construction; dynamic recompute on hiring/desertion is out of scope for this skeleton.",
+        "src/sim/transport.ts: add a second, independent field to Transport: `inventory: Record<string, number> | null = null` -- null for every non-PorterParty Transport (exactly like `cargo` is null for a PorterParty). Do NOT reuse CargoState for this -- it is a single-commodity shape, wrong for a unified stockpile.",
+        "src/sim/commodity.ts: add `weightPerUnit: number` to Commodity (constructor param, default 1.0 -- backward-compatible, only PorterParty's own capacity math ever reads it). buildCommodities gets an optional `weights: Record<string, number> = {}` param threaded through like productionRates/consumptionRates.",
+        "Now that PorterParty exists, add the `case \"PorterParty\": transport = new PorterParty({ name }); break;` to buildWorldFromJson.ts's makeTransport() switch (flagged as a follow-up in EXP-2)."
+      ],
+      "filesToCreate": [],
+      "filesToModify": [
+        "src/sim/transport.ts",
+        "src/sim/commodity.ts",
+        "src/sim/buildWorldFromJson.ts"
+      ],
+      "verification": "New src/sim/__tests__/porterParty.test.ts: construct a PorterParty, assert allowedRouteTypes() is [\"Trail\"], assert capacity formula matches base + perPorter*n + perAnimal*m for a couple of porter/animal counts, assert canUseRoute accepts a Trail Route and rejects a Sea Route."
+    },
+    {
+      "id": "EXP-4",
+      "title": "Add Location.settlementType/ruler and new Chieftain class",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": [],
+      "description": "Villages are modeled as Location with a settlement-scale classification and an optional personal ruler (chieftain) whose authority takes precedence over the owning PoliticalEntity for diplomacy decisions. Independent of EXP-1/EXP-2/EXP-3 -- can be built in parallel.",
+      "details": [
+        "src/sim/location.ts: LocationInit and Location get `settlementType: \"Village\" | \"Town\" | \"City\"` (default \"Town\" -- every existing Location keeps its current classification/behavior) and `ruler: Chieftain | null = null`. Export a SettlementType type alongside TerminalType.",
+        "New file src/sim/chieftain.ts: `Chieftain extends Person` directly (NOT Sailor -- a chieftain never crews a Transport, so Sailor's wage/rank/piracy fields do not apply). Minimal fields for this skeleton: passageTaxRate (fraction of party cash/value demanded on arrival), trust ([0,1], persistent, shifts with negotiation outcomes), giftCategories: string[] (commodity ids this chieftain accepts as gift/tribute). No danger level, no extortion-behavior modeling beyond passageTaxRate, no shared PoliticalEntity-fallback 'decision interface' unification (explicitly deferred per the design doc's own open-follow-up note) -- the fallback chain (location.ruler ?? location.politicalEntity) is implemented directly in EXP-6's decision builder, not as a shared interface."
+      ],
+      "filesToCreate": ["src/sim/chieftain.ts"],
+      "filesToModify": ["src/sim/location.ts"],
+      "verification": "Extend location.test.ts (or add chieftain.test.ts): a Location built with no settlementType still defaults to \"Town\" (regression guard for every existing fixture); a Location with settlementType: \"Village\" and a ruler round-trips correctly."
+    },
+    {
+      "id": "EXP-5",
+      "title": "Add Explorer Person subtype with movement and buy/sell",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": ["EXP-3", "EXP-4"],
+      "description": "The player-controlled expedition leader. Carries nothing personally (inventory lives on the PorterParty per EXP-3); moves one player-picked leg at a time (no autonomous route planning); can buy/sell against a village's Market using new, simple methods (not a reuse of Captain's contract/directive/piracy-entangled trade machinery).",
+      "details": [
+        "New file src/sim/explorer.ts: `Explorer extends Person`. Own `cash: number` field (no Faction/pooling -- a single expedition, not a fleet). `destination`/`daysRemaining` fields for hop-by-hop movement (same atomicity as Captain -- no interim position tracked mid-leg).",
+        "`departFor(route: Route)`: player-picked single leg only -- sets daysRemaining via routeTravelDays and destination from the given Route. NOT an autonomous Dijkstra multi-hop planner like Captain.findBestLocalRoute/findShortestPath.",
+        "`tick(day, world)`: decrements daysRemaining, handles arrival, and (once EXP-6 exists) triggers the passage-tax decision on arrival at a Village-settlementType Location.",
+        "`buy(commodity, quantity, market)` / `sell(commodity, quantity, market)`: operate directly on `this.transport!.inventory` (a Record<commodityId, quantity>) and the passed-in Market, applying market.applyTrade(quantity) and cash adjustment -- no price-impact curve, no fuel, no crew cost, no contract path. Deliberately new/simple, not a reuse of Captain's trade machinery.",
+        "Relocate the ShipLogEntry interface out of captain.ts into a small shared module (e.g. src/sim/log.ts) so Explorer can reuse the same log shape without a captain.ts<->explorer.ts dependency; update captain.ts's import accordingly. Explorer gets its own `shipLog: ShipLogEntry[]` field, built the same day-by-day clause-assembly pattern as Captain.recordShipLog (captain.ts:1564-1608)."
+      ],
+      "filesToCreate": ["src/sim/explorer.ts", "src/sim/log.ts"],
+      "filesToModify": ["src/sim/captain.ts"],
+      "verification": "New src/sim/__tests__/explorer.test.ts: buy()/sell() against a fixture Market/Location (inventory/cash update correctly, capacity clamps over-buying); departFor()/tick() round-trip arrives after the correct number of days on a Trail route."
+    },
+    {
+      "id": "EXP-6",
+      "title": "Add decision/Choice infrastructure and passage-tax negotiation event",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": ["EXP-4", "EXP-5"],
+      "description": "Generic Choice/PendingDecision shape (shared by every future decision-event kind, not just this one), plus the first concrete decision: the chieftain's passage-tax negotiation on arrival at a village. Advisors are stubbed out per scope -- riskHint is a static string, but resolve() still rolls a real probability so the mechanic isn't fake.",
+      "details": [
+        "New file src/sim/decisions.ts: `Choice { label, isEligible(state), riskHint, resolve(state) }` and `PendingDecision { kind, title, description, choices, explorer }`. `kind` should be an extensible string union (e.g. \"PassageTax\" | \"LegChoice\"), not sealed tight, since more kinds (VillageEncounter, Illness) are planned later.",
+        "`buildPassageTaxDecision(explorer, location, world)`: reads `location.ruler ?? location.politicalEntity`. If a ruler (Chieftain) is present: offer all four choices -- Pay (isEligible: cash covers the demanded amount), Offer gift (isEligible: transport.inventory holds qty > 0 of a commodity in ruler.giftCategories), Haggle (real chance of a worse outcome), Refuse (real chance of a worse outcome). Each resolve mutates ruler.trust and deducts cash/inventory or applies the risk roll. If only a PoliticalEntity fallback: offer Pay (fixed, non-negotiable rate) and Refuse only -- no Haggle/Offer-gift, matching the doc's 'fewer or no negotiation options' framing. PoliticalEntity has no trust field in this skeleton -- this fallback case stays stateless, a known/accepted gap.",
+        "`buildLegChoiceDecision(explorer, world)`: one Choice per outgoing Trail route from explorer.locationName (via ROUTES, filtered to Trail type + explorer.transport!.canUseRoute), resolve calls explorer.departFor(route). NOT forced on arrival (per design doc) -- triggered by an explicit player UI action (EXP-8's 'Choose next leg' button), not automatically. No fog-of-war this pass, so real destination names show directly in the label.",
+        "Trigger wiring for passage-tax: Explorer.tick() (EXP-5) sets world.pendingDecision = buildPassageTaxDecision(...) immediately on arrival at a Village-settlementType Location, before any trading is possible. IMPORTANT (scope correction made while implementing EXP-6): decisions.ts was built deliberately independent of World -- buildPassageTaxDecision(explorer, location) and buildLegChoiceDecision(explorer) take no World parameter and never touch world.pendingDecision themselves; they just return a PendingDecision. The actual `world.pendingDecision = buildPassageTaxDecision(...)` assignment and the Explorer.tick()/arrive() signature change (renaming EXP-5's `_day` back to `day`, adding a `world: World` parameter) are EXP-7's job, not EXP-6's -- World.pendingDecision doesn't exist as a field until EXP-7 adds it, so this wiring could not have compiled during EXP-6 regardless."
+      ],
+      "filesToCreate": ["src/sim/decisions.ts", "src/sim/__tests__/decisions.test.ts"],
+      "filesToModify": [],
+      "verification": "New src/sim/__tests__/decisions.test.ts: ruler present -> all four choices exist with correct eligibility (broke party -> Pay ineligible; no gift-category inventory -> Offer gift ineligible); PoliticalEntity-only -> only Pay/Refuse; call each resolve and assert cash/inventory/trust mutate as expected. Also covers buildLegChoiceDecision (one choice per outgoing Trail route, resolving departs the party). All verified passing -- tsc -b clean, 263 tests (31 files), lint clean."
+    },
+    {
+      "id": "EXP-7",
+      "title": "Wire Explorer/PorterParty and pending-decision pause into World.runDay",
+      "priority": "P0",
+      "status": "done",
+      "dependsOn": ["EXP-5", "EXP-6"],
+      "description": "World needs to own a list of Explorers, tick them once per day, and pause the ENTIRE simulation (not just the expedition) while a decision is pending -- per the design doc's 'pending decisions pause the whole simulation' decision.",
+      "details": [
+        "src/sim/world.ts: World gets `explorers: Explorer[] = []` and `pendingDecision: PendingDecision | null = null` (WorldInit gets optional `explorers?: Explorer[]`, mirroring the existing `traders?: Captain[]` pattern).",
+        "runDay(day, commoditiesPresent): as the VERY FIRST statement, `if (this.pendingDecision !== null) return;` -- nothing (economy, captains, weather) advances while a decision is open. This must run before bulletinBoard.prune and every other existing step.",
+        "After the existing per-Captain loop, add a new, fully independent pass: `for (const explorer of this.explorers) explorer.tick(day, this);` -- separate from the captains/factions/locations loops; nothing existing needs to know about explorers.",
+        "World.step() needs no change -- it already just calls runDay once per invocation; the pause is entirely inside runDay's early-return."
+      ],
+      "implementationNotes": [
+        "Correction made while implementing: World.step() DID need a change after all. It unconditionally does `this.nextDay += 1` after calling runDay, regardless of runDay's own early-return -- so the day counter/currentDate would keep advancing every step() call even while a decision was pending, contradicting the design doc's 'day counter frozen' framing. Fixed by adding the same `pendingDecision !== null` guard to the top of step() itself (returns the last-completed day number unchanged, 0 if none yet), on top of runDay's own guard.",
+        "Also wired Explorer.tick()/arrive() (from EXP-5/EXP-6, previously deferred) to accept a `world: World` parameter and call buildPassageTaxDecision on arrival at a Village, guarded by `world.pendingDecision === null`."
+      ],
+      "filesToCreate": [],
+      "filesToModify": ["src/sim/world.ts"],
+      "verification": "New src/sim/__tests__/explorerWorld.test.ts: a minimal World with one Village Location (with a ruler) reachable by a Trail route from a starting Location, one Explorer/PorterParty; step the world enough days to arrive; assert world.pendingDecision !== null on arrival and that a further world.step() call while pending is a no-op (day counter / captain state unchanged); call resolveDecision, then step again and confirm the sim resumes."
+    },
+    {
+      "id": "EXP-8",
+      "title": "UI: store wiring, ExplorerPanel, DecisionModal, map rendering",
+      "priority": "P1",
+      "status": "done",
+      "dependsOn": ["EXP-7"],
+      "description": "Surface the exploration mode in the existing panel-based UI (no dedicated screen, per the design doc) -- a new panel for the expedition, a new blocking modal for decisions (the first modal in the app), and minimal map rendering for the new Market terminal / Trail route.",
+      "details": [
+        "src/state/useSimStore.ts: add `selectedExplorer: Explorer | null` + `selectExplorer(explorer)` (mirrors selectedCaptain/selectTransport at useSimStore.ts:40-46). Add `pendingDecision: PendingDecision | null` (kept in sync with world.pendingDecision via the existing `version` bump convention) and `resolveDecision(choice)` (calls choice.resolve(state), clears world.pendingDecision, bumps version -- mirrors the existing action-field shape at useSimStore.ts:47-85). Add `selectedExplorer: null` to reset()/loadWorldFromJson()'s existing reset lists (useSimStore.ts:121-124,134-137). Add store actions for buy/sell (e.g. buyAtVillage/sellAtVillage, mirroring killCrewMember's 'call into world, bump version' shape) and openLegChoice(explorer) (sets world.pendingDecision = buildLegChoiceDecision(...), only if nothing already pending).",
+        "New src/components/ExplorerPanel.tsx (mirrors FleetPanel.tsx's list-plus-detail pattern): lists world.explorers, click-to-select. For the selected Explorer: cash, transport.inventory (commodity -> quantity table, like PersonPanel's cargo display), a Buy/Sell mini-form against the current location's Markets (reusing world.buyMarkets/sellMarkets the same way other panels read them), and a 'Choose next leg' button.",
+        "New src/components/DecisionModal.tsx: renders conditionally off pendingDecision as a fixed-position overlay with a backdrop (plain CSS, no new dependency -- first modal in the app). Filters choices by isEligible({ explorer, world }), renders each as a button showing label + riskHint, onClick calls resolveDecision(choice).",
+        "src/App.tsx: add <ExplorerPanel /> into the existing .panels div (alongside FleetPanel/ContractsPanel). Add <DecisionModal /> once, top-level, so it overlays everything.",
+        "src/components/ControlsPanel.tsx: visually disable/indicate Play/Step while pendingDecision !== null (small tweak, not structural -- World.runDay's own pause gate from EXP-7 already enforces the actual pause).",
+        "src/components/NetworkView.tsx: add a Market terminal icon tier to drawLocationIcon (NetworkView.tsx:511-524) so villages render distinctly. Trail already has a placeholder color in ROUTE_COLORS (NetworkView.tsx:101-108, added in EXP-2 just to keep the build green against the exhaustive Record<RouteType,...>) -- revisit/finalize that color here, drawn as a normal full curve (no fog-of-war this pass -- that's deferred). Optionally draw world.explorers' current positions as markers (nice-to-have for manual verification, not required for functionality)."
+      ],
+      "filesToCreate": ["src/components/ExplorerPanel.tsx", "src/components/DecisionModal.tsx"],
+      "filesToModify": [
+        "src/state/useSimStore.ts",
+        "src/App.tsx",
+        "src/components/ControlsPanel.tsx",
+        "src/components/NetworkView.tsx"
+      ],
+      "verification": "Done: tsc -b clean, npm run build (production) succeeds, 265 tests passing (32 files, no new sim tests -- UI-only ticket), lint clean. Manual check via the `run` skill: launched the Vite dev server, screenshotted the running app -- new legend entries ('Trail (foot/porter)', 'Hut = Market (village)') render correctly, and the new Exploration panel appears with the correct empty-state message ('No Explorer in this World'), no visual breakage elsewhere. Full interactive verification (buy/sell/leg-choice/passage-tax flow) needs an actual Explorer in the world, which requires EXP-9's fixture -- deferred to a combined end-to-end pass once EXP-9 lands. Deviated from the ticket's original plan in one place: did NOT add a separate `pendingDecision` field to the store -- ExplorerPanel/DecisionModal read `world.pendingDecision` directly (subscribing to `version` for re-renders), matching this codebase's existing convention of not duplicating live World state into the store (see useSimStore.ts's own doc comment)."
+    },
+    {
+      "id": "EXP-9",
+      "title": "Minimal JSON authoring path and demo fixture for manual testing",
+      "priority": "P1",
+      "status": "done",
+      "dependsOn": ["EXP-2", "EXP-3", "EXP-4", "EXP-5"],
+      "description": "Editor UI support for villages/explorers is explicitly out of scope for this skeleton, but some way to author a testable world is still needed. Extend the existing JSON world format (backward-compatibly) and hand-write one demo fixture.",
+      "details": [
+        "src/sim/buildWorldFromJson.ts: extend JsonLocation with optional `settlementType?: string` and `ruler?: { name: string; passageTaxRate?: number; trust?: number; giftCategories?: string[] }`. Extend JsonWorld with optional `explorers?: JsonExplorer[]` (`{ name, homeLocationId, porterCount?, animalCount?, startingCash? }`). All fields optional/backward-compatible -- an existing JSON world with none of these fields must load exactly as it does today (settlementType defaults to \"Town\", no ruler, no explorers, world.explorers stays []).",
+        "New fixture src/sim/__fixtures__/exploreDemoWorld.ts: 2-3 Market-terminal Village Locations connected by Trail routes to an existing coastal Town, one Tribe PoliticalEntity, one Chieftain ruler on one of the villages, and one Explorer/PorterParty -- pasteable via the existing 'Paste World' JSON flow (ControlsPanel.tsx) for EXP-8's manual test plan."
+      ],
+      "filesToCreate": ["src/sim/__fixtures__/exploreDemoWorld.ts"],
+      "filesToModify": ["src/sim/buildWorldFromJson.ts"],
+      "verification": "Done: tsc -b clean, npm run build (production) succeeds, 267 tests passing (33 files, 2 new in buildWorldFromJson.test.ts), lint clean. The fixture has one village WITH a ruler (Chief Ombo) and one WITHOUT (exercising the PoliticalEntity-only fallback), plus 18 inert filler Town locations needed only to clear World's MIN_LOCATIONS=20 floor -- filler towns carry no commodities/routes. Full manual end-to-end pass via the `run` skill (Playwright, temporarily installed with --no-save then removed): launched the dev server, imported the fixture via 'Import World', selected the Explorer, used 'Choose next leg' to depart for Riverbend Village, stepped the sim until arrival, confirmed the passage-tax modal opened with the correct chieftain name ('Chief Ombo demands passage') and correctly hid the ineligible 'Offer a gift' choice (party carried no Beads), resolved 'Pay the demanded amount', and confirmed cash was deducted ($500 -> $429) and the simulation resumed. Zero console errors throughout. This closes out the deferred EXP-8 manual verification too."
+    }
+  ]
+}

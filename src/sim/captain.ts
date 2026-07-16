@@ -8,7 +8,7 @@
 import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
-import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus } from "./transport";
+import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus, type CargoState } from "./transport";
 import { distanceBetween, travelDaysBetween, getLocation, getWorldStartDate, LOCATION_COORDINATES } from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
 import { findShortestPath, pathNodeSequence } from "./pathfinding";
@@ -21,6 +21,8 @@ import { dayToTimeOfYear, type WeatherSystem, type Position } from "./weather";
 import { stormAt, type StormSystem, type Storm } from "./storms";
 import type { PersonInit } from "./person";
 import type { Location } from "./location";
+import type { ShipLogEntry } from "./log";
+export type { ShipLogEntry };
 import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
 
 /**
@@ -56,24 +58,6 @@ const CYCLONE_SPEED_MULTIPLIER = 0.55;
 const STORM_CONDITION_DAMAGE = 0.08;
 /** Same, for a cyclone. */
 const CYCLONE_CONDITION_DAMAGE = 0.2;
-
-export interface CargoState {
-  commodity: string;
-  quantity: number;
-  unitCost: number;
-  origin: string;
-  destination: string;
-  distance: number;
-  routeType: string;
-  travelDays: number;
-  fuelPricePaid: number;
-  fuelUnitsConsumed: number;
-  fuelCostTotal: number;
-  totalCost: number;
-  departureDay: number;
-  /** Set when this cargo is being delivered against a supply Contract rather than sold on the open market -- see Captain.fulfillContract. */
-  contract: Contract | null;
-}
 
 export type TradeAction = "BUY" | "SELL" | "REFUEL" | "REPOSITION" | "ATTACK" | "SMUGGLE";
 
@@ -113,12 +97,6 @@ export interface AgentEventLogEntry {
   name: string;
   kind: TransportEventKind;
   detail: string;
-}
-
-/** One day's narrative entry in a Captain's Ship's Log -- see Captain.recordShipLog. */
-export interface ShipLogEntry {
-  day: number;
-  text: string;
 }
 
 /**
@@ -239,7 +217,13 @@ export class Captain extends Sailor {
 
   destination: string | null = null;
   daysRemaining = 0;
-  cargo: CargoState | null = null;
+  /** Proxies `this.transport.cargo` -- cargo state lives on the Transport (see CargoState in transport.ts), not the Captain, so it survives a Captain being replaced/reassigned. Every other read/write site in this file keeps using `this.cargo` unchanged. */
+  get cargo(): CargoState | null {
+    return this.transport?.cargo ?? null;
+  }
+  set cargo(value: CargoState | null) {
+    if (this.transport !== null) this.transport.cargo = value;
+  }
   path: Route[] = [];
   private dailyFuelBurn = 0.0;
 

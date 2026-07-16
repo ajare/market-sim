@@ -105,6 +105,8 @@ const ROUTE_COLORS: Record<RouteType, string> = {
   Space: "#a855f7",
   Road: "#6b7280",
   Railroad: "#0891b2",
+  // Foot/porter trails -- distinct earthy olive-green from Land's brown.
+  Trail: "#65a30d",
 };
 
 /** Ship markers are colored by the operating Faction, not transport kind. */
@@ -498,15 +500,33 @@ function drawPlane(ctx: CanvasRenderingContext2D, x: number, y: number, r: numbe
   ctx.fill();
 }
 
+/** Hut -- Market (native villages). A filled triangular roof over a small rectangular base. */
+function drawHut(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+  const baseW = r * 1.2;
+  const baseH = r * 0.7;
+  const baseTop = y + r * 0.15;
+
+  ctx.fillStyle = color;
+  ctx.fillRect(x - baseW / 2, baseTop, baseW, baseH);
+
+  ctx.beginPath();
+  ctx.moveTo(x - baseW * 0.7, baseTop);
+  ctx.lineTo(x, y - r * 0.8);
+  ctx.lineTo(x + baseW * 0.7, baseTop);
+  ctx.closePath();
+  ctx.fill();
+}
+
 /**
  * Draws the icon for whichever terminal facility best represents this
  * Location, in priority order: fuel depots (their own category, tracked by
  * name rather than TerminalType) get a barrel; otherwise Airport (plane)
- * beats Wagon yard (wheel) beats Port/Platform (anchor, the two
- * Sea-compatible terminal types) -- picked so the rarer, more specific
- * terminal wins over the near-universal Port when a Location has more than
- * one (every non-depot Location has Port plus 0-2 others; only Platform is
- * mutually exclusive with every other type).
+ * beats Wagon yard (wheel) beats Market (hut) beats Port/Platform (anchor,
+ * the two Sea-compatible terminal types) -- picked so the rarer, more
+ * specific terminal wins over the near-universal Port when a Location has
+ * more than one (every non-depot Location has Port plus 0-2 others; only
+ * Platform is mutually exclusive with every other type; a village is
+ * Market-only in practice, so this ordering rarely matters for it).
  */
 function drawLocationIcon(
   ctx: CanvasRenderingContext2D,
@@ -520,6 +540,7 @@ function drawLocationIcon(
   if (isDepot) drawBarrel(ctx, x, y, r, color);
   else if (loc.terminalTypes.has("Airport")) drawPlane(ctx, x, y, r, color);
   else if (loc.terminalTypes.has("Wagon yard")) drawWheel(ctx, x, y, r, color);
+  else if (loc.terminalTypes.has("Market")) drawHut(ctx, x, y, r, color);
   else drawAnchor(ctx, x, y, r, color);
 }
 
@@ -1230,8 +1251,10 @@ export function NetworkView() {
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Sea }} />Sea route</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Land }} />Land route</span>
         <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Air }} />Air route</span>
+        <span><i className="legend-swatch" style={{ background: ROUTE_COLORS.Trail }} />Trail (foot/porter)</span>
         <span>
-          Anchor = Port · Barrel = Fuel depot · Wheel = Wagon yard · Plane = Airport (icon color = Political Entity)
+          Anchor = Port · Barrel = Fuel depot · Wheel = Wagon yard · Plane = Airport · Hut = Market (village)
+          (icon color = Political Entity)
         </span>
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.pirate }} />Pirates</span>
         <span><i className="legend-swatch" style={{ background: FACTION_COLORS.police }} />Police</span>

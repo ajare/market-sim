@@ -48,6 +48,60 @@
   color: #b00020;
 }
 
+.explorer-detail {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The first modal in the app -- see DecisionModal.tsx's own doc comment for
+   why this is a distinct, blocking overlay rather than the inline-panel/
+   popup style used everywhere else. */
+.decision-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.decision-modal {
+  max-width: 480px;
+  width: 90%;
+  padding: 20px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.decision-modal-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.decision-modal-choices button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 14px;
+}
+
+.decision-choice-label {
+  font-weight: 600;
+}
+
+.decision-choice-hint {
+  font-size: 12px;
+}
+
 .buy-ship-form {
   display: flex;
   align-items: center;

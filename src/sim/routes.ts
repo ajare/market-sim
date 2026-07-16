@@ -32,6 +32,9 @@ export const ROUTE_TYPE_DISTANCE_SCALE: Record<RouteType, number> = {
   // Surface haulage -- short-to-medium reach, like Land.
   Road: 0.5,
   Railroad: 0.6,
+  // Foot/porter travel -- shorter reach than Land; a party on foot doesn't
+  // cover the same ground a wagon does.
+  Trail: 0.3,
 };
 
 /** How far a control point may bow off the straight origin-destination line, as a fraction of that line's length. */

@@ -17,6 +17,8 @@ import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNa
 import { randomLocationName } from "./locationNames";
 import { NATIONALITY_POOLS, randomNationality, type Nationality } from "./nationality";
 import { Faction, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
+import type { Explorer } from "./explorer";
+import type { PendingDecision } from "./decisions";
 import { generateSailorPool, addToSailorPool, tickPoolPiracy } from "./sailorPool";
 import { locationSupportsTransport } from "./companyHome";
 import type { PoliticalEntity } from "./politicalEntity";
@@ -126,6 +128,8 @@ export interface WorldInit {
   weather?: WeatherSystem | null;
   /** Discrete storm/cyclone entities driven by `weather` -- see storms.ts. Null (default) if this World has no WeatherSystem to drive them (StormSystem needs one; the two are always constructed together). */
   storms?: StormSystem | null;
+  /** Exploration-mode expedition parties (see explorer.ts) -- empty by default, fully independent of the captains/factions/locations loops below. */
+  explorers?: Explorer[];
 }
 
 export { DEFAULT_START_DATE };
@@ -156,6 +160,18 @@ export class World {
   contractOptions: TenderContractsOptions;
   weather: WeatherSystem | null;
   storms: StormSystem | null;
+  /** Exploration-mode expedition parties -- see explorer.ts. Ticked once per day in runDay, fully independent of the captains/factions/locations loops. */
+  explorers: Explorer[];
+  /**
+   * A decision the player must resolve before the simulation can advance
+   * any further -- set by Explorer.arrive() on arrival at a Village (see
+   * decisions.ts's buildPassageTaxDecision) or by the UI's "Choose next leg"
+   * action (buildLegChoiceDecision). While non-null, runDay refuses to do
+   * anything at all (see its very first statement) -- companies, other
+   * captains, weather, everything pauses, not just the expedition. Cleared
+   * by whatever resolves the Choice (see useSimStore.resolveDecision).
+   */
+  pendingDecision: PendingDecision | null = null;
   /** Per-ship average starting cash, remembered from init.pirateStartingCash so addPirateShip can give a freshly recruited ship the same average stake as the initial fleet. */
   private pirateShipStartingCash: number;
   /**
@@ -274,6 +290,7 @@ export class World {
 
     this.captains = [...(init.traders ?? []), ...this.factions.flatMap((f) => f.captains)];
     this.agentOrderFn = init.agentOrderFn ?? randomAgentOrder;
+    this.explorers = init.explorers ?? [];
 
     for (const location of init.locations) {
       for (const commodity of Object.keys(location.producedCommodities)) {
@@ -817,8 +834,16 @@ export class World {
     return this.combinedHistory;
   }
 
-  /** Advance the simulation by exactly one day, tracking its own day counter across calls. */
+  /**
+   * Advance the simulation by exactly one day, tracking its own day counter
+   * across calls. A no-op while pendingDecision is set -- doesn't advance
+   * nextDay/currentDate either, not just runDay's own internal work,
+   * matching "the day counter is frozen" while a decision is pending (see
+   * pendingDecision's own doc comment). Returns the last-completed day
+   * number unchanged in that case (0 if no day has ever completed yet).
+   */
   step(): number {
+    if (this.pendingDecision !== null) return this.nextDay - 1;
     const commoditiesPresent = this.commoditiesPresent();
     this.runDay(this.nextDay, commoditiesPresent);
     this.nextDay += 1;
@@ -826,6 +851,12 @@ export class World {
   }
 
   private runDay(day: number, commoditiesPresent: string[]): void {
+    // A pending exploration decision pauses EVERYTHING -- the whole day is a
+    // no-op (companies, other captains, weather, all of it) until the
+    // player resolves it. Must be the very first check, before anything
+    // else in this method runs. See pendingDecision's own doc comment.
+    if (this.pendingDecision !== null) return;
+
     // Contracts are pruned/tendered at the very start of the day, before any
     // Faction acts, against yesterday's closing stockpile levels -- so
     // Factions see today's fresh offers (and never a stale/expired one).
@@ -1000,5 +1031,12 @@ export class World {
     // the post-act() cleanup above), so it already got its own final entry
     // written directly by Faction.sinkAtSea/sinkInPort instead.
     for (const captain of this.captains) captain.recordShipLog(day);
+
+    // Exploration-mode expedition parties -- a fully independent pass, not
+    // folded into the captains/factions loops above. May itself set
+    // `this.pendingDecision` on arrival at a Village (see Explorer.arrive),
+    // which simply means the NEXT runDay call (not this one) is the one
+    // that pauses.
+    for (const explorer of this.explorers) explorer.tick(day, this);
   }
 }

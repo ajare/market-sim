@@ -15,7 +15,7 @@ import { Commodity, COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType 
 import { Location, type TerminalType } from "./location";
 import { Route, addRouteToNetwork, type Point, type RouteType } from "./routes";
 import { PoliticalEntity, type PoliticalEntityType } from "./politicalEntity";
-import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, SHIP_CLASSES, type Transport } from "./transport";
+import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, PorterParty, SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
 import { Company, SoloTrader, type Faction, type FleetCrew } from "./faction";
 import { World } from "./world";
@@ -31,7 +31,10 @@ import {
   DEFAULT_WEATHER_PROFILE_NAME, isWeatherProfileName, type WeatherProfileName,
 } from "@market-sim/shared";
 import { Rng } from "./rng";
-import { randomGender, randomPersonName } from "./names";
+import { randomGender, randomPersonName, type Gender } from "./names";
+import { Chieftain } from "./chieftain";
+import { Explorer } from "./explorer";
+import type { SettlementType } from "./location";
 import { randomShipName } from "./shipNames";
 import { randomCompanyName } from "./companyNames";
 import {
@@ -103,6 +106,34 @@ interface JsonLocation {
   basePriceModifiers: Record<string, number>;
   fuelPrice: number;
   terminalTypes: string[];
+  /** Settlement scale (exploration mode) -- absent/unrecognized falls back to Location's own "Town" default. */
+  settlementType?: string;
+  /** This Location's personal ruler (exploration mode, e.g. a native village's chieftain) -- absent for every Location without one. */
+  ruler?: JsonChieftain;
+}
+
+/** A Location's personally-ruling authority (exploration mode) -- see chieftain.ts. */
+interface JsonChieftain {
+  name: string;
+  /** Absent defaults to "Male" -- the editor doesn't author a ruler's gender/birth date today, this is display-only. */
+  gender?: string;
+  /** ISO 8601 date string. Absent defaults to a fixed placeholder birth date. */
+  dateOfBirth?: string;
+  passageTaxRate?: number;
+  trust?: number;
+  giftCategories?: string[];
+}
+
+/** An expedition party (exploration mode) -- see explorer.ts. */
+interface JsonExplorer {
+  name: string;
+  /** The editor-id of this Explorer's home Location -- skipped (with every other Explorer still loaded) if it doesn't resolve to a real Location. */
+  homeLocationId: string;
+  gender?: string;
+  dateOfBirth?: string;
+  porterCount?: number;
+  animalCount?: number;
+  startingCash?: number;
 }
 
 interface JsonPoliticalEntity {
@@ -184,10 +215,16 @@ interface JsonWorld {
   politicalEntities?: JsonPoliticalEntity[];
   companies?: JsonCompany[];
   routes?: JsonRoute[];
+  /** Exploration-mode expedition parties -- absent/omitted for every pre-exploration World JSON, which loads with an empty World.explorers exactly as before. */
+  explorers?: JsonExplorer[];
 }
 
-const VALID_POLITICAL_ENTITY_TYPES = new Set<PoliticalEntityType>(["Universal", "Planet", "Country", "State"]);
-const VALID_ROUTE_TYPES = new Set<RouteType>(["Land", "Air", "Sea", "Space", "Road", "Railroad"]);
+const VALID_POLITICAL_ENTITY_TYPES = new Set<PoliticalEntityType>(["Universal", "Planet", "Country", "State", "Tribe"]);
+const VALID_ROUTE_TYPES = new Set<RouteType>(["Land", "Air", "Sea", "Space", "Road", "Railroad", "Trail"]);
+const VALID_SETTLEMENT_TYPES = new Set<SettlementType>(["Village", "Town", "City"]);
+const VALID_GENDERS = new Set<Gender>(["Male", "Female"]);
+/** Placeholder birth date for a JSON-authored Chieftain/Explorer with no dateOfBirth -- the editor doesn't author one today; only age display is affected. */
+const DEFAULT_PERSON_BIRTH_DATE = "1950-01-01";
 
 /** Share of the required ship count that should be crewed by (1-ship) Independent SoloTraders -- see the fleet-synthesis block. */
 const SOLO_TRADER_FRACTION = 0.2;
@@ -198,6 +235,14 @@ const SYNTH_FLEET_SEED = 4242;
 
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function resolveGender(gender: string | undefined): Gender {
+  return VALID_GENDERS.has(gender as Gender) ? (gender as Gender) : "Male";
+}
+
+function resolveBirthDate(dateOfBirth: string | undefined): Date {
+  return new Date(dateOfBirth ?? DEFAULT_PERSON_BIRTH_DATE);
 }
 
 /** Instantiates the Transport subclass named by the editor's TransportType. Defaults to a Ship for an unrecognized type rather than failing the whole load. `speedScale` rescales the class default speed for this world's effective map size -- see transportSpeedScale below. */
@@ -218,6 +263,9 @@ function makeTransport(transportType: string, name: string, speedScale: number):
       break;
     case "FreightTrain":
       transport = new FreightTrain({ name });
+      break;
+    case "PorterParty":
+      transport = new PorterParty({ name });
       break;
     default:
       transport = new Ship({ name });
@@ -282,6 +330,19 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   const locations: Location[] = jsonLocations.map((loc) => {
     idToName.set(loc.id, loc.name);
     coordinates[loc.name] = [loc.x, loc.y];
+    const settlementType = VALID_SETTLEMENT_TYPES.has(loc.settlementType as SettlementType)
+      ? (loc.settlementType as SettlementType)
+      : undefined;
+    const ruler = loc.ruler !== undefined
+      ? new Chieftain({
+          name: loc.ruler.name,
+          gender: resolveGender(loc.ruler.gender),
+          dateOfBirth: resolveBirthDate(loc.ruler.dateOfBirth),
+          passageTaxRate: loc.ruler.passageTaxRate,
+          trust: loc.ruler.trust,
+          giftCategories: loc.ruler.giftCategories,
+        })
+      : undefined;
     return new Location({
       name: loc.name,
       producedCommodities: { ...loc.producedCommodities },
@@ -291,6 +352,8 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
       basePriceModifiers: { ...loc.basePriceModifiers },
       fuelPrice: loc.fuelPrice,
       terminalTypes: new Set(loc.terminalTypes as TerminalType[]),
+      settlementType,
+      ruler,
     });
   });
   setGeography(locations, coordinates);
@@ -552,6 +615,28 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   }
   factions.push(...soloFactions, ...newSoloTraders);
 
+  // 5d. Build exploration-mode Explorers -- independent of the merchant
+  // fleet above; each just needs its home Location to already exist (from
+  // step 2). An Explorer whose homeLocationId doesn't resolve is skipped
+  // (with every other one still loaded) rather than aborting the whole load.
+  const jsonExplorers = asArray<JsonExplorer>(world.explorers);
+  const explorers: Explorer[] = [];
+  for (const e of jsonExplorers) {
+    const homeLocationName = idToName.get(e.homeLocationId);
+    const homeLocation = homeLocationName !== undefined ? getLocation(homeLocationName) : undefined;
+    if (homeLocation === undefined) continue;
+    explorers.push(
+      new Explorer({
+        name: e.name,
+        gender: resolveGender(e.gender),
+        dateOfBirth: resolveBirthDate(e.dateOfBirth),
+        homeLocation,
+        transport: new PorterParty({ porterCount: e.porterCount, animalCount: e.animalCount }),
+        startingCash: e.startingCash,
+      }),
+    );
+  }
+
   // 6. Assemble the World. Pirates/police default to the same calibrated
   // counts buildWorld itself uses (the editor doesn't author them, but a
   // loaded World should still run with the same economy-shaping presence) --
@@ -563,6 +648,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   const builtWorld = new World({
     locations,
     factions,
+    explorers,
     seed: options.seed,
     startDate: world.startDate,
     numPirateShips,

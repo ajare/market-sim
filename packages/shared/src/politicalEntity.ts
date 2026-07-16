@@ -6,8 +6,8 @@
  * type/constants trio is identical between the two; the rest of the shape
  * genuinely diverges and stays local to each side.
  */
-export type PoliticalEntityType = "Universal" | "Planet" | "Country" | "State";
+export type PoliticalEntityType = "Universal" | "Planet" | "Country" | "State" | "Tribe";
 
-export const POLITICAL_ENTITY_TYPES: PoliticalEntityType[] = ["Universal", "Planet", "Country", "State"];
+export const POLITICAL_ENTITY_TYPES: PoliticalEntityType[] = ["Universal", "Planet", "Country", "State", "Tribe"];
 
 export const DEFAULT_POLITICAL_ENTITY_TYPE: PoliticalEntityType = "Universal";
