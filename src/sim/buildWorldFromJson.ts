@@ -17,7 +17,7 @@ import { Route, addRouteToNetwork, type Point, type RouteType } from "./routes";
 import { PoliticalEntity, type PoliticalEntityType } from "./politicalEntity";
 import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, PorterParty, SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
-import { Company, SoloTrader, type Faction, type FleetCrew } from "./faction";
+import { Company, SoloTrader, ExpeditionParty, type Faction, type FleetCrew } from "./faction";
 import { World } from "./world";
 import {
   setCommodities, setGeography, setDistanceConfig, getLocation, COORDINATE_SPREAD, setWorldStartDate,
@@ -135,6 +135,10 @@ interface JsonExplorer {
   porterCount?: number;
   animalCount?: number;
   startingCash?: number;
+  /** Whether this expedition trades/moves autonomously (see faction.ts's ExpeditionParty.directFleet) instead of waiting on the player's manual UI actions. Absent/omitted defaults to false (player-controlled), matching every pre-Round-B World JSON. */
+  aiControlled?: boolean;
+  /** The PoliticalEntity this ExpeditionParty is affiliated with, or null/absent for an independent operator. */
+  politicalEntityId?: string | null;
 }
 
 interface JsonPoliticalEntity {
@@ -616,26 +620,27 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   }
   factions.push(...soloFactions, ...newSoloTraders);
 
-  // 5d. Build exploration-mode Explorers -- independent of the merchant
-  // fleet above; each just needs its home Location to already exist (from
-  // step 2). An Explorer whose homeLocationId doesn't resolve is skipped
-  // (with every other one still loaded) rather than aborting the whole load.
+  // 5d. Build exploration-mode ExpeditionParties -- independent of the
+  // merchant fleet above; each just needs its home Location to already exist
+  // (from step 2). One whose homeLocationId doesn't resolve is skipped (with
+  // every other one still loaded) rather than aborting the whole load.
   const jsonExplorers = asArray<JsonExplorer>(world.explorers);
-  const explorers: Explorer[] = [];
+  const expeditionParties: ExpeditionParty[] = [];
   for (const e of jsonExplorers) {
     const homeLocationName = idToName.get(e.homeLocationId);
     const homeLocation = homeLocationName !== undefined ? getLocation(homeLocationName) : undefined;
     if (homeLocation === undefined) continue;
-    explorers.push(
-      new Explorer({
-        name: e.name,
-        gender: resolveGender(e.gender),
-        dateOfBirth: resolveBirthDate(e.dateOfBirth),
-        homeLocation,
-        transport: new PorterParty({ porterCount: e.porterCount, animalCount: e.animalCount }),
-        startingCash: e.startingCash,
-      }),
-    );
+    const explorer = new Explorer({
+      name: e.name,
+      gender: resolveGender(e.gender),
+      dateOfBirth: resolveBirthDate(e.dateOfBirth),
+      homeLocation,
+      transport: new PorterParty({ porterCount: e.porterCount, animalCount: e.animalCount }),
+      startingCash: e.startingCash,
+    });
+    const party = new ExpeditionParty(`${e.name}'s Expedition`, explorer, { aiControlled: e.aiControlled ?? false });
+    party.politicalEntity = e.politicalEntityId != null ? entityByJsonId.get(e.politicalEntityId) ?? null : null;
+    expeditionParties.push(party);
   }
 
   // 6. Assemble the World. Pirates/police default to the same calibrated
@@ -649,7 +654,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   const builtWorld = new World({
     locations,
     factions,
-    explorers,
+    expeditionParties,
     seed: options.seed,
     startDate: world.startDate,
     numPirateShips,

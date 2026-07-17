@@ -432,6 +432,26 @@ export function distanceBetween(locationA: string, locationB: string): number {
 }
 
 /**
+ * "Clockwise from north" heading (degrees [0,360)) from one Location's
+ * position toward another -- the same convention as WeatherSystem.
+ * windDirection's "arrow points this way" (see weather.ts), so a heading and
+ * a wind direction can be compared directly. Flat world-coordinate math
+ * (unlike distance.ts's own globe-mode bearing() helper) since wind is
+ * already a flat-map noise field, not a spherical quantity. Returns null if
+ * either Location's coordinates are missing (defensive; not expected for a
+ * real path/route origin or destination).
+ */
+export function headingBetween(fromName: string, toName: string): number | null {
+  const from = LOCATION_COORDINATES[fromName];
+  const to = LOCATION_COORDINATES[toName];
+  if (from === undefined || to === undefined) return null;
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+  return deg < 0 ? deg + 360 : deg;
+}
+
+/**
  * Distance between two world-coordinate points under the active DISTANCE_CONFIG
  * (see distance.ts) -- the stored coordinates are world units, matching
  * worldDistance's convention (in flat mode, worldScale 1 by default, this is

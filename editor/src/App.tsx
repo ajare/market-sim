@@ -12,6 +12,7 @@ import { LocationInspector } from "./components/LocationInspector";
 import { RouteInspector } from "./components/RouteInspector";
 import { CommoditiesPanel } from "./components/CommoditiesPanel";
 import { CompaniesPanel } from "./components/CompaniesPanel";
+import { ExplorerPartiesPanel } from "./components/ExplorerPartiesPanel";
 import { PoliticalEntitiesPanel } from "./components/PoliticalEntitiesPanel";
 import { worldToJson, parseWorldJson, saveJsonWithDialog } from "./worldJson";
 import "./App.css";
@@ -29,6 +30,7 @@ function App() {
   const commodities = useEditorStore((s) => s.commodities);
   const companies = useEditorStore((s) => s.companies);
   const routes = useEditorStore((s) => s.routes);
+  const explorers = useEditorStore((s) => s.explorers);
   const loadWorld = useEditorStore((s) => s.loadWorld);
   const selectedRouteId = useEditorStore((s) => s.selectedRouteId);
   const backgroundImage = useEditorStore((s) => s.backgroundImage);
@@ -43,7 +45,7 @@ function App() {
   function currentWorldJson(): string {
     return worldToJson({
       worldScale, distanceMode, globeRadius, globeLonSpan, distanceUnit, weatherProfile, startDate,
-      politicalEntities, locations, commodities, companies, routes,
+      politicalEntities, locations, commodities, companies, routes, explorers,
     });
   }
 
@@ -153,6 +155,7 @@ function App() {
           <LocationList />
           <CommoditiesPanel />
           <CompaniesPanel />
+          <ExplorerPartiesPanel />
         </aside>
         <main className="canvas-area">
           <WorldCanvas />

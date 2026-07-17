@@ -110,79 +110,72 @@ export const FAMOUS_HISTORICAL_PORTS: string[] = [
 ];
 
 /**
- * Goods traded in the Caribbean during the Golden Age of Piracy (c. 1650-1730),
- * with a suitable base price each (cheap staples through high-value luxuries).
- * Used by the "add trade good" button in the Commodities panel to seed a
- * new Commodity with a plausible name and price.
+ * Suggested trade goods, one unified pool spanning both the Golden Age of
+ * Piracy Caribbean trade (c. 1650-1730) and the mid-19th-century exploration
+ * mode's native-village/Western-explorer trade (see doc/ExploreGame.md's
+ * Trade/Agriculture/Flora/Common-illnesses sections) -- each with a suitable
+ * base price (cheap staples through high-value luxuries), sorted low to high
+ * so the two eras' goods interleave into one coherent price curve rather than
+ * reading as two separate catalogs. Bulk foodstuffs and raw trade-good inputs
+ * (salt, cowrie shells/beads, cheap to source in quantity even though the
+ * latter are the natives' own currency) sit at the bottom; industrial/dye/
+ * ornamental materials in the middle; goods with strong or urgent demand at
+ * the top -- ivory/pearls (luxury manufacturing/jewelry), vanilla (a costly
+ * spice), and quinine (a refined cinchona-bark extract, priced highest of
+ * all: not just a trade good but the only real treatment for malaria, see
+ * ExploreGame.md's Common illnesses section -- explorers need it to survive,
+ * not just to sell). Used by the "add trade good" button in the Commodities
+ * panel to seed a new Commodity with a plausible name and price -- one set
+ * to choose from, not a Caribbean-vs-exploration split.
  */
-export const CARIBBEAN_COMMODITIES: { name: string; basePrice: number; type: CommodityType }[] = [
-  { name: "Salt", basePrice: 8, type: "Foodstuff" },
-  { name: "Rice", basePrice: 14, type: "Foodstuff" },
-  { name: "Molasses", basePrice: 18, type: "Foodstuff" },
-  { name: "Hides", basePrice: 24, type: "Textile" },
-  { name: "Sugar", basePrice: 30, type: "Foodstuff" },
-  { name: "Ginger", basePrice: 34, type: "Foodstuff" },
-  { name: "Cotton", basePrice: 38, type: "Textile" },
-  { name: "Pimento", basePrice: 42, type: "Foodstuff" },
-  { name: "Rum", basePrice: 46, type: "Foodstuff" },
-  { name: "Tobacco", basePrice: 52, type: "Foodstuff" },
-  { name: "Coffee", basePrice: 56, type: "Foodstuff" },
-  { name: "Cacao", basePrice: 60, type: "Foodstuff" },
-  { name: "Logwood", basePrice: 66, type: "General" },
-  { name: "Mahogany", basePrice: 72, type: "General" },
-  { name: "Indigo", basePrice: 82, type: "Textile" },
-  { name: "Gunpowder", basePrice: 90, type: "General" },
-  { name: "Cochineal", basePrice: 110, type: "Textile" },
-  { name: "Tortoiseshell", basePrice: 125, type: "General" },
-  { name: "Silver", basePrice: 210, type: "Precious" },
-  { name: "Pearls", basePrice: 300, type: "Precious" },
-  { name: "Gold", basePrice: 520, type: "Precious" },
-];
-
-/**
- * Goods traded between native villages and European explorers/settlers in
- * the mid-19th-century exploration mode (see doc/ExploreGame.md's Trade/
- * Agriculture/Flora/Common-illnesses sections) -- priced from a Western
- * merchant's perspective, on the same 6-520 scale as CARIBBEAN_COMMODITIES
- * (interleaved with it deliberately, so combining both pools in one World
- * still reads as a coherent price curve). Bulk foodstuffs and raw trade-good
- * inputs (cowrie shells/beads, cheap to source in quantity even though
- * they're the natives' own currency) sit at the bottom; industrial/dye/
- * ornamental materials in the middle; goods with strong or urgent Western
- * demand at the top -- ivory (luxury manufacturing), vanilla (the era's
- * costliest spice), and quinine (a refined cinchona-bark extract, priced
- * highest of all: not just a trade good but the only real treatment for
- * malaria, see ExploreGame.md's Common illnesses section -- explorers need
- * it to survive, not just to sell). Used by the "add trade good" button in
- * the Commodities panel, same as CARIBBEAN_COMMODITIES.
- */
-export const EXPLORATION_COMMODITIES: { name: string; basePrice: number; type: CommodityType }[] = [
+export const PRESET_COMMODITIES: { name: string; basePrice: number; type: CommodityType }[] = [
   { name: "Cowrie shells", basePrice: 6, type: "General" },
+  { name: "Salt", basePrice: 8, type: "Foodstuff" },
   { name: "Millet", basePrice: 9, type: "Foodstuff" },
   { name: "Sweet potato", basePrice: 10, type: "Foodstuff" },
   { name: "Manioc", basePrice: 11, type: "Foodstuff" },
   { name: "Maize", basePrice: 12, type: "Foodstuff" },
   { name: "Pumpkin", basePrice: 13, type: "Foodstuff" },
+  { name: "Rice", basePrice: 14, type: "Foodstuff" },
   { name: "Blue beads", basePrice: 15, type: "General" },
   { name: "Yam", basePrice: 16, type: "Foodstuff" },
   { name: "Breadfruit", basePrice: 17, type: "Foodstuff" },
+  { name: "Molasses", basePrice: 18, type: "Foodstuff" },
   { name: "Okra", basePrice: 19, type: "Foodstuff" },
   { name: "Plantain", basePrice: 20, type: "Foodstuff" },
   { name: "Mango", basePrice: 21, type: "Foodstuff" },
   { name: "Pawpaw", basePrice: 22, type: "Foodstuff" },
+  { name: "Hides", basePrice: 24, type: "Textile" },
   { name: "Oranges", basePrice: 26, type: "Foodstuff" },
+  { name: "Sugar", basePrice: 30, type: "Foodstuff" },
   { name: "Cannabis", basePrice: 32, type: "General" },
+  { name: "Ginger", basePrice: 34, type: "Foodstuff" },
+  { name: "Cotton", basePrice: 38, type: "Textile" },
   { name: "Pineapple", basePrice: 40, type: "Foodstuff" },
+  { name: "Pimento", basePrice: 42, type: "Foodstuff" },
+  { name: "Rum", basePrice: 46, type: "Foodstuff" },
   { name: "Tin", basePrice: 49, type: "Metal" },
+  { name: "Tobacco", basePrice: 52, type: "Foodstuff" },
+  { name: "Coffee", basePrice: 56, type: "Foodstuff" },
   { name: "Furs", basePrice: 58, type: "Textile" },
+  { name: "Cacao", basePrice: 60, type: "Foodstuff" },
+  { name: "Logwood", basePrice: 66, type: "General" },
   { name: "Ebony", basePrice: 69, type: "General" },
+  { name: "Mahogany", basePrice: 72, type: "General" },
+  { name: "Indigo", basePrice: 82, type: "Textile" },
   { name: "Rubber", basePrice: 86, type: "General" },
+  { name: "Gunpowder", basePrice: 90, type: "General" },
   { name: "Cinchona bark", basePrice: 100, type: "General" },
+  { name: "Cochineal", basePrice: 110, type: "Textile" },
   { name: "Cobalt", basePrice: 118, type: "Metal" },
+  { name: "Tortoiseshell", basePrice: 125, type: "General" },
   { name: "Amber", basePrice: 160, type: "Precious" },
   { name: "Vanilla", basePrice: 190, type: "General" },
+  { name: "Silver", basePrice: 210, type: "Precious" },
   { name: "Ivory", basePrice: 250, type: "General" },
+  { name: "Pearls", basePrice: 300, type: "Precious" },
   { name: "Quinine", basePrice: 340, type: "General" },
+  { name: "Gold", basePrice: 520, type: "Precious" },
 ];
 
 /** A trading Faction -- mirrors src/sim/faction.ts's Company (TS-only, no Python original). The editor only needs name/starting funds/fleet/home Location; captain strategy params are a simulation-runtime concern. */
@@ -211,6 +204,35 @@ export function factionType(fleet: readonly EditorFleetMember[]): FactionType {
   return fleet.length === 1 ? "SoloTrader" : "Company";
 }
 
+/**
+ * A Location's personal ruler (exploration mode) -- mirrors src/sim/chieftain.ts's
+ * Chieftain. When present, this authority's passage-tax terms take precedence
+ * over the owning PoliticalEntity's for diplomacy decisions. The editor
+ * doesn't author gender/date of birth (display-only in the sim, defaulted
+ * there -- see buildWorldFromJson.ts's resolveGender/resolveBirthDate).
+ */
+export interface EditorChieftain {
+  name: string;
+  /** Fraction (0-1) of the party's cash/value demanded as passage tax on arrival. */
+  passageTaxRate: number;
+  /** [0, 1] -- persistent trust toward the player's party. */
+  trust: number;
+  /** Commodity names this chieftain will accept as a gift/tribute in place of cash. */
+  giftCategories: string[];
+}
+
+export const DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE = 0.1;
+export const DEFAULT_CHIEFTAIN_TRUST = 0.5;
+
+export function createChieftain(name: string): EditorChieftain {
+  return {
+    name,
+    passageTaxRate: DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE,
+    trust: DEFAULT_CHIEFTAIN_TRUST,
+    giftCategories: [],
+  };
+}
+
 export interface EditorLocation {
   id: string;
   name: string;
@@ -230,7 +252,31 @@ export interface EditorLocation {
   terminalTypes: TerminalType[];
   /** Settlement scale (exploration mode) -- orthogonal to terminalTypes, purely a scale/presentation classification. Defaults to "Town" (see createLocation). */
   settlementType: SettlementType;
+  /** This Location's personal ruler (exploration mode), or null for none -- see EditorChieftain. */
+  ruler: EditorChieftain | null;
 }
+
+/**
+ * An expedition party (exploration mode) -- mirrors src/sim/faction.ts's
+ * ExpeditionParty (the Faction) wrapping src/sim/explorer.ts's Explorer.
+ * Carries nothing personally (its trade goods live on its PorterParty
+ * transport, sized from porterCount/animalCount -- see buildWorldFromJson.ts).
+ */
+export interface EditorExplorer {
+  id: string;
+  name: string;
+  /** The Location (by id) this Explorer starts at. */
+  homeLocationId: string;
+  porterCount: number;
+  animalCount: number;
+  startingCash: number;
+  /** The PoliticalEntity this ExpeditionParty is affiliated with, or null for an independent operator (mirrors EditorCompany.politicalEntityId) -- set via the ExplorerPartiesPanel, same as a Company's. */
+  politicalEntityId: string | null;
+}
+
+export const DEFAULT_EXPLORER_PORTER_COUNT = 4;
+export const DEFAULT_EXPLORER_ANIMAL_COUNT = 0;
+export const DEFAULT_EXPLORER_STARTING_CASH = 500;
 
 /** A user-placed bend in a Route's path between its two Locations -- created/moved by shift-dragging on the Route (see WorldCanvas). Mirrors src/sim/routes.ts's Bezier control points; the Route is rendered as a sampled Bezier curve through them (see routeRenderPoints). */
 export interface RouteControlPoint {
@@ -317,5 +363,6 @@ export function createLocation(
     fuelPrice: 1,
     terminalTypes: [],
     settlementType: DEFAULT_SETTLEMENT_TYPE,
+    ruler: null,
   };
 }

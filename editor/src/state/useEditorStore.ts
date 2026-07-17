@@ -5,10 +5,12 @@
  */
 import { create } from "zustand";
 import {
-  createLocation, compatibleRouteTypes, factionType,
+  createLocation, createChieftain, compatibleRouteTypes, factionType,
   DEFAULT_COMMODITY_RATE, DEFAULT_COMMODITY_TYPE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
+  DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH,
   ROUTE_TERMINAL_COMPATIBILITY,
-  type Commodity, type CommodityField, type CommodityType, type EditorCompany, type EditorFleetMember, type EditorRoute,
+  type Commodity, type CommodityField, type CommodityType, type EditorChieftain, type EditorCompany,
+  type EditorExplorer, type EditorFleetMember, type EditorRoute,
   type PoliticalEntity, type PoliticalEntityType, type EditorLocation, type RouteType, type TerminalType, type TransportType,
 } from "../types";
 import { DEFAULT_START_DATE, type EditorWorld } from "../worldJson";
@@ -27,6 +29,7 @@ let nextRouteId = 1;
 let nextRouteControlPointId = 1;
 let nextCompanyId = 1;
 let nextFleetMemberId = 1;
+let nextExplorerId = 1;
 
 /** Highest numeric suffix among ids of the form `${prefix}${n}`, plus one -- so a fresh id minted after an import can't collide with an imported one. Returns 1 if none match. */
 function nextIdAfter(ids: Iterable<string>, prefix: string): number {
@@ -119,6 +122,13 @@ interface EditorStore {
   selectLocation: (id: string | null) => void;
   toggleTerminalType: (id: string, terminal: TerminalType) => void;
 
+  /** Adds/removes a Location's personal ruler (exploration mode) -- `true` installs a freshly created Chieftain (see createChieftain), `false` clears it back to null. No-op if the Location doesn't exist. */
+  setLocationHasRuler: (id: string, hasRuler: boolean) => void;
+  /** Edits fields on a Location's existing ruler -- no-op if the Location has none. */
+  updateLocationRuler: (id: string, patch: Partial<EditorChieftain>) => void;
+  /** Toggles a commodity in a Location's ruler's giftCategories -- no-op if the Location has no ruler. */
+  toggleRulerGiftCategory: (id: string, commodity: string) => void;
+
   /** The currently selected Route, shown in the RouteInspector panel; null when none is selected. Selecting a Route clears any selected Location and vice versa -- only one thing is inspected at a time. */
   selectedRouteId: string | null;
   selectRoute: (id: string | null) => void;
@@ -168,11 +178,13 @@ interface EditorStore {
   /** Companies defined for this World -- captain strategy params and home location aren't modeled in the editor, just name, starting funds, and a fleet of (Transport type/name, Captain name) pairs. */
   companies: EditorCompany[];
   addCompany: (name: string, startingFunds?: number) => void;
-  /** Creates a Company with a pre-generated name and fleet in one shot (see CompaniesPanel's nationality generator) -- ids for the company and each fleet member are assigned here. */
+  /** Creates a Company with a pre-generated name and fleet in one shot (see CompaniesPanel's nationality generator) -- ids for the company and each fleet member are assigned here. `homeLocationId` is ignored (stored as null) for a 1-ship fleet, which is always a SoloTrader. */
   addGeneratedCompany: (
     name: string,
     members: Array<{ transportType: TransportType; transportName: string; captainName: string }>,
     startingFunds?: number,
+    politicalEntityId?: string | null,
+    homeLocationId?: string | null,
   ) => void;
   updateCompanyName: (id: string, name: string) => void;
   updateCompanyStartingFunds: (id: string, startingFunds: number) => void;
@@ -184,6 +196,13 @@ interface EditorStore {
   /** Adds a Captain/Transport pair to a Company's fleet -- no-op if the Company doesn't exist. */
   addFleetMember: (companyId: string, transportType: TransportType, transportName: string, captainName: string) => void;
   removeFleetMember: (companyId: string, memberId: string) => void;
+
+  /** Expedition parties for this World (exploration mode) -- independent of Companies/PoliticalEntities, each just needs a home Location. */
+  explorers: EditorExplorer[];
+  /** Creates an Explorer at `homeLocationId` with default porter/animal counts and starting cash -- no-op if that Location doesn't exist. */
+  addExplorer: (name: string, homeLocationId: string, politicalEntityId?: string | null) => void;
+  updateExplorer: (id: string, patch: Partial<EditorExplorer>) => void;
+  removeExplorer: (id: string) => void;
 }
 
 const COMMODITY_FIELDS: CommodityField[] = [
@@ -311,6 +330,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     );
     nextCompanyId = nextIdAfter(world.companies.map((c) => c.id), "company-");
     nextFleetMemberId = nextIdAfter(world.companies.flatMap((c) => c.fleet.map((m) => m.id)), "fleet-");
+    nextExplorerId = nextIdAfter(world.explorers.map((e) => e.id), "explorer-");
 
     // Normalize company affiliation: default a missing politicalEntityId (older
     // files predating this field) to null, and drop any affiliation pointing at
@@ -327,6 +347,19 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }));
     const companies = refreshCompanyHomeLocations(companiesWithEntity, locations);
 
+    // An Explorer whose homeLocationId doesn't resolve to a Location in this
+    // World is dropped rather than left dangling (mirrors buildWorldFromJson.ts's
+    // own skip-on-unresolved behavior for the same field). Its political
+    // affiliation is normalized the same way a Company's is, just above --
+    // missing or dangling defaults to null (Independent).
+    const locationIds = new Set(locations.map((loc) => loc.id));
+    const explorers = world.explorers
+      .filter((e) => locationIds.has(e.homeLocationId))
+      .map((e) => ({
+        ...e,
+        politicalEntityId: e.politicalEntityId != null && entityIds.has(e.politicalEntityId) ? e.politicalEntityId : null,
+      }));
+
     set({
       worldScale,
       distanceMode: world.distanceMode,
@@ -340,6 +373,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       commodities: world.commodities,
       companies,
       routes: world.routes,
+      explorers,
       selectedId: null,
       selectedRouteId: null,
     });
@@ -383,6 +417,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         // Any Company whose home Location was this one gets a freshly
         // recomputed default (see companyHome.ts) rather than dangling.
         companies: refreshCompanyHomeLocations(s.companies, locations),
+        // An Explorer has no fallback home Location (unlike a Company) --
+        // deleting its home Location deletes the Explorer along with it.
+        explorers: s.explorers.filter((e) => e.homeLocationId !== id),
         selectedId: s.selectedId === id ? null : s.selectedId,
         selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
       };
@@ -433,6 +470,34 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedRouteId: routes.some((r) => r.id === s.selectedRouteId) ? s.selectedRouteId : null,
       };
     }),
+
+  setLocationHasRuler: (id, hasRuler) =>
+    set((s) => ({
+      locations: s.locations.map((loc) => {
+        if (loc.id !== id) return loc;
+        return { ...loc, ruler: hasRuler ? createChieftain(`Chief ${loc.name}`) : null };
+      }),
+    })),
+
+  updateLocationRuler: (id, patch) =>
+    set((s) => ({
+      locations: s.locations.map((loc) => {
+        if (loc.id !== id || loc.ruler === null) return loc;
+        return { ...loc, ruler: { ...loc.ruler, ...patch } };
+      }),
+    })),
+
+  toggleRulerGiftCategory: (id, commodity) =>
+    set((s) => ({
+      locations: s.locations.map((loc) => {
+        if (loc.id !== id || loc.ruler === null) return loc;
+        const has = loc.ruler.giftCategories.includes(commodity);
+        const giftCategories = has
+          ? loc.ruler.giftCategories.filter((c) => c !== commodity)
+          : [...loc.ruler.giftCategories, commodity];
+        return { ...loc, ruler: { ...loc.ruler, giftCategories } };
+      }),
+    })),
 
   routes: [],
 
@@ -611,6 +676,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   commodities: [],
   companies: [],
+  explorers: [],
 
   addCommodity: (name: string, basePrice = 0, type = DEFAULT_COMMODITY_TYPE) =>
     set((s) => {
@@ -695,17 +761,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         ],
       };
     }),
-  addGeneratedCompany: (name, members, startingFunds = DEFAULT_COMPANY_STARTING_FUNDS) =>
+  addGeneratedCompany: (name, members, startingFunds = DEFAULT_COMPANY_STARTING_FUNDS, politicalEntityId = null, homeLocationId = null) =>
     set((s) => {
       const fleet: EditorFleetMember[] = members.map((m) => ({ id: `fleet-${nextFleetMemberId++}`, ...m }));
-      // A 1-ship generated fleet is a SoloTrader (no home port) -- anything
-      // else needs one, defaulted the same way a plain addCompany's does.
-      const homeLocationId =
-        fleet.length === 1 ? null : defaultCompanyHomeLocation(null, s.locations, members.map((m) => m.transportType));
+      // A 1-ship generated fleet is a SoloTrader (no home port) regardless of
+      // what was passed in -- anything else falls back to the computed
+      // default if the caller didn't supply one explicitly.
+      const resolvedHomeLocationId =
+        fleet.length === 1
+          ? null
+          : homeLocationId ?? defaultCompanyHomeLocation(politicalEntityId, s.locations, members.map((m) => m.transportType));
       return {
         companies: [
           ...s.companies,
-          { id: `company-${nextCompanyId++}`, name, startingFunds, fleet, politicalEntityId: null, homeLocationId },
+          { id: `company-${nextCompanyId++}`, name, startingFunds, fleet, politicalEntityId, homeLocationId: resolvedHomeLocationId },
         ],
       };
     }),
@@ -748,4 +817,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         return { ...updated, homeLocationId: resolveCompanyHomeLocation(updated, s.locations) };
       }),
     })),
+
+  addExplorer: (name, homeLocationId, politicalEntityId = null) =>
+    set((s) => {
+      if (!s.locations.some((l) => l.id === homeLocationId)) return s;
+      const trimmed = name.trim();
+      if (trimmed === "") return s;
+      const explorer: EditorExplorer = {
+        id: `explorer-${nextExplorerId++}`,
+        name: trimmed,
+        homeLocationId,
+        porterCount: DEFAULT_EXPLORER_PORTER_COUNT,
+        animalCount: DEFAULT_EXPLORER_ANIMAL_COUNT,
+        startingCash: DEFAULT_EXPLORER_STARTING_CASH,
+        politicalEntityId,
+      };
+      return { explorers: [...s.explorers, explorer] };
+    }),
+  updateExplorer: (id, patch) =>
+    set((s) => ({ explorers: s.explorers.map((e) => (e.id === id ? { ...e, ...patch } : e)) })),
+  removeExplorer: (id) => set((s) => ({ explorers: s.explorers.filter((e) => e.id !== id) })),
 }));

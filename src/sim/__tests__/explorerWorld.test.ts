@@ -4,6 +4,7 @@ import { Location } from "../location";
 import { Chieftain } from "../chieftain";
 import { PorterParty } from "../transport";
 import { Explorer } from "../explorer";
+import { ExpeditionParty } from "../faction";
 import { Route, ROUTES, setRoutes, addRouteToNetwork } from "../routes";
 import { LOCATION_COORDINATES, setGeography } from "../worldData";
 
@@ -47,7 +48,7 @@ function makeWorldWithVillage() {
     name: "Livia Ashworth", gender: "Female", dateOfBirth: new Date("1850-01-01"),
     homeLocation: origin, transport: party, startingCash: 1000,
   });
-  world.explorers.push(explorer);
+  world.expeditionParties.push(new ExpeditionParty("Test Expedition", explorer));
 
   return { world, explorer, route, village, chieftain };
 }

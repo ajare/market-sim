@@ -113,9 +113,10 @@ describe("Ship sinking at sea (fatal)", () => {
       fulfiller: null, inFlightCaptain: captain, fulfilled: false, cancelled: false, beginDay: 1, expiryDay: 10,
     };
     captain.cargo = {
-      commodity: "Gold", quantity: 10, unitCost: 1, origin: "Home", destination: "Dest",
+      items: [{ commodity: "Gold", quantity: 10, unitCost: 1, contract }],
+      origin: "Home", destination: "Dest",
       distance: 4000, routeType: "Sea", travelDays: 8, fuelPricePaid: 1, fuelUnitsConsumed: 10,
-      fuelCostTotal: 10, totalCost: 20, departureDay: 1, contract,
+      fuelCostTotal: 10, totalCost: 20, departureDay: 1,
     };
 
     transport.status = "InTransit";

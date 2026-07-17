@@ -1333,14 +1333,20 @@ export function NetworkView() {
             </div>
             {hover.captain.cargo !== null && (
               <div>
-                Cargo: {hover.captain.cargo.commodity} × {hover.captain.cargo.quantity.toFixed(1)}
+                Cargo: {hover.captain.cargo.items.map((item) => `${item.commodity} × ${item.quantity.toFixed(1)}`).join(", ")}
               </div>
             )}
             {Number.isFinite(hover.captain.cash) && <div>Cash: ${hover.captain.cash.toFixed(2)}</div>}
-            {hover.captain.cargo?.contract != null && (
+            {hover.captain.cargo !== null && hover.captain.cargo.items.some((item) => item.contract != null) && (
               <div className="network-tooltip-events">
-                📦 Contract: {hover.captain.cargo.contract.quantity.toFixed(1)} {hover.captain.cargo.contract.commodity} →{" "}
-                {hover.captain.cargo.contract.location} (fee ${hover.captain.cargo.contract.deliveryFee.toFixed(2)})
+                {hover.captain.cargo.items
+                  .filter((item) => item.contract != null)
+                  .map((item, i) => (
+                    <div key={i}>
+                      📦 Contract: {item.contract!.quantity.toFixed(1)} {item.contract!.commodity} → {item.contract!.location}{" "}
+                      (fee ${item.contract!.deliveryFee.toFixed(2)})
+                    </div>
+                  ))}
               </div>
             )}
             {hover.captain.activeAgentEvents.length > 0 && (

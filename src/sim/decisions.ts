@@ -44,6 +44,21 @@ export interface PendingDecision {
   explorer: Explorer;
 }
 
+/**
+ * Resolves `decision` immediately, without ever touching `world.pendingDecision`
+ * -- used only for an aiControlled ExpeditionParty's own Explorer (see
+ * Explorer.arrive), so more than one Explorer can exist in the same World
+ * without an autonomous one's arrival contending for the single global
+ * pause slot a player-controlled party still uses. Picks the FIRST eligible
+ * choice in the decision's own authored order -- every buildPassageTaxDecision
+ * branch lists "Pay" first, so this reads as "pay if affordable, else fall
+ * through to whatever's next" rather than a new scoring/AI-policy mechanism.
+ */
+export function autoResolveDecision(decision: PendingDecision): void {
+  const choice = decision.choices.find((c) => c.isEligible({ explorer: decision.explorer }));
+  choice?.resolve({ explorer: decision.explorer });
+}
+
 // Tunable knobs for the passage-tax negotiation -- see buildPassageTaxDecision.
 
 /** Fraction of the party's cash demanded as tax, when no ruler is present (fixed, non-negotiable -- see the PoliticalEntity-fallback branch). */
@@ -97,18 +112,13 @@ export function buildPassageTaxDecision(explorer: Explorer, location: Location):
 
     choices.push({
       label: "Offer a gift instead of cash",
-      isEligible: (state) => {
-        const inventory = state.explorer.porterParty.inventory ?? {};
-        return ruler.giftCategories.some((commodity) => (inventory[commodity] ?? 0) > 0);
-      },
+      isEligible: (state) => ruler.giftCategories.some((commodity) => state.explorer.heldQuantity(commodity) > 0),
       riskHint: "Low risk -- trades goods instead of cash; the chieftain may value the gift more or less than a cash payment.",
       resolve: (state) => {
-        const inventory = state.explorer.porterParty.inventory ?? {};
-        const commodity = ruler.giftCategories.find((c) => (inventory[c] ?? 0) > 0);
+        const commodity = ruler.giftCategories.find((c) => state.explorer.heldQuantity(c) > 0);
         if (commodity === undefined) return;
-        const given = Math.min(GIFT_QUANTITY_OFFERED, inventory[commodity]);
-        inventory[commodity] -= given;
-        if (inventory[commodity] <= 0) delete inventory[commodity];
+        const given = Math.min(GIFT_QUANTITY_OFFERED, state.explorer.heldQuantity(commodity));
+        state.explorer.removeFromCargo(commodity, given);
         ruler.trust = clamp01(ruler.trust + TRUST_DELTA_GIFT);
       },
     });

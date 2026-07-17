@@ -12,10 +12,13 @@
  * this module hands the store is always normalized.
  */
 import type {
-  Commodity, CommodityType, EditorCompany, EditorLocation, EditorRoute, PoliticalEntity, SettlementType,
+  Commodity, CommodityType, EditorChieftain, EditorCompany, EditorExplorer, EditorLocation, EditorRoute,
+  PoliticalEntity, SettlementType,
 } from "./types";
 import {
   COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, SETTLEMENT_TYPES, DEFAULT_SETTLEMENT_TYPE, sortRouteControlPoints,
+  DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE, DEFAULT_CHIEFTAIN_TRUST,
+  DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH,
 } from "./types";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
@@ -26,8 +29,8 @@ import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGene
 import { DEFAULT_START_DATE } from "@market-sim/shared/world";
 export { DEFAULT_START_DATE };
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"); version 10 added Location.settlementType (absent in older files, which default to "Town"). */
-export const WORLD_JSON_VERSION = 10;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"); version 10 added Location.settlementType (absent in older files, which default to "Town"); version 11 added Location.ruler and top-level explorers (exploration mode -- absent in older files, which default to no ruler / an empty explorers list); version 12 added EditorExplorer.politicalEntityId (absent in older files, which default to null/Independent, same as EditorCompany's). */
+export const WORLD_JSON_VERSION = 12;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -48,6 +51,8 @@ export interface EditorWorld {
   commodities: Commodity[];
   companies: EditorCompany[];
   routes: EditorRoute[];
+  /** Exploration-mode expedition parties. Defaults to [] for files predating this field. */
+  explorers: EditorExplorer[];
 }
 
 function round2(n: number): number {
@@ -95,6 +100,38 @@ export function worldToJson(world: Omit<EditorWorld, "version">): string {
 
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+/** Normalizes a raw `ruler` value from parsed JSON into an EditorChieftain, or null if absent/malformed -- older files (predating v11) simply don't have this field. */
+function normalizeRuler(raw: unknown): EditorChieftain | null {
+  if (raw === null || raw === undefined || typeof raw !== "object") return null;
+  const r = raw as Partial<EditorChieftain>;
+  if (typeof r.name !== "string" || r.name.trim() === "") return null;
+  return {
+    name: r.name,
+    passageTaxRate: typeof r.passageTaxRate === "number" ? r.passageTaxRate : DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE,
+    trust: typeof r.trust === "number" ? r.trust : DEFAULT_CHIEFTAIN_TRUST,
+    giftCategories: Array.isArray(r.giftCategories) ? r.giftCategories.filter((c) => typeof c === "string") : [],
+  };
+}
+
+/** Normalizes a raw explorers-array entry from parsed JSON -- malformed entries (no name/homeLocationId) are dropped rather than defaulted, since there's nothing sensible to fall back to for either field. */
+function normalizeExplorer(raw: unknown): EditorExplorer | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const e = raw as Partial<EditorExplorer>;
+  if (typeof e.id !== "string" || typeof e.name !== "string" || typeof e.homeLocationId !== "string") return null;
+  return {
+    id: e.id,
+    name: e.name,
+    homeLocationId: e.homeLocationId,
+    porterCount: typeof e.porterCount === "number" ? e.porterCount : DEFAULT_EXPLORER_PORTER_COUNT,
+    animalCount: typeof e.animalCount === "number" ? e.animalCount : DEFAULT_EXPLORER_ANIMAL_COUNT,
+    startingCash: typeof e.startingCash === "number" ? e.startingCash : DEFAULT_EXPLORER_STARTING_CASH,
+    // Cross-checked against the imported PoliticalEntities list in
+    // useEditorStore.loadWorld (this function has no access to it) -- here,
+    // just type-narrowed to string | null.
+    politicalEntityId: typeof e.politicalEntityId === "string" ? e.politicalEntityId : null,
+  };
 }
 
 /** World-position locations divided back down to normalized [0,1] by worldScale. */
@@ -165,12 +202,14 @@ export function parseWorldJson(text: string): EditorWorld {
         ? ((pe as unknown as { nationality: Nationality }).nationality)
         : DEFAULT_NATIONALITY,
     })),
-    // Default a missing/invalid settlementType (files predating v10) to "Town".
+    // Default a missing/invalid settlementType (files predating v10) to "Town";
+    // normalize/default ruler (files predating v11 have none).
     locations: locationsToNormalized(asArray<EditorLocation>(obj.locations), worldScale).map((loc) => ({
       ...loc,
       settlementType: (SETTLEMENT_TYPES as readonly string[]).includes(loc.settlementType ?? "")
         ? ((loc as unknown as { settlementType: SettlementType }).settlementType)
         : DEFAULT_SETTLEMENT_TYPE,
+      ruler: normalizeRuler((loc as { ruler?: unknown }).ruler),
     })),
     // Default a missing/invalid type (files predating v6) to "General".
     commodities: asArray<Commodity>(obj.commodities).map((c) => ({
@@ -181,6 +220,9 @@ export function parseWorldJson(text: string): EditorWorld {
     })),
     companies: asArray<EditorCompany>(obj.companies),
     routes: routesToNormalized(asArray<EditorRoute>(obj.routes), worldScale),
+    // Absent in files predating v11 -- defaults to [] via asArray, and
+    // malformed entries are dropped by normalizeExplorer rather than defaulted.
+    explorers: asArray<unknown>(obj.explorers).map(normalizeExplorer).filter((e): e is EditorExplorer => e !== null),
   };
 }
 

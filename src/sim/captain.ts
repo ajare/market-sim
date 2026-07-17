@@ -8,10 +8,12 @@
 import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
 import type { Faction, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
-import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus, type CargoState } from "./transport";
-import { distanceBetween, travelDaysBetween, getLocation, getWorldStartDate, LOCATION_COORDINATES } from "./worldData";
+import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus, type CargoState, type CargoItem } from "./transport";
+import {
+  distanceBetween, travelDaysBetween, getLocation, getWorldStartDate, LOCATION_COORDINATES, headingBetween,
+} from "./worldData";
 import { getRoutes, routeTravelDays, type Route, type RouteType } from "./routes";
-import { findShortestPath, pathNodeSequence } from "./pathfinding";
+import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randRandom } from "./simRandom";
 import type { Contract } from "./contracts";
@@ -24,26 +26,11 @@ import type { Location } from "./location";
 import type { ShipLogEntry } from "./log";
 export type { ShipLogEntry };
 import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
-
-/**
- * "Clockwise from north" heading (degrees [0,360)) from one Location's
- * position toward another -- the same convention as WeatherSystem.
- * windDirection's "arrow points this way" (see weather.ts), so a heading and
- * a wind direction can be compared directly. Flat world-coordinate math
- * (unlike distance.ts's own globe-mode bearing() helper) since wind is
- * already a flat-map noise field, not a spherical quantity. Returns null if
- * either Location's coordinates are missing (defensive; not expected for a
- * real path/route origin or destination).
- */
-function headingBetween(fromName: string, toName: string): number | null {
-  const from = LOCATION_COORDINATES[fromName];
-  const to = LOCATION_COORDINATES[toName];
-  if (from === undefined || to === undefined) return null;
-  const dx = to[0] - from[0];
-  const dy = to[1] - from[1];
-  const deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
-  return deg < 0 ? deg + 360 : deg;
-}
+import {
+  routeEconomicsFromPath, findBestBundle, reverifyBundle, applyPurchases, applyMarketPriceImpact, sellCargoShared,
+  type CargoAllocation, type RouteEconomics, type TradeDirective, type TripCostParams,
+} from "./tradingAgent";
+export type { CargoAllocation, RouteEconomics, TradeDirective };
 
 /** Wind speed (world-units/day) at which the wind-alignment effect below reaches its full configured magnitude -- roughly a "strong" wind under either built-in WeatherProfile (Default's storm-boosted max is ~480, Caribbean's ~810). */
 const WIND_EFFECT_REFERENCE_SPEED = 300;
@@ -130,28 +117,6 @@ export interface PortfolioSnapshot {
   totalFuelSpent: number;
 }
 
-export interface RouteEconomics {
-  distance: number;
-  routeType: string;
-  travelDays: number;
-  fuelPrice: number;
-  fuelUnitsConsumed: number;
-  fuelCostPerUnit: number;
-  totalCost: number;
-  expectedRevenue: number;
-  expectedProfit: number;
-  dailyReturnPct: number;
-  path: Route[] | null;
-  crewCost: number;
-  /** Cargo quantity this estimate was costed against -- lets a Faction gauge how much of a route's demand one ship covers. */
-  quantity: number;
-}
-
-export interface TradeDirective extends RouteEconomics {
-  commodity: string;
-  destination: string;
-}
-
 export interface RepositionDirective {
   action: "REPOSITION";
   destination: string;
@@ -180,10 +145,6 @@ function isContractDeliveryDirective(d: Directive): d is ContractDeliveryDirecti
 
 export function isRepairDirective(d: Directive): d is RepairDirective {
   return "action" in d && d.action === "REPAIR";
-}
-
-function excludeRouteKey(commodity: string, location: string): string {
-  return `${commodity}||${location}`;
 }
 
 export interface CaptainInit extends Omit<PersonInit, "location" | "transport" | "dailyWage"> {
@@ -315,13 +276,7 @@ export class Captain extends Sailor {
   }
 
   private applyPriceImpact(market: Market, units: number, direction: "buy" | "sell"): void {
-    if (market.fixedPrice) return;
-    const magnitude = (this.priceImpact * units) / (units + 50.0);
-    if (direction === "buy") {
-      market.price = market.price * (1 + magnitude);
-    } else {
-      market.price = Math.max(0.5, market.price * (1 - magnitude));
-    }
+    applyMarketPriceImpact(market, units, direction, this.priceImpact);
   }
 
   private activeDiscount(kind: TransportEventKind): number {
@@ -477,74 +432,26 @@ export class Captain extends Sailor {
     }
   }
 
+  /** This Captain's current trip-cost inputs for the shared tradingAgent.ts functions -- wind/storm/crew-fraction already folded into `currentSpeedUnitsPerDay` by the time it's called with a heading. */
+  private costParams(): TripCostParams {
+    return {
+      fuelConsumptionRate: this.currentFuelConsumptionRate(),
+      fixedShipmentCost: this.currentFixedShipmentCost(),
+      dailyCrewCost: this.dailyCrewCost(),
+      speedFn: (heading) => this.currentSpeedUnitsPerDay(heading),
+    };
+  }
+
+  /** `items`' combined economics for one voyage `origin` -> `destination` -- see tradingAgent.ts's routeEconomicsFromPath, which this just supplies a freshly-found (possibly multi-hop) path and this Captain's own cost params to. */
   private routeEconomics(
     origin: string,
     destination: string,
-    buyPrice: number,
-    sellPriceEstimate: number,
-    quantity: number,
+    items: readonly CargoAllocation[],
     fuelPrice: number,
     buyMarkets: Map<string, Market>,
   ): RouteEconomics {
-    const infeasible: RouteEconomics = {
-      distance: 0.0, routeType: "unreachable", travelDays: 0,
-      fuelPrice, fuelUnitsConsumed: 0.0, fuelCostPerUnit: 0.0,
-      totalCost: 0.0, expectedRevenue: 0.0, expectedProfit: -1.0,
-      dailyReturnPct: -1.0, path: null, crewCost: 0.0, quantity: 0.0,
-    };
-
     const path = findShortestPath(origin, destination, (r) => this.transport!.canUseRoute(r));
-    if (path === null) return infeasible;
-
-    const nodes = pathNodeSequence(origin, path);
-    const fuelRate = this.currentFuelConsumptionRate();
-    let totalDistance = 0.0;
-    let totalDays = 0;
-    let totalFuelUnits = 0.0;
-    let totalFuelCost = 0.0;
-    const routeTypes: RouteType[] = [];
-
-    for (let i = 0; i < path.length; i++) {
-      const legOrigin = nodes[i];
-      const route = path[i];
-      const legDestination = route.origin === legOrigin ? route.destination : route.origin;
-      const legFuelUnits = route.distance * fuelRate * quantity;
-      if (legFuelUnits > this.transport!.fuelCapacity) {
-        return infeasible;
-      }
-
-      const legFuelMarket = buyMarkets.get(marketKey(legOrigin, "Fuel"));
-      const legFuelPrice = legFuelMarket !== undefined ? legFuelMarket.price : fuelPrice;
-
-      totalDistance += route.distance;
-      totalDays += routeTravelDays(route, this.currentSpeedUnitsPerDay(headingBetween(legOrigin, legDestination)));
-      totalFuelUnits += legFuelUnits;
-      totalFuelCost += legFuelUnits * legFuelPrice;
-      if (!routeTypes.includes(route.routeType)) routeTypes.push(route.routeType);
-    }
-
-    const crewCost = this.dailyCrewCost() * totalDays;
-    const totalCost = quantity * buyPrice + totalFuelCost + this.currentFixedShipmentCost() + crewCost;
-    const expectedRevenue = quantity * sellPriceEstimate;
-    const expectedProfit = expectedRevenue - totalCost;
-    const dailyReturnPct =
-      totalCost > 0 && totalDays > 0 ? expectedProfit / totalCost / totalDays : -1.0;
-
-    return {
-      distance: totalDistance,
-      routeType: routeTypes.length > 0 ? routeTypes.join("+") : "none",
-      travelDays: totalDays,
-      fuelPrice,
-      fuelUnitsConsumed: totalFuelUnits,
-      fuelCostPerUnit: quantity > 0 ? totalFuelCost / quantity : 0.0,
-      totalCost,
-      expectedRevenue,
-      expectedProfit,
-      dailyReturnPct,
-      path,
-      crewCost,
-      quantity,
-    };
+    return routeEconomicsFromPath(path, origin, items, fuelPrice, buyMarkets, this.transport!, this.costParams(), headingBetween);
   }
 
   act(
@@ -731,7 +638,8 @@ export class Captain extends Sailor {
     closedLocations: ReadonlySet<string>,
   ): number {
     if (closedLocations.has(this.locationName)) return 0.0;
-    const fuelUnits = nextLegDistance * this.currentFuelConsumptionRate() * this.cargo!.quantity;
+    const totalQuantity = this.cargo!.items.reduce((sum, i) => sum + i.quantity, 0);
+    const fuelUnits = nextLegDistance * this.currentFuelConsumptionRate() * totalQuantity;
     if (fuelUnits <= 0) return 0.0;
     const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
@@ -748,7 +656,10 @@ export class Captain extends Sailor {
     this.tradeLog.push({
       day,
       action: "REFUEL",
-      commodity: this.cargo!.commodity,
+      // No single commodity to attribute a REFUEL stop to any more (the hold
+      // may carry several) -- describeTradeLogEntry's REFUEL narrative never
+      // reads this field anyway.
+      commodity: null,
       location: this.locationName,
       destination: this.cargo!.destination,
       quantity: 0.0,
@@ -774,42 +685,58 @@ export class Captain extends Sailor {
     );
   }
 
+  /**
+   * Sells (or, for a contract-bound item, delivers) every item in the hold
+   * that CAN be resolved right now, one at a time -- an item whose market is
+   * closed/unavailable, or whose contract destination hasn't been reached
+   * yet, simply stays aboard for another day's attempt rather than blocking
+   * the rest of a mixed hold. Each open-market item's profit apportions its
+   * fair share of the trip's shared fuel/fixed/crew overhead by quantity, so
+   * the sum across every item still equals the old single-commodity
+   * invariant (total revenue - cargo.totalCost) when the whole hold sells
+   * together.
+   */
   private sellCargoIfPossible(day: number, sellMarkets: Map<string, Market>): void {
     if (this.cargo === null) return;
-    if (this.cargo.contract !== null) {
-      this.fulfillContract(day, sellMarkets);
-      return;
-    }
-    const market = sellMarkets.get(marketKey(this.locationName, this.cargo.commodity));
-    if (market === undefined || !market.isAvailable) return;
-
-    const sellPrice = market.price;
-    const proceeds = sellPrice * this.cargo.quantity;
-    const profit = proceeds - this.cargo.totalCost;
-
+    const cargo = this.cargo;
+    // tradingAgent.ts's sellCargoShared handles every open-market item (the
+    // same math for Captain and Explorer); it leaves EVERY contract-bound
+    // item untouched in remainingItems regardless of whether this is actually
+    // its delivery location, so this wrapper still has to separate "arrived,
+    // hand off to fulfillContractItem" from "not yet arrived, keep aboard".
+    const { realizedProfitDelta, proceeds, entries, remainingItems } = sellCargoShared(
+      this.locationName, cargo, sellMarkets, this.priceImpact,
+    );
     this.cash += proceeds;
-    this.realizedProfit += profit;
-    this.applyPriceImpact(market, this.cargo.quantity, "sell");
-    market.applyTrade(this.cargo.quantity);
-    market.location.cash -= proceeds;
+    this.realizedProfit += realizedProfitDelta;
+    for (const entry of entries) {
+      this.tradeLog.push({
+        day,
+        action: "SELL",
+        commodity: entry.commodity,
+        location: this.locationName,
+        destination: null,
+        quantity: entry.quantity,
+        price: entry.price,
+        distance: cargo.distance,
+        routeType: cargo.routeType,
+        travelDays: cargo.travelDays,
+        fuelPrice: round2(cargo.fuelPricePaid),
+        fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
+        fuelCostPaid: round2(cargo.fuelCostTotal),
+        profit: entry.profit,
+      });
+    }
 
-    this.tradeLog.push({
-      day,
-      action: "SELL",
-      commodity: this.cargo.commodity,
-      location: this.locationName,
-      destination: null,
-      quantity: round2(this.cargo.quantity),
-      price: round2(sellPrice),
-      distance: this.cargo.distance,
-      routeType: this.cargo.routeType,
-      travelDays: this.cargo.travelDays,
-      fuelPrice: round2(this.cargo.fuelPricePaid),
-      fuelUnitsConsumed: round2(this.cargo.fuelUnitsConsumed),
-      fuelCostPaid: round2(this.cargo.fuelCostTotal),
-      profit: round2(profit),
-    });
-    this.cargo = null;
+    const stillRemaining: CargoItem[] = [];
+    for (const item of remainingItems) {
+      if (item.contract !== null && this.locationName === item.contract.location) {
+        this.fulfillContractItem(item, cargo, day, sellMarkets);
+        continue;
+      }
+      stillRemaining.push(item);
+    }
+    this.cargo = stillRemaining.length > 0 ? { ...cargo, items: stillRemaining } : null;
   }
 
   /**
@@ -820,41 +747,47 @@ export class Captain extends Sailor {
    * rather than snapshotted at the moment of seizure. There's no cost basis
    * (it was stolen, not bought), so the full proceeds are profit. The fence
    * takes physical possession of the goods -- they re-enter this Location's
-   * stockpile rather than vanishing from the economy.
+   * stockpile rather than vanishing from the economy. Unlike
+   * sellCargoIfPossible, this is unconditional per item (a fence takes
+   * everything, market availability irrelevant), so the whole hold always
+   * empties in one pass -- matches the old single-commodity behavior.
    */
   private fenceCargoIfPossible(day: number, sellMarkets: Map<string, Market>): void {
     if (this.cargo === null) return;
     const cargo = this.cargo;
-    const market = sellMarkets.get(marketKey(this.locationName, cargo.commodity));
     const location = getLocation(this.locationName);
     const fenceFraction = location !== undefined ? location.fenceFraction : 0.5;
-    const unitValue = market !== undefined ? market.price : 0;
-    const fencePrice = round2(unitValue * fenceFraction);
-    const proceeds = round2(fencePrice * cargo.quantity);
 
-    this.cash += proceeds;
-    this.realizedProfit += proceeds;
+    for (const item of cargo.items) {
+      const market = sellMarkets.get(marketKey(this.locationName, item.commodity));
+      const unitValue = market !== undefined ? market.price : 0;
+      const fencePrice = round2(unitValue * fenceFraction);
+      const proceeds = round2(fencePrice * item.quantity);
 
-    if (location !== undefined && cargo.quantity > 0) {
-      location.stockpiles[cargo.commodity] = (location.stockpiles[cargo.commodity] ?? 0) + cargo.quantity;
+      this.cash += proceeds;
+      this.realizedProfit += proceeds;
+
+      if (location !== undefined && item.quantity > 0) {
+        location.stockpiles[item.commodity] = (location.stockpiles[item.commodity] ?? 0) + item.quantity;
+      }
+
+      this.tradeLog.push({
+        day,
+        action: "SELL",
+        commodity: item.commodity,
+        location: this.locationName,
+        destination: null,
+        quantity: round2(item.quantity),
+        price: fencePrice,
+        distance: null,
+        routeType: null,
+        travelDays: null,
+        fuelPrice: null,
+        fuelUnitsConsumed: null,
+        fuelCostPaid: 0.0,
+        profit: proceeds,
+      });
     }
-
-    this.tradeLog.push({
-      day,
-      action: "SELL",
-      commodity: cargo.commodity,
-      location: this.locationName,
-      destination: null,
-      quantity: round2(cargo.quantity),
-      price: fencePrice,
-      distance: null,
-      routeType: null,
-      travelDays: null,
-      fuelPrice: null,
-      fuelUnitsConsumed: null,
-      fuelCostPaid: 0.0,
-      profit: proceeds,
-    });
     this.cargo = null;
   }
 
@@ -867,67 +800,91 @@ export class Captain extends Sailor {
    * buyer demands a cut for the risk); the port's own books never see the
    * deal (unlike `sellCargoIfPossible`, this never touches
    * `market.location.cash`), though the physical stockpile still moves --
-   * the goods really do change hands. Each attempt risks getting caught
-   * (`SMUGGLING_DETECTION_PROBABILITY`): caught cargo is seized outright --
-   * no proceeds, no stockpile change -- plus a fine (`SMUGGLING_FINE_FRACTION`
-   * of what it would have sold for at the real price).
+   * the goods really do change hands. One detection roll covers the WHOLE
+   * hold per attempt (not per item -- a single smuggling run either goes
+   * smoothly or gets caught, it isn't item-by-item); caught cargo is seized
+   * outright -- no proceeds, no stockpile change -- plus a fine
+   * (`SMUGGLING_FINE_FRACTION` of what the whole hold would have sold for at
+   * the real price). A successful run still sells only the items that have
+   * an available black-market buyer here; the rest stays aboard.
    */
   private maybeSmuggle(day: number, sellMarkets: Map<string, Market>): void {
     if (this.cargo === null) return;
-    if (this.cargo.contract !== null) return; // SoloTrader never accepts Contracts to begin with
-    const market = sellMarkets.get(marketKey(this.locationName, this.cargo.commodity));
-    if (market === undefined || !market.isAvailable) return;
-
+    if (this.cargo.items.some((i) => i.contract !== null)) return; // SoloTrader never accepts Contracts to begin with
     const cargo = this.cargo;
+
     if (randRandom() < SMUGGLING_DETECTION_PROBABILITY) {
-      const fine = round2(Math.min(market.price * cargo.quantity * SMUGGLING_FINE_FRACTION, this.cash));
+      const totalValue = cargo.items.reduce((sum, i) => {
+        const market = sellMarkets.get(marketKey(this.locationName, i.commodity));
+        return sum + (market !== undefined ? market.price : 0) * i.quantity;
+      }, 0);
+      const fine = round2(Math.min(totalValue * SMUGGLING_FINE_FRACTION, this.cash));
+      const totalLoss = round2(-fine - cargo.totalCost);
       this.cash -= fine;
       this.realizedProfit -= fine + cargo.totalCost;
+      // The fine/loss is one lump sum for the whole caught hold -- recorded
+      // once, on the first item's row, same convention as a multi-item BUY's
+      // shared fuel figures.
+      cargo.items.forEach((item, i) => {
+        this.tradeLog.push({
+          day,
+          action: "SMUGGLE",
+          commodity: item.commodity,
+          location: this.locationName,
+          destination: null,
+          quantity: round2(item.quantity),
+          price: null,
+          distance: cargo.distance,
+          routeType: cargo.routeType,
+          travelDays: cargo.travelDays,
+          fuelPrice: round2(cargo.fuelPricePaid),
+          fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
+          fuelCostPaid: round2(cargo.fuelCostTotal),
+          profit: i === 0 ? totalLoss : null,
+        });
+      });
+      this.cargo = null;
+      return;
+    }
+
+    const totalQuantity = cargo.items.reduce((sum, i) => sum + i.quantity, 0);
+    const goodsCostTotal = cargo.items.reduce((sum, i) => sum + i.unitCost * i.quantity, 0);
+    const overhead = cargo.totalCost - goodsCostTotal;
+
+    const remaining: CargoItem[] = [];
+    for (const item of cargo.items) {
+      const market = sellMarkets.get(marketKey(this.locationName, item.commodity));
+      if (market === undefined) {
+        remaining.push(item);
+        continue;
+      }
+      const blackMarketPrice = market.price * SMUGGLING_PRICE_DISCOUNT;
+      const proceeds = blackMarketPrice * item.quantity;
+      const itemShareOfOverhead = totalQuantity > 0 ? overhead * (item.quantity / totalQuantity) : 0;
+      const profit = proceeds - item.unitCost * item.quantity - itemShareOfOverhead;
+
+      this.cash += proceeds;
+      this.realizedProfit += profit;
+      market.applyTrade(item.quantity);
+
       this.tradeLog.push({
         day,
         action: "SMUGGLE",
-        commodity: cargo.commodity,
+        commodity: item.commodity,
         location: this.locationName,
         destination: null,
-        quantity: round2(cargo.quantity),
-        price: null,
+        quantity: round2(item.quantity),
+        price: round2(blackMarketPrice),
         distance: cargo.distance,
         routeType: cargo.routeType,
         travelDays: cargo.travelDays,
         fuelPrice: round2(cargo.fuelPricePaid),
         fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
         fuelCostPaid: round2(cargo.fuelCostTotal),
-        profit: round2(-fine - cargo.totalCost),
+        profit: round2(profit),
       });
-      this.cargo = null;
-      return;
     }
-
-    const blackMarketPrice = market.price * SMUGGLING_PRICE_DISCOUNT;
-    const proceeds = blackMarketPrice * cargo.quantity;
-    const profit = proceeds - cargo.totalCost;
-
-    this.cash += proceeds;
-    this.realizedProfit += profit;
-    market.applyTrade(cargo.quantity);
-
-    this.tradeLog.push({
-      day,
-      action: "SMUGGLE",
-      commodity: cargo.commodity,
-      location: this.locationName,
-      destination: null,
-      quantity: round2(cargo.quantity),
-      price: round2(blackMarketPrice),
-      distance: cargo.distance,
-      routeType: cargo.routeType,
-      travelDays: cargo.travelDays,
-      fuelPrice: round2(cargo.fuelPricePaid),
-      fuelUnitsConsumed: round2(cargo.fuelUnitsConsumed),
-      fuelCostPaid: round2(cargo.fuelCostTotal),
-      profit: round2(profit),
-    });
-    this.cargo = null;
+    this.cargo = remaining.length > 0 ? { ...cargo, items: remaining } : null;
   }
 
   /**
@@ -937,13 +894,14 @@ export class Captain extends Sailor {
    * already fronted gets reimbursed, plus a fixed delivery fee, both paid by
    * the issuing Location. Unlike a market SELL, the price paid has nothing
    * to do with the destination market's price, and delivering the stock
-   * doesn't move the market price the way a normal trade would.
+   * doesn't move the market price the way a normal trade would. A
+   * contract-delivery voyage is always exactly this one item today (see
+   * executeContractDelivery), so the whole trip's fuelCostTotal/totalCost
+   * belong to it entirely -- no apportionment needed, unlike the open-market
+   * items sellCargoIfPossible loops over.
    */
-  private fulfillContract(day: number, sellMarkets: Map<string, Market>): void {
-    const cargo = this.cargo!;
-    const contract = cargo.contract!;
-    if (this.locationName !== contract.location) return;
-
+  private fulfillContractItem(item: CargoItem, cargo: CargoState, day: number, sellMarkets: Map<string, Market>): void {
+    const contract = item.contract!;
     const proceeds = cargo.fuelCostTotal + contract.deliveryFee;
     const profit = proceeds - cargo.totalCost;
 
@@ -952,18 +910,18 @@ export class Captain extends Sailor {
     contract.fulfilled = true;
     contract.inFlightCaptain = null;
 
-    const market = sellMarkets.get(marketKey(this.locationName, cargo.commodity));
-    if (market !== undefined) market.applyTrade(cargo.quantity);
+    const market = sellMarkets.get(marketKey(this.locationName, item.commodity));
+    if (market !== undefined) market.applyTrade(item.quantity);
     const issuingLocation = getLocation(contract.location)!;
     issuingLocation.cash -= proceeds;
 
     this.tradeLog.push({
       day,
       action: "SELL",
-      commodity: cargo.commodity,
+      commodity: item.commodity,
       location: this.locationName,
       destination: null,
-      quantity: round2(cargo.quantity),
+      quantity: round2(item.quantity),
       price: null,
       distance: cargo.distance,
       routeType: cargo.routeType,
@@ -973,13 +931,16 @@ export class Captain extends Sailor {
       fuelCostPaid: round2(cargo.fuelCostTotal),
       profit: round2(profit),
     });
-    this.cargo = null;
   }
 
   /**
    * Public (not `private`) since Company.directFleet calls this directly on
    * an idle captain to score its best route -- mirrors faction.py's
-   * cross-module call to this "private-by-convention" method in Python.
+   * cross-module call to this "private-by-convention" method in Python. The
+   * destination-first knapsack itself lives in tradingAgent.ts's
+   * findBestBundle (shared with Explorer) -- this just supplies this
+   * Captain's own state (cash, transport, cost params, full multi-hop
+   * Dijkstra pathfinding) to it.
    */
   findBestLocalRoute(
     buyMarkets: Map<string, Market>,
@@ -988,47 +949,14 @@ export class Captain extends Sailor {
     closedLocations: ReadonlySet<string>,
     excludeRoutes: ReadonlySet<string> = new Set(),
   ): TradeDirective | null {
-    let best: TradeDirective | null = null;
-    for (const commodity of commodities) {
-      const buyMarket = buyMarkets.get(marketKey(this.locationName, commodity));
-      if (buyMarket === undefined || !buyMarket.isAvailable) continue;
-
-      const sellCandidates: Market[] = [];
-      for (const m of sellMarkets.values()) {
-        if (
-          m.commodityName === commodity &&
-          m.locationName !== this.locationName &&
-          !closedLocations.has(m.locationName) &&
-          !excludeRoutes.has(excludeRouteKey(commodity, m.locationName)) &&
-          m.isAvailable
-        ) {
-          sellCandidates.push(m);
-        }
-      }
-      if (sellCandidates.length === 0) continue;
-
-      const trialQuantity = Math.min(
-        this.transport!.cargoCapacity,
-        this.cash / buyMarket.price,
-        buyMarket.availableQuantity,
-      );
-      if (trialQuantity < 1) continue;
-
-      const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
-      const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
-
-      for (const sellMarket of sellCandidates) {
-        const econ = this.routeEconomics(
-          this.locationName, sellMarket.locationName, buyMarket.price, sellMarket.price,
-          trialQuantity, fuelPrice, buyMarkets,
-        );
-        if (econ.expectedProfit <= 0 || econ.dailyReturnPct < this.minDailyReturnPct) continue;
-        if (best === null || econ.dailyReturnPct > best.dailyReturnPct) {
-          best = { commodity, destination: sellMarket.locationName, ...econ };
-        }
-      }
-    }
-    return best;
+    const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
+    const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
+    return findBestBundle(
+      this.locationName, this.cash, this.transport!.cargoCapacity, this.transport!,
+      buyMarkets, sellMarkets, commodities, closedLocations, excludeRoutes, this.minDailyReturnPct,
+      fuelPrice, this.costParams(), headingBetween,
+      (destination) => findShortestPath(this.locationName, destination, (r) => this.transport!.canUseRoute(r)),
+    );
   }
 
   /**
@@ -1111,29 +1039,32 @@ export class Captain extends Sailor {
     return true;
   }
 
+  /**
+   * Re-verifies each item in the planned bundle fresh against current
+   * markets/cash/capacity (the scored bundle from findBestLocalRoute is a
+   * plan, not a guaranteed trade -- markets may have shifted since it was
+   * scored), buys whatever's still viable, and departs. Items that fall
+   * through (market closed/unavailable, or capacity/cash ran out on an
+   * earlier, higher-margin item) are simply left out of this voyage.
+   */
   private executeLocalRoute(
-    route: { commodity: string; destination: string },
+    route: { destination: string; items: readonly CargoAllocation[] },
     day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
   ): void {
-    const { commodity, destination } = route;
-    const originMarket = buyMarkets.get(marketKey(this.locationName, commodity));
-    const sellMarket = sellMarkets.get(marketKey(destination, commodity));
-    if (originMarket === undefined || sellMarket === undefined) return;
-    if (!originMarket.isAvailable || !sellMarket.isAvailable) return;
-
-    const quantity = Math.min(
-      this.transport!.cargoCapacity,
-      this.cash / originMarket.price,
-      originMarket.availableQuantity,
+    const { destination } = route;
+    const executed = reverifyBundle(
+      this.locationName, route.items, destination, this.transport!.cargoCapacity, this.cash, buyMarkets, sellMarkets,
     );
-    if (quantity < 1) return;
+    if (executed.length === 0) return;
 
     const fuelMarket = buyMarkets.get(marketKey(this.locationName, "Fuel"));
     const fuelPrice = fuelMarket !== undefined ? fuelMarket.price : 0.0;
     const econ = this.routeEconomics(
-      this.locationName, destination, originMarket.price, sellMarket.price, quantity, fuelPrice, buyMarkets,
+      this.locationName, destination,
+      executed.map((e) => ({ commodity: e.commodity, quantity: e.quantity, buyPrice: e.buyPrice, sellPriceEstimate: e.sellPriceEstimate })),
+      fuelPrice, buyMarkets,
     );
     if (econ.expectedProfit <= 0 || econ.dailyReturnPct < this.minDailyReturnPct) return;
     if (econ.totalCost > this.cash) return;
@@ -1142,27 +1073,48 @@ export class Captain extends Sailor {
     if (path === null || path.length === 0) return;
 
     const originLocation = this.locationName;
-    const leg1FuelUnits = path[0].distance * this.currentFuelConsumptionRate() * quantity;
+    const totalQuantity = executed.reduce((sum, e) => sum + e.quantity, 0);
+    const leg1FuelUnits = path[0].distance * this.currentFuelConsumptionRate() * totalQuantity;
     const leg1FuelCost = leg1FuelUnits * fuelPrice;
+    const { cargoItems, goodsCost } = applyPurchases(executed, this.priceImpact);
     // Crew wages for the WHOLE trip (every leg, see routeEconomics) are paid
     // upfront here alongside goods/fuel/fixed-cost -- there's no later daily
-    // deduction while InTransit any more (see act()).
-    const upfrontCost = quantity * originMarket.price + leg1FuelCost + this.currentFixedShipmentCost() + econ.crewCost;
+    // deduction while InTransit any more (see act()). Only LEG 1's fuel is
+    // charged now -- later legs refuel at each intermediate stop (see
+    // refuelAtStop), matching `econ.fuelUnitsConsumed`/`fuelCostTotal` being
+    // the whole-trip total but `leg1FuelCost` here being just the first hop.
+    const upfront = goodsCost + leg1FuelCost + this.currentFixedShipmentCost() + econ.crewCost;
 
-    const buyPrice = originMarket.price;
-    this.cash -= upfrontCost;
+    this.cash -= upfront;
     this.totalFuelSpent += leg1FuelCost;
     this.totalFuelUnitsConsumed += leg1FuelUnits;
     this.totalFixedFeesSpent += this.transport!.fixedShipmentCost;
-    this.applyPriceImpact(originMarket, quantity, "buy");
-    originMarket.applyTrade(quantity);
-    originMarket.location.cash += quantity * buyPrice;
     if (fuelMarket !== undefined) this.applyPriceImpact(fuelMarket, leg1FuelUnits, "buy");
 
+    // The trip's shared fuel figures are only recorded on the first item's
+    // log line -- repeating them on every item would read as though the full
+    // trip fuel cost were paid once per commodity, not once total.
+    executed.forEach((e, i) => {
+      this.tradeLog.push({
+        day,
+        action: "BUY",
+        commodity: e.commodity,
+        location: originLocation,
+        destination,
+        quantity: round2(e.quantity),
+        price: round2(e.buyPrice),
+        distance: econ.distance,
+        routeType: econ.routeType,
+        travelDays: econ.travelDays,
+        fuelPrice: i === 0 ? round2(fuelPrice) : null,
+        fuelUnitsConsumed: i === 0 ? round2(leg1FuelUnits) : null,
+        fuelCostPaid: i === 0 ? round2(leg1FuelCost) : 0.0,
+        profit: null,
+      });
+    });
+
     this.cargo = {
-      commodity,
-      quantity,
-      unitCost: buyPrice,
+      items: cargoItems,
       origin: originLocation,
       destination,
       distance: econ.distance,
@@ -1171,27 +1123,9 @@ export class Captain extends Sailor {
       fuelPricePaid: fuelPrice,
       fuelUnitsConsumed: leg1FuelUnits,
       fuelCostTotal: leg1FuelCost,
-      totalCost: upfrontCost,
+      totalCost: upfront,
       departureDay: day,
-      contract: null,
     };
-
-    this.tradeLog.push({
-      day,
-      action: "BUY",
-      commodity,
-      location: originLocation,
-      destination,
-      quantity: round2(quantity),
-      price: round2(buyPrice),
-      distance: econ.distance,
-      routeType: econ.routeType,
-      travelDays: econ.travelDays,
-      fuelPrice: round2(fuelPrice),
-      fuelUnitsConsumed: round2(leg1FuelUnits),
-      fuelCostPaid: round2(leg1FuelCost),
-      profit: null,
-    });
 
     this.leavePort(path, originLocation, leg1FuelUnits, day);
   }
@@ -1274,9 +1208,7 @@ export class Captain extends Sailor {
 
     contract.inFlightCaptain = this;
     this.cargo = {
-      commodity: contract.commodity,
-      quantity,
-      unitCost: buyPrice,
+      items: [{ commodity: contract.commodity, quantity, unitCost: buyPrice, contract }],
       origin: originLocation,
       destination: contract.location,
       distance: totalDistance,
@@ -1287,7 +1219,6 @@ export class Captain extends Sailor {
       fuelCostTotal: leg1FuelCost,
       totalCost: leg1FuelCost + crewCost,
       departureDay: day,
-      contract,
     };
 
     this.tradeLog.push({
@@ -1372,8 +1303,9 @@ export class Captain extends Sailor {
           if (destLoc === targetLoc) continue;
           if (!getRoutes(targetLoc, destLoc).some((r) => this.transport!.canUseRoute(r))) continue;
           const econ = this.routeEconomics(
-            targetLoc, destLoc, targetBuyMarket.price, destSellMarket.price,
-            trialQuantity, fuelPriceAtTarget, buyMarkets,
+            targetLoc, destLoc,
+            [{ commodity, quantity: trialQuantity, buyPrice: targetBuyMarket.price, sellPriceEstimate: destSellMarket.price }],
+            fuelPriceAtTarget, buyMarkets,
           );
           if (econ.expectedProfit <= 0) continue;
           if (best === null || econ.dailyReturnPct > best.econ.dailyReturnPct) {
@@ -1477,14 +1409,18 @@ export class Captain extends Sailor {
 
   recordPortfolioSnapshot(day: number, sellMarkets: Map<string, Market>): void {
     let cargoValue = 0.0;
-    // Contract cargo is paid for by the issuing Location, not this Captain's
-    // Company (see executeContractDelivery), so it's excluded from portfolio
-    // value the same way Faction.netWorth excludes it.
-    if (this.cargo !== null && this.cargo.contract === null) {
+    // Contract-bound items are paid for by the issuing Location, not this
+    // Captain's Company (see executeContractDelivery), so each is excluded
+    // from portfolio value individually -- the same per-item exclusion
+    // Faction.netWorth uses, since one voyage's hold can mix a contract item
+    // with open-market ones.
+    if (this.cargo !== null) {
       const markLocation = this.status === "AtLocation" ? this.locationName : this.cargo.destination;
-      const market = sellMarkets.get(marketKey(markLocation, this.cargo.commodity));
-      cargoValue =
-        market !== undefined ? market.price * this.cargo.quantity : this.cargo.unitCost * this.cargo.quantity;
+      for (const item of this.cargo.items) {
+        if (item.contract !== null) continue;
+        const market = sellMarkets.get(marketKey(markLocation, item.commodity));
+        cargoValue += market !== undefined ? market.price * item.quantity : item.unitCost * item.quantity;
+      }
     }
 
     const totalValue = this.cash + cargoValue;

@@ -133,7 +133,7 @@ describe("upfront crew wages", () => {
     captain.act(1, buyMarkets, sellMarkets, ["Gold"], new Set());
     const cargo = captain.cargo!;
     const dailyWagesSum = transport.crew.reduce((sum, member) => sum + member.dailyWage, 0);
-    const goodsCost = cargo.unitCost * cargo.quantity;
+    const goodsCost = cargo.items[0].unitCost * cargo.items[0].quantity;
     const expectedCrewCost = dailyWagesSum * cargo.travelDays;
     expect(cargo.totalCost).toBeCloseTo(goodsCost + cargo.fuelCostTotal + transport.fixedShipmentCost + expectedCrewCost, 5);
 

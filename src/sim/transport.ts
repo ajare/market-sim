@@ -12,11 +12,31 @@ import { trimHistory } from "./historyRetention";
 
 export type TransportStatus = "AtLocation" | "InTransit" | "Inactive";
 
-/** In-transit cargo a Transport is currently carrying -- moved here from Captain (see captain.ts's `cargo` getter/setter) since cargo belongs to the physical vehicle, not whichever Captain currently crews it. */
-export interface CargoState {
+/**
+ * One commodity within a voyage's cargo hold -- see CargoState. A single
+ * voyage can carry several of these at once (a mixed load), each bought at
+ * the same origin and bound for the same destination but priced/costed
+ * independently, since each is its own commodity with its own market.
+ */
+export interface CargoItem {
   commodity: string;
   quantity: number;
   unitCost: number;
+  /** Set when this item is being delivered against a supply Contract rather than sold on the open market -- see Captain.fulfillContract. Independent per item, so one voyage can mix a contract-bound item with open-market ones. */
+  contract: Contract | null;
+}
+
+/**
+ * In-transit cargo a Transport is currently carrying -- moved here from
+ * Captain (see captain.ts's `cargo` getter/setter) since cargo belongs to the
+ * physical vehicle, not whichever Captain currently crews it. Holds a MIX of
+ * commodities (see CargoItem) bought at `origin` and bound for `destination`
+ * in one voyage -- the trip-level fields below (distance/travelDays/fuel/
+ * departureDay) are shared across every item in `items`, since they describe
+ * the one voyage carrying them all, not any single commodity.
+ */
+export interface CargoState {
+  items: CargoItem[];
   origin: string;
   destination: string;
   distance: number;
@@ -27,8 +47,6 @@ export interface CargoState {
   fuelCostTotal: number;
   totalCost: number;
   departureDay: number;
-  /** Set when this cargo is being delivered against a supply Contract rather than sold on the open market -- see Captain.fulfillContract. */
-  contract: Contract | null;
 }
 
 /** Why a condition-history entry was recorded -- see Transport.recordCondition/conditionHistory. "transit" is ordinary day-by-day decay while underway; "repair" is the jump back to 1.0 a REPAIR Directive gives. */
@@ -110,10 +128,8 @@ export class Transport {
   location: Location | null = null;
   /** `location`'s name, kept in sync by arriveAt -- a plain string for the many call sites (pathfinding, market lookups) that key off a location name rather than the object itself. */
   currentNode: string | null = null;
-  /** In-transit cargo this Transport is currently carrying -- see CargoState. Belongs to the Transport, not whichever Captain currently crews it (Captain exposes a `cargo` getter/setter that proxies this field for backward-compatible call sites). Null for a Transport that has never loaded cargo, or once it's been sold/dumped/seized. */
+  /** In-transit cargo this Transport is currently carrying -- see CargoState (now a mixed, multi-commodity hold, same shape for every Transport type). Belongs to the Transport, not whichever Captain currently crews it (Captain exposes a `cargo` getter/setter that proxies this field for backward-compatible call sites). Null for a Transport that has never loaded cargo, or once it's been sold/dumped/seized. */
   cargo: CargoState | null = null;
-  /** A unified multi-commodity stockpile (commodity id -> quantity), the exploration mode's inventory shape -- deliberately NOT CargoState (which is single-commodity/in-transit-trip-shaped). Only PorterParty ever populates this; every other Transport type leaves it null, exactly like `cargo` stays null for a PorterParty. */
-  inventory: Record<string, number> | null = null;
 
   constructor(init: TransportInit = {}) {
     this.name = init.name ?? "Generic Transport";
@@ -360,10 +376,11 @@ export interface PorterPartyInit extends TransportInit {
 
 /**
  * An on-foot expedition party (explorer game mode) -- travels Trail routes
- * only, carries a unified weight-capacity inventory (see Transport.inventory)
- * rather than a single CargoState, and burns no fuel at all (currentFuel
- * stays null, same treatment as SailingVessel -- needsRefuel() is always
- * false). cargoCapacity here is WEIGHT capacity, not a plain unit count: it's
+ * only, uses the same multi-commodity `cargo` (CargoState) every other
+ * Transport does (see Explorer, which trades under the same rules as a Ship
+ * -- tradingAgent.ts), and burns no fuel at all (currentFuel stays null,
+ * same treatment as SailingVessel -- needsRefuel() is always false).
+ * cargoCapacity here is WEIGHT capacity, not a plain unit count: it's
  * computed once at construction from porterCount/animalCount (see
  * recomputeCapacity) -- dynamically changing headcount (hiring, desertion) is
  * out of scope for the exploration skeleton.
@@ -386,7 +403,6 @@ export class PorterParty extends Transport {
     });
     this.porterCount = init.porterCount ?? 4;
     this.animalCount = init.animalCount ?? 0;
-    this.inventory = {};
     this.recomputeCapacity();
   }
 

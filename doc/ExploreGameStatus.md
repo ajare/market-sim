@@ -41,6 +41,69 @@ skeleton:
   independently in `runDay`; a pending decision pauses the *entire* simulation
   (fixed a real bug along the way — `World.step()` was still advancing the day
   counter/calendar even when `runDay` no-op'd).
+- **`ExpeditionParty`** (not an EXP ticket): `faction.ts`'s `Faction` (Company/
+  SoloTrader/PirateBrigade/PoliceFleet's Captain-and-Ship-specific machinery — cash
+  pooling via `ownCash`, cargo/contracts, condition decay/sinking) was split from a
+  new, generic `BaseFaction<TMember>` core (constructor-time Transport-placement/
+  crew-boarding, display-name deduping) via a minimal `FactionMember` structural
+  interface, with `Faction extends BaseFaction<Captain>` — a zero-behavior-change
+  refactor for every existing Faction subclass. `ExpeditionParty extends
+  BaseFaction<Explorer>` is the new sibling: the exploration mode's SoloTrader
+  analog, managing exactly one `Explorer` (in the "captain" role) commanding
+  exactly one `PorterParty` (its Transport), `poolsCash = false` like SoloTrader. A
+  pure wrapper today — an `Explorer` already boards its `PorterParty` and manages
+  its own `cash` at construction (EXP-5), so `ExpeditionParty` doesn't move money or
+  re-place anything; it's a Faction-shaped handle (`name`/`captains`/
+  `politicalEntity`/`startingCash`) and the intended home for future porter-hiring
+  machinery (not yet implemented — `PorterParty.porterCount`/`animalCount` are
+  still fixed at construction, per EXP-3's own deferred scope). `World.explorers`
+  is now a read-only derived getter over the authoritative `World.expeditionParties:
+  ExpeditionParty[]`; `buildWorldFromJson.ts` wraps each JSON-authored Explorer in
+  one.
+- **Multi-commodity `CargoState`** (not an EXP ticket -- "Round A" of the
+  Explorer/Captain unification decided in this same conversation): `CargoState`
+  changed from single-commodity to `{ items: CargoItem[], origin, destination,
+  distance, routeType, travelDays, fuel*, totalCost, departureDay }` (each `CargoItem`
+  carrying its own `commodity`/`quantity`/`unitCost`/`contract`) -- applied to EVERY
+  Transport (Ship included), not just PorterParty. `Captain.findBestLocalRoute`
+  is now a destination-first greedy knapsack (rank every profitable commodity at a
+  candidate destination by per-unit margin, fill `cargoCapacity`/cash margin-first)
+  instead of picking one commodity at a time -- a Ship can now carry a genuine mix
+  of goods in one voyage. `sellCargoIfPossible`/`fenceCargoIfPossible`/
+  `maybeSmuggle`/`fulfillContract`, `Faction.netWorth`/`loseCargoAndCash`/
+  `PirateBrigade.attack`, and `Company.directFleet`'s per-route demand capping were
+  all generalized to loop per item. `Transport.inventory` (PorterParty's old
+  separate multi-commodity stockpile) was removed from the base `Transport` class;
+  `PorterParty` keeps a private, PorterParty-only `inventory` field used only by
+  `Explorer.buy`/`sell` and `buildPassageTaxDecision`'s gift-giving -- a deliberate,
+  temporary gap (not yet migrated onto the new item-based `cargo`) left for Round B.
+- **Round B** (done, same conversation): closed that gap. Rather than a shared base
+  class (Captain's `company: Faction` typing, its private `arrive()`, and Sailor's
+  wage/rank/piracy fields all make literal inheritance a bad fit for Explorer) or a
+  mixin (unprecedented in this codebase), Captain's route-scoring/execution math was
+  extracted into a new `src/sim/tradingAgent.ts` -- free functions
+  (`findBestBundle`/`routeEconomicsFromPath`/`reverifyBundle`/`applyPurchases`/
+  `sellCargoShared`/`buySingleCommodity`/`sellSingleCommodity`) parameterized over an
+  explicit `TripCostParams` instead of methods reading `this`. Captain's own
+  `routeEconomics`/`findBestLocalRoute`/`executeLocalRoute`/`sellCargoIfPossible`
+  became thin wrappers over these (zero behavior change -- full suite passed
+  unmodified before touching Explorer at all). `Explorer` now trades under the exact
+  same rules (real price impact, capacity/cash limits, a `tradeLog`) via `cargo.items`
+  -- `PorterParty.inventory` is gone entirely. `ExpeditionParty` gained
+  `directFleet`/`aiControlled` (`faction.ts`) -- much simpler than `Company`'s (exactly
+  one Explorer, so no idle-partitioning/fleet-wide demand capping), restricted to
+  direct Trail-neighbor hops only (no multi-hop continuation -- matches Explorer's
+  existing single-leg movement model). Also fixed a real, pre-existing bug along the
+  way: `World.pendingDecision` is a single global slot, so two Explorers arriving at
+  villages the same day would have had the second's passage-tax decision silently
+  dropped forever (the guard blocks it, and `arrive()` never re-fires). Now only a
+  player-controlled party's arrival ever touches that field; an `aiControlled` one
+  resolves its own decision immediately (`decisions.autoResolveDecision` -- picks the
+  first eligible choice, i.e. "pay if affordable, else fall through") and never
+  contends for it. `JsonExplorer.aiControlled` (optional, default false) makes this
+  reachable via hand-authored World JSON; the standalone `editor/` UI doesn't
+  author it yet (flagged as a follow-up, same as the rest of exploration-mode editor
+  authoring).
 - **UI** (EXP-8): `ExplorerPanel` (list + buy/sell form + "Choose next leg"),
   `DecisionModal` (the app's first blocking modal), store wiring, `Market` hut icon
   and `Trail` styling on the map.
@@ -50,9 +113,21 @@ skeleton:
   World" for manual testing.
 
 **Explicitly out of scope for this skeleton** (deferred on purpose, not oversights):
-the advisor panel, fog-of-war, the pre-arrival village-encounter event, illness/
-disease events, and any editor UI for authoring villages/explorers (JSON-only for
-now).
+the advisor panel, fog-of-war, the pre-arrival village-encounter event, and illness/
+disease events.
+
+**Editor UI for authoring villages/explorers** (not an EXP ticket, built directly
+against this doc's own gap list): `editor/`'s standalone World editor now authors
+both natively, no JSON hand-editing required. `LocationInspector` gained a "Ruler
+(exploration mode)" checkbox that installs/removes an `EditorChieftain` (name,
+passage-tax %, trust, gift-category checkboxes drawn from the registered
+commodities) on the selected Location. A new `ExplorersPanel` (mirrors
+`CompaniesPanel`'s rollup-card list) authors `EditorExplorer`s -- name, home
+Location, porter/animal counts, starting cash. Both round-trip through
+`worldJson.ts`'s export/import (schema bumped to version 11) and are consumed by
+`buildWorldFromJson.ts`'s existing `ruler`/`explorers` parsing (already in place
+since EXP-9's demo fixture). Deleting a Location cascades to any Explorer whose
+home it was (no fallback home Location, unlike a Company).
 
 ## b) Designed, not yet implemented
 
@@ -122,9 +197,6 @@ Real gaps — either flagged as open follow-ups during design, or areas of
   tribes fighting each other, Westerners playing tribes off against each other
   (treaties, land claims, mercenary work) — none of this has been discussed as a
   player-facing mechanic.
-- **Editor UI for authoring villages/explorers**: deliberately deferred (JSON-only
-  path exists via EXP-9), but no design discussion has happened for what an
-  editor-side authoring flow would even look like.
 - **Advisor template content**: the tag/trust-tier line-bank *mechanism* is designed,
   but no actual advice text has been authored — this is a content gap, not a
   mechanics gap, once the advisor panel itself is built.

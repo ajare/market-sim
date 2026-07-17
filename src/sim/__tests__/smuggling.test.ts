@@ -38,9 +38,7 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
   captain.status = "AtLocation";
 
   const cargo: CargoState = {
-    commodity: "Wheat",
-    quantity: 50,
-    unitCost: 8,
+    items: [{ commodity: "Wheat", quantity: 50, unitCost: 8, contract: null }],
     origin: "Elsewhere",
     destination: "Blockaded Port",
     distance: 100,
@@ -51,7 +49,6 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
     fuelCostTotal: 5,
     totalCost: 405, // 50 * 8 + 5 fuel
     departureDay: 1,
-    contract: null,
   };
   captain.cargo = cargo;
 
@@ -116,7 +113,7 @@ describe("SoloTrader smuggling at a closed port", () => {
       if (entry!.price !== null) {
         sawSuccess = true;
         expect(captain.cash).toBeGreaterThan(cashBefore); // sold at a discount, still positive proceeds
-        expect(market.location.stockpiles.Wheat).toBe(stockBefore + cargo.quantity); // goods physically arrived
+        expect(market.location.stockpiles.Wheat).toBe(stockBefore + cargo.items[0].quantity); // goods physically arrived
         expect(entry!.price).toBeCloseTo(market.price * 0.7);
       } else {
         sawCaught = true;

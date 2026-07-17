@@ -212,21 +212,24 @@ body {
 }
 
 .commodities-panel,
-.companies-panel {
+.companies-panel,
+.explorers-panel {
   padding: 0 0.75rem 0.75rem;
   border-top: 1px solid #eee;
   margin-top: 0.5rem;
 }
 
 .commodities-empty,
-.companies-empty {
+.companies-empty,
+.explorers-empty {
   color: #888;
   font-size: 0.8rem;
   padding: 0.25rem 0 0.5rem;
 }
 
 .commodity-card,
-.company-card {
+.company-card,
+.explorer-card {
   border: 1px solid #e2e2e2;
   border-radius: 6px;
   padding: 0.4rem 0.5rem;
@@ -235,7 +238,8 @@ body {
 }
 
 .commodity-card-header,
-.company-card-header {
+.company-card-header,
+.explorer-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -379,7 +383,8 @@ body {
 }
 
 .commodity-card-header button,
-.company-card-header button {
+.company-card-header button,
+.explorer-card-header button {
   flex-shrink: 0;
   border: none;
   background: #eee;
@@ -858,10 +863,37 @@ body {
   margin-bottom: 0;
 }
 
+.faction-type-toggle {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: #555;
+  margin-bottom: 0.4rem;
+}
+
+.faction-type-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
 .terminal-types {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
+}
+
+.ruler-section {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  background: #f7f4ee;
+  border: 1px solid #e6ddc8;
+  border-radius: 6px;
+}
+
+.ruler-section .field-row {
+  margin-bottom: 0.5rem;
 }
 
 .terminal-type-checkbox {
@@ -990,10 +1022,14 @@ body {
   cursor: pointer;
 }
 
+/* Now the first thing in CompaniesPanel (the shared "New Faction" creator,
+   Company or Explorer Party) -- separates from the Companies list that
+   follows via a bottom border/margin instead of the top one it used to need
+   when it sat after the list. */
 .company-generator {
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid #eee;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid #eee;
 }
 
 .company-generator-fields {
@@ -1010,9 +1046,22 @@ body {
   flex: 1;
 }
 
+/* Political entity / Home Location sit directly in .company-generator (not
+   inside the Nationality/Captains flex row), so they need their own spacing. */
+.company-generator > .company-generator-field {
+  margin-bottom: 0.4rem;
+}
+
 .company-generator-field input,
 .company-generator-field select {
   width: 100%;
+}
+
+.fleet-captain-name-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
 }
 
 .company-generator-button {

@@ -16,7 +16,7 @@ import { ENGLISH_NAMES, SPANISH_NAMES, randomPersonName, type Gender, type NameP
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { randomLocationName } from "./locationNames";
 import { NATIONALITY_POOLS, randomNationality, type Nationality } from "./nationality";
-import { Faction, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet } from "./faction";
+import { Faction, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet, ExpeditionParty } from "./faction";
 import type { Explorer } from "./explorer";
 import type { PendingDecision } from "./decisions";
 import { generateSailorPool, addToSailorPool, tickPoolPiracy } from "./sailorPool";
@@ -128,8 +128,8 @@ export interface WorldInit {
   weather?: WeatherSystem | null;
   /** Discrete storm/cyclone entities driven by `weather` -- see storms.ts. Null (default) if this World has no WeatherSystem to drive them (StormSystem needs one; the two are always constructed together). */
   storms?: StormSystem | null;
-  /** Exploration-mode expedition parties (see explorer.ts) -- empty by default, fully independent of the captains/factions/locations loops below. */
-  explorers?: Explorer[];
+  /** Exploration-mode expedition parties (see faction.ts's ExpeditionParty, explorer.ts) -- empty by default, fully independent of the captains/factions/locations loops below. */
+  expeditionParties?: ExpeditionParty[];
 }
 
 export { DEFAULT_START_DATE };
@@ -160,8 +160,13 @@ export class World {
   contractOptions: TenderContractsOptions;
   weather: WeatherSystem | null;
   storms: StormSystem | null;
-  /** Exploration-mode expedition parties -- see explorer.ts. Ticked once per day in runDay, fully independent of the captains/factions/locations loops. */
-  explorers: Explorer[];
+  /** Exploration-mode expedition parties -- see faction.ts's ExpeditionParty. Ticked once per day in runDay, fully independent of the captains/factions/locations loops. */
+  expeditionParties: ExpeditionParty[];
+
+  /** Read-only convenience view of `expeditionParties`' Explorers -- every existing consumer (ExplorerPanel, decisions.ts, buildWorldFromJson) just wants the Explorer, not the ExpeditionParty wrapper managing it. */
+  get explorers(): Explorer[] {
+    return this.expeditionParties.map((party) => party.explorer);
+  }
   /**
    * A decision the player must resolve before the simulation can advance
    * any further -- set by Explorer.arrive() on arrival at a Village (see
@@ -290,7 +295,7 @@ export class World {
 
     this.captains = [...(init.traders ?? []), ...this.factions.flatMap((f) => f.captains)];
     this.agentOrderFn = init.agentOrderFn ?? randomAgentOrder;
-    this.explorers = init.explorers ?? [];
+    this.expeditionParties = init.expeditionParties ?? [];
 
     for (const location of init.locations) {
       for (const commodity of Object.keys(location.producedCommodities)) {
@@ -1034,9 +1039,18 @@ export class World {
 
     // Exploration-mode expedition parties -- a fully independent pass, not
     // folded into the captains/factions loops above. May itself set
-    // `this.pendingDecision` on arrival at a Village (see Explorer.arrive),
-    // which simply means the NEXT runDay call (not this one) is the one
-    // that pauses.
-    for (const explorer of this.explorers) explorer.tick(day, this);
+    // `this.pendingDecision` on arrival at a Village (a player-controlled
+    // party only -- see Explorer.arrive), which simply means the NEXT
+    // runDay call (not this one) is the one that pauses. An aiControlled
+    // party plans its own trade/move first (mirrors the Faction.directFleet
+    // pass above, just scoped to one Explorer -- see
+    // ExpeditionParty.directFleet) before ticking.
+    for (const party of this.expeditionParties) {
+      if (party.aiControlled && party.explorer.destination === null && party.explorer.cargo === null) {
+        const directive = party.directFleet(day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations);
+        if (directive !== null) party.explorer.executeTradeDirective(directive, day, this.buyMarkets, this.sellMarkets);
+      }
+      party.explorer.tick(day, this);
+    }
   }
 }

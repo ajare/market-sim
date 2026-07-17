@@ -33,13 +33,12 @@ describe("PorterParty", () => {
     expect(noPorters.cargoCapacity).toBeCloseTo(PORTER_PARTY_BASE_CAPACITY, 5);
   });
 
-  it("starts with an empty inventory, unlike a Ship (which leaves inventory null)", () => {
+  it("starts with no cargo, same as every other Transport", () => {
     const party = new PorterParty({ name: "Test Party" });
-    expect(party.inventory).toEqual({});
     expect(party.cargo).toBeNull();
 
     const ship = new Ship({ name: "Freighter" });
-    expect(ship.inventory).toBeNull();
+    expect(ship.cargo).toBeNull();
   });
 
   it("burns no fuel and never needs refueling", () => {

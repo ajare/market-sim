@@ -278,7 +278,7 @@ export function PersonPanel() {
                     <th>Cargo</th>
                     <td>
                       {captain.cargo !== null
-                        ? `${captain.cargo.quantity.toFixed(1)} ${captain.cargo.commodity} → ${captain.cargo.destination}`
+                        ? `${captain.cargo.items.map((item) => `${item.quantity.toFixed(1)} ${item.commodity}`).join(", ")} → ${captain.cargo.destination}`
                         : "-"}
                     </td>
                   </tr>

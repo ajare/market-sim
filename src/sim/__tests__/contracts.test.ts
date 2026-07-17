@@ -412,7 +412,9 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
     expect(directive).toBeDefined();
     // An arbitrage directive is a TradeDirective -- no `action` discriminator -- for Silver.
     expect((directive as { action?: string }).action).toBeUndefined();
-    expect((directive as { commodity?: string }).commodity).toBe("Silver");
+    expect((directive as { items?: Array<{ commodity: string }> }).items).toEqual([
+      expect.objectContaining({ commodity: "Silver" }),
+    ]);
     // The contract was neither accepted nor serviced -- still sitting on the board.
     expect(contract.fulfiller).toBeNull();
     expect(board.open).toContain(contract);

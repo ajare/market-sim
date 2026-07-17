@@ -37,6 +37,15 @@ function makeExplorer(location: Location, cash: number): Explorer {
   });
 }
 
+/** Seeds `explorer`'s cargo with a single open-market commodity/quantity (no contract, no trip economics -- gift-giving/eligibility checks only care about `heldQuantity`). */
+function seedCargo(explorer: Explorer, commodity: string, quantity: number): void {
+  explorer.cargo = {
+    items: [{ commodity, quantity, unitCost: 0, contract: null }],
+    origin: explorer.locationName, destination: explorer.locationName, distance: 0, routeType: "none",
+    travelDays: 0, fuelPricePaid: 0, fuelUnitsConsumed: 0, fuelCostTotal: 0, totalCost: 0, departureDay: 0,
+  };
+}
+
 /** Finds a seed whose very next randRandom() roll satisfies `predicate`, and leaves the RNG primed so the caller's next randRandom() call reproduces it. */
 function primeRollMatching(predicate: (roll: number) => boolean): void {
   for (let seed = 1; seed < 10_000; seed++) {
@@ -61,7 +70,6 @@ describe("buildPassageTaxDecision -- ruler present", () => {
     village.ruler = chieftain;
 
     const explorer = makeExplorer(village, 100); // demandedAmount = 50
-    explorer.porterParty.inventory = {};
 
     const decision = buildPassageTaxDecision(explorer, village);
     expect(decision.kind).toBe("PassageTax");
@@ -75,7 +83,7 @@ describe("buildPassageTaxDecision -- ruler present", () => {
     expect(haggle.isEligible({ explorer })).toBe(true);
     expect(refuse.isEligible({ explorer })).toBe(true);
 
-    explorer.porterParty.inventory = { Tobacco: 3 };
+    seedCargo(explorer, "Tobacco", 3);
     expect(gift.isEligible({ explorer })).toBe(true);
   });
 
@@ -119,12 +127,12 @@ describe("buildPassageTaxDecision -- ruler present", () => {
     });
     village.ruler = chieftain;
     const explorer = makeExplorer(village, 100);
-    explorer.porterParty.inventory = { Beads: 2 }; // less than GIFT_QUANTITY_OFFERED (5)
+    seedCargo(explorer, "Beads", 2); // less than GIFT_QUANTITY_OFFERED (5)
 
     const decision = buildPassageTaxDecision(explorer, village);
     decision.choices[1].resolve({ explorer });
 
-    expect(explorer.porterParty.inventory?.Beads).toBeUndefined(); // fully depleted, key removed
+    expect(explorer.heldQuantity("Beads")).toBe(0); // fully depleted
     expect(chieftain.trust).toBeGreaterThan(0.5);
     expect(explorer.cash).toBe(100); // gift doesn't touch cash
   });

@@ -49,10 +49,10 @@ describe("Explorer construction", () => {
 });
 
 describe("Explorer.buy/sell", () => {
-  it("buy() moves goods from the market into the PorterParty's inventory and deducts cash", () => {
+  it("buy() moves goods from the market into cargo and deducts cash (plus a little price impact, same rules as a Ship)", () => {
     const village = makeVillage("Trade Village");
     setGeography([village], { "Trade Village": [0, 0] });
-    const { explorer, party } = makeExplorer(village, 1000);
+    const { explorer } = makeExplorer(village, 1000);
 
     // Ivory is produced here -- matches world.ts's convention of a produced
     // commodity's Market being side="buy" (the side a Captain/Explorer buys
@@ -61,7 +61,7 @@ describe("Explorer.buy/sell", () => {
     const bought = explorer.buy("Ivory", 5, ivoryMarket);
 
     expect(bought).toBe(5);
-    expect(party.inventory).toEqual({ Ivory: 5 });
+    expect(explorer.cargo?.items).toEqual([{ commodity: "Ivory", quantity: 5, unitCost: 10, contract: null }]);
     expect(explorer.cash).toBe(1000 - 5 * 10);
     expect(village.stockpiles.Ivory).toBe(95); // buy-side applyTrade decreases location stockpile
   });
@@ -69,21 +69,25 @@ describe("Explorer.buy/sell", () => {
   it("buy() clamps to affordability, available stock, and remaining weight capacity", () => {
     const village = makeVillage("Poor Village");
     setGeography([village], { "Poor Village": [0, 0] });
-    const { explorer, party } = makeExplorer(village, 25); // only affords 2.5 units at price 10
+    const { explorer, party } = makeExplorer(village, 25); // only affords ~2.5 units at price 10
 
     const ivoryMarket = new Market("Ivory", "Poor Village", village, 10, 10, "buy");
     const bought = explorer.buy("Ivory", 100, ivoryMarket);
 
-    expect(bought).toBeCloseTo(2.5, 5);
-    expect(explorer.cash).toBeCloseTo(0, 5);
+    expect(bought).toBeCloseTo(2.5, 1);
+    expect(explorer.cash).toBeCloseTo(0, 1);
     expect(party.cargoCapacity).toBeGreaterThan(bought); // capacity wasn't the binding constraint here
   });
 
-  it("sell() moves goods from inventory back to cash, capped by what's held", () => {
+  it("sell() moves goods from cargo back to cash, capped by what's held", () => {
     const village = makeVillage("Sell Village");
     setGeography([village], { "Sell Village": [0, 0] });
-    const { explorer, party } = makeExplorer(village, 0);
-    party.inventory = { Cloth: 3 };
+    const { explorer } = makeExplorer(village, 0);
+    explorer.cargo = {
+      items: [{ commodity: "Cloth", quantity: 3, unitCost: 0, contract: null }],
+      origin: "Sell Village", destination: "Sell Village", distance: 0, routeType: "none",
+      travelDays: 0, fuelPricePaid: 0, fuelUnitsConsumed: 0, fuelCostTotal: 0, totalCost: 0, departureDay: 0,
+    };
 
     // Cloth is consumed here -- matches world.ts's convention of a consumed
     // commodity's Market being side="sell" (the side a Captain/Explorer
@@ -93,7 +97,7 @@ describe("Explorer.buy/sell", () => {
 
     expect(sold).toBe(3);
     expect(explorer.cash).toBe(15);
-    expect(party.inventory?.Cloth).toBeUndefined(); // fully depleted, key removed
+    expect(explorer.heldQuantity("Cloth")).toBe(0); // fully depleted
   });
 });
 

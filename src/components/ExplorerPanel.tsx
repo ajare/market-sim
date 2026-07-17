@@ -4,7 +4,7 @@ import { useSimStore } from "../state/useSimStore";
 /**
  * Exploration-mode panel: lists every Explorer in the World (mirrors
  * FleetPanel's list-plus-detail layout) and, for the selected one, shows
- * cash/inventory plus a Buy/Sell mini-form against the current Location's
+ * cash/cargo plus a Buy/Sell mini-form against the current Location's
  * Markets (mirrors BuyShipPanel's form pattern) and a "Choose next leg"
  * action. No dedicated screen -- just another panel alongside the existing
  * ones, per doc/ExploreGameIntegration.md's "No dedicated UI view" decision.
@@ -44,7 +44,7 @@ export function ExplorerPanel() {
   if (world === null) return null;
 
   const pendingDecision = world.pendingDecision;
-  const inventory = selectedExplorer?.porterParty.inventory ?? null;
+  const cargoItems = selectedExplorer?.cargo?.items ?? null;
 
   function handleBuy() {
     if (selectedExplorer === null || buyCommodity === "") return;
@@ -55,7 +55,7 @@ export function ExplorerPanel() {
   function handleSell() {
     if (selectedExplorer === null || sellCommodity === "") return;
     const sold = sellAtVillage(selectedExplorer, sellCommodity, sellQuantity);
-    setMessage(sold > 0 ? `Sold ${sold.toFixed(1)} ${sellCommodity}.` : "Nothing sold -- check inventory.");
+    setMessage(sold > 0 ? `Sold ${sold.toFixed(1)} ${sellCommodity}.` : "Nothing sold -- check cargo.");
   }
 
   return (
@@ -99,13 +99,11 @@ export function ExplorerPanel() {
               <table>
                 <tbody>
                   <tr>
-                    <th>Inventory</th>
+                    <th>Cargo</th>
                     <td>
-                      {inventory === null || Object.keys(inventory).length === 0
+                      {cargoItems === null || cargoItems.length === 0
                         ? "-"
-                        : Object.entries(inventory)
-                            .map(([commodity, quantity]) => `${quantity.toFixed(1)} ${commodity}`)
-                            .join(", ")}
+                        : cargoItems.map((item) => `${item.quantity.toFixed(1)} ${item.commodity}`).join(", ")}
                     </td>
                   </tr>
                 </tbody>

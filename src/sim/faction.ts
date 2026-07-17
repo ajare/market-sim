@@ -14,10 +14,11 @@
  * dynamically (like Python's MRO), so it works correctly here.
  */
 import { Captain, isShipLogEnabled, type Directive, type TradeDirective } from "./captain";
+import type { Explorer } from "./explorer";
 import { trimHistory } from "./historyRetention";
 import { Sailor, SAILOR_MIN_AGE, SAILOR_MAX_AGE, JOURNEYS_PER_HIRE } from "./sailor";
 import {
-  Ship, MIN_ATTACK_CONDITION_DAMAGE, MAX_ATTACK_CONDITION_DAMAGE, CONDITION_REPAIR_THRESHOLD, type Transport,
+  Ship, MIN_ATTACK_CONDITION_DAMAGE, MAX_ATTACK_CONDITION_DAMAGE, CONDITION_REPAIR_THRESHOLD, type Transport, type CargoItem,
 } from "./transport";
 import { getRoutes } from "./routes";
 import { getLocation, distanceBetween } from "./worldData";
@@ -25,6 +26,7 @@ import { findShortestPath } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { randChoice, randRandom, randUniform } from "./simRandom";
 import type { BulletinBoard, Contract, ContractType } from "./contracts";
+import type { Location } from "./location";
 import type { PoliticalEntity } from "./politicalEntity";
 import { locationSupportsTransport } from "./companyHome";
 import { round2 } from "./utils";
@@ -35,11 +37,22 @@ import { randomNationality } from "./nationality";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
-/** Adapts the global sim RNG to the NameRng surface randomPersonName/randomGender need, so a newly crewed Sailor's name/gender/birth date draw off the same seeded stream as the rest of the simulation. */
-const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
+/**
+ * The minimal surface BaseFaction's constructor-time registration needs from
+ * a "crew member" -- satisfied by both Captain (via Person) and Explorer (via
+ * Person) without either needing to know about the other. Everything beyond
+ * this (cash-pool bookkeeping, contracts, condition/cargo) is specific to the
+ * concrete Faction subclass and lives there instead (see Faction, below).
+ */
+export interface FactionMember {
+  name: string;
+  transport: Transport | null;
+  boardTransport(transport: Transport): void;
+  disembarkAt(location: Location): void;
+}
 
-/** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see Faction.dedupeCaptainName. */
-function alphaSequence(index: number): string {
+/** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see BaseFaction.dedupeMemberName. */
+function alphaSequenceBase(index: number): string {
   let n = index + 1;
   let s = "";
   while (n > 0) {
@@ -49,6 +62,97 @@ function alphaSequence(index: number): string {
   }
   return s;
 }
+
+/**
+ * The generic core every Faction-like grouping shares: a name, a roster of
+ * crew members each paired with the Transport they command, and the
+ * constructor-time bookkeeping (placing the Transport, boarding the member,
+ * deduping display names) that's identical regardless of what kind of member
+ * this is. Everything Captain/Ship-specific (cash pooling via ownCash,
+ * contracts, condition/cargo, sinking, repair) stays on `Faction` itself
+ * (below) rather than here, since none of it applies to a non-Captain member
+ * like Explorer -- see ExpeditionParty, the other concrete subclass of this
+ * base.
+ *
+ * `captains` keeps its name (rather than something like `members`) even
+ * though it holds Explorers for ExpeditionParty -- renaming it would ripple
+ * through every existing external read of `faction.captains`/`company.captains`
+ * for zero behavioral benefit, since those all only ever see the Captain
+ * flavor of this base in practice.
+ */
+export abstract class BaseFaction<TMember extends FactionMember> {
+  /** Whether this Faction pools its crew members' cash into one shared balance (true) or leaves each to their own (false) -- true by default; overridden false on SoloTrader/PirateBrigade/ExpeditionParty. See the class doc on why this is a getter, not a plain field. */
+  get poolsCash(): boolean {
+    return true;
+  }
+
+  name: string;
+  captains: TMember[] = [];
+  /** The PoliticalEntity this Faction is affiliated with, or null for an independent operator (the default). Purely informational. */
+  politicalEntity: PoliticalEntity | null = null;
+  startingCash: number;
+  /** Names already in use by this Faction's fleet, so a duplicate (whether from a name generator's small pool or hand-authored JSON) gets disambiguated -- see dedupeTransportName. */
+  private readonly transportNames = new Set<string>();
+  /** Names already in use by this Faction's crew members -- see dedupeMemberName. */
+  private readonly memberNames = new Set<string>();
+
+  constructor(name: string, crew: Array<[Transport, TMember, string]>, startingCash: number = 0.0) {
+    this.name = name;
+    for (const [transport, member, homeLocation] of crew) {
+      transport.arriveAt(getLocation(homeLocation)!);
+      member.boardTransport(transport);
+      this.captains.push(member);
+      this.dedupeTransportName(transport);
+      this.dedupeMemberName(member);
+    }
+    this.startingCash = startingCash;
+  }
+
+  /**
+   * Renames `transport` if its name collides with one already in this
+   * Faction's fleet, appending " 2", " 3", etc. until unique -- so no two
+   * Transports in the same Faction ever share a display name, whether the
+   * collision came from a name generator's pool being smaller than the fleet
+   * or from hand-authored JSON.
+   */
+  protected dedupeTransportName(transport: Transport): void {
+    if (this.transportNames.has(transport.name)) {
+      const base = transport.name;
+      let suffix = 2;
+      while (this.transportNames.has(`${base} ${suffix}`)) suffix += 1;
+      transport.name = `${base} ${suffix}`;
+    }
+    this.transportNames.add(transport.name);
+  }
+
+  /**
+   * Renames `member` if their name collides with one already in this
+   * Faction, inserting a middle initial before the last name -- "A." for the
+   * first collision, "B." for the next, and so on (falling back to "AA.",
+   * "AB.", ... past "Z." for a long run of same-named members), replacing
+   * any middle initial a prior dedupe pass already inserted. A name with no
+   * space (no separate last name) just gets the initial appended.
+   */
+  protected dedupeMemberName(member: TMember): void {
+    if (this.memberNames.has(member.name)) {
+      const parts = member.name.trim().split(/\s+/);
+      const firstName = parts[0];
+      const lastName = parts.length > 1 ? parts[parts.length - 1] : null;
+      let index = 0;
+      let candidate: string;
+      do {
+        const initial = alphaSequenceBase(index);
+        candidate = lastName !== null ? `${firstName} ${initial}. ${lastName}` : `${firstName} ${initial}.`;
+        index += 1;
+      } while (this.memberNames.has(candidate));
+      member.name = candidate;
+    }
+    this.memberNames.add(member.name);
+  }
+}
+
+/** Adapts the global sim RNG to the NameRng surface randomPersonName/randomGender need, so a newly crewed Sailor's name/gender/birth date draw off the same seeded stream as the rest of the simulation. */
+const globalNameRng: NameRng = { random: randRandom, choice: randChoice };
 
 /** Range (inclusive, as a fraction of seized quantity) a raid destroys outright before fencing -- rolled fresh per attack. See PirateBrigade.attack. */
 export const MIN_CARGO_DESTRUCTION_FRACTION = 0.25;
@@ -72,8 +176,8 @@ export interface FactionNetWorthSnapshot {
   netWorth: number;
 }
 
-export class Faction {
-  get poolsCash(): boolean {
+export class Faction extends BaseFaction<Captain> {
+  override get poolsCash(): boolean {
     return true;
   }
 
@@ -126,9 +230,11 @@ export class Faction {
    */
   private loseCargoAndCash(captain: Captain): void {
     if (captain.cargo !== null) {
-      if (captain.cargo.contract !== null) {
-        captain.cargo.contract.cancelled = true;
-        captain.cargo.contract.inFlightCaptain = null;
+      for (const item of captain.cargo.items) {
+        if (item.contract !== null) {
+          item.contract.cancelled = true;
+          item.contract.inFlightCaptain = null;
+        }
       }
       captain.cargo = null;
     }
@@ -255,8 +361,6 @@ export class Faction {
     return this.addTransport(transport, captain, location, 0);
   }
 
-  name: string;
-  captains: Captain[] = [];
   /**
    * Captains benched after their Ship sank in port (see sinkInPort) -- no
    * longer in `captains` (or `world.captains`; World.runDay excludes them
@@ -267,25 +371,17 @@ export class Faction {
    * only) an automatic replacement purchase does.
    */
   inactiveCaptains: Captain[] = [];
-  /** The PoliticalEntity this Faction is affiliated with, or null for an independent operator (the default). Purely informational -- affiliation doesn't influence trading behaviour. Set by buildWorldFromJson from the authored World; a procedurally-built Faction stays independent. */
-  politicalEntity: PoliticalEntity | null = null;
-  startingCash: number;
   /** The single shared pool every captain's `cash` reads/writes through -- only meaningful when poolsCash. */
   cash: number = 0;
   netWorthHistory: FactionNetWorthSnapshot[] = [];
-  /** Names already in use by this Faction's fleet, so a duplicate (whether from a name generator's small pool or hand-authored JSON) gets disambiguated -- see dedupeTransportName. */
-  private readonly transportNames = new Set<string>();
-  /** Names already in use by this Faction's Captains -- see dedupeCaptainName. */
-  private readonly captainNames = new Set<string>();
 
   constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
-    this.name = name;
-    for (const [transport, captain, homeLocation] of crew) {
-      transport.arriveAt(getLocation(homeLocation)!);
-      captain.boardTransport(transport);
-      this.captains.push(captain);
-      this.dedupeTransportName(transport);
-      this.dedupeCaptainName(captain);
+    // BaseFaction's constructor handles the member-agnostic bookkeeping
+    // (placing each Transport, boarding each Captain, deduping display
+    // names); only the Captain-specific bits (the Sailor-typed crew seat,
+    // and ownCash/company cash wiring) are left to do here.
+    super(name, crew, startingCash);
+    for (const [transport, captain] of crew) {
       // Only the Captain's own seat is filled here -- extra Sailor seats are
       // deferred to crewFleet(), since the world-wide Sailor pool can only be
       // sized correctly once every initial Faction's demand (Company/
@@ -294,7 +390,6 @@ export class Faction {
       // crewFleet() on every Faction right after generating the pool).
       transport.crew = [captain];
     }
-    this.startingCash = startingCash;
     if (this.poolsCash) {
       this.cash = startingCash;
       for (const captain of this.captains) {
@@ -313,48 +408,6 @@ export class Faction {
         captain.company = this;
       }
     }
-  }
-
-  /**
-   * Renames `transport` if its name collides with one already in this
-   * Faction's fleet, appending " 2", " 3", etc. until unique -- so no two
-   * Ships in the same Company (or SoloTrader/PirateBrigade/PoliceFleet) ever
-   * share a display name, whether the collision came from a name
-   * generator's pool being smaller than the fleet or from hand-authored JSON.
-   */
-  private dedupeTransportName(transport: Transport): void {
-    if (this.transportNames.has(transport.name)) {
-      const base = transport.name;
-      let suffix = 2;
-      while (this.transportNames.has(`${base} ${suffix}`)) suffix += 1;
-      transport.name = `${base} ${suffix}`;
-    }
-    this.transportNames.add(transport.name);
-  }
-
-  /**
-   * Renames `captain` if their name collides with one already in this
-   * Faction, inserting a middle initial before the last name -- "A." for the
-   * first collision, "B." for the next, and so on (falling back to "AA.",
-   * "AB.", ... past "Z." for a long run of same-named captains), replacing
-   * any middle initial a prior dedupe pass already inserted. A name with no
-   * space (no separate last name) just gets the initial appended.
-   */
-  private dedupeCaptainName(captain: Captain): void {
-    if (this.captainNames.has(captain.name)) {
-      const parts = captain.name.trim().split(/\s+/);
-      const firstName = parts[0];
-      const lastName = parts.length > 1 ? parts[parts.length - 1] : null;
-      let index = 0;
-      let candidate: string;
-      do {
-        const initial = alphaSequence(index);
-        candidate = lastName !== null ? `${firstName} ${initial}. ${lastName}` : `${firstName} ${initial}.`;
-        index += 1;
-      } while (this.captainNames.has(candidate));
-      captain.name = candidate;
-    }
-    this.captainNames.add(captain.name);
   }
 
   /** A Sailor with the old placeholder "${transport.name} Sailor N" name -- every non-Ship Transport type's crew (the pool/hiring/speed mechanic in captain.ts is Ship-specific, so these keep the plain placeholder rather than a pool-drawn name). Still needs a gender/nationality/birth date to satisfy Person's fields, so those are still rolled (nationality doesn't influence the placeholder name, unlike a pool Sailor's). */
@@ -421,7 +474,7 @@ export class Faction {
     captain.boardTransport(transport);
     this.captains.push(captain);
     this.dedupeTransportName(transport);
-    this.dedupeCaptainName(captain);
+    this.dedupeMemberName(captain);
     transport.crew = [captain];
     // A single-recruit addition runs against an already-live World -- the
     // Sailor pool already exists (unlike the constructor's initial fleet, see
@@ -454,14 +507,17 @@ export class Faction {
   netWorth(sellMarkets: Map<string, Market>): number {
     let total = this.totalCash();
     for (const t of this.captains) {
-      // Contract cargo is bought and paid for by the issuing Location, not
-      // the Company (see Captain.executeContractDelivery) -- the Company only
-      // fronts fuel -- so it's not a Company asset and is excluded here.
-      if (t.cargo !== null && t.cargo.contract === null) {
-        const markLocation = t.status === "AtLocation" ? t.locationName : t.cargo.destination;
-        const market = sellMarkets.get(marketKey(markLocation, t.cargo.commodity));
-        const unitValue = market !== undefined ? market.price : t.cargo.unitCost;
-        total += unitValue * t.cargo.quantity;
+      if (t.cargo === null) continue;
+      const markLocation = t.status === "AtLocation" ? t.locationName : t.cargo.destination;
+      for (const item of t.cargo.items) {
+        // Contract-bound items are bought and paid for by the issuing
+        // Location, not the Company (see Captain.executeContractDelivery) --
+        // the Company only fronts fuel -- so each is excluded individually
+        // (a voyage's hold can mix a contract item with open-market ones).
+        if (item.contract !== null) continue;
+        const market = sellMarkets.get(marketKey(markLocation, item.commodity));
+        const unitValue = market !== undefined ? market.price : item.unitCost;
+        total += unitValue * item.quantity;
       }
     }
     return total;
@@ -676,27 +732,33 @@ export class Company extends ContractFulfiller {
     // coordination scales shipping with actual demand instead of capping
     // every route at a single ship. The first ship onto a route is always
     // let through regardless of deficit size, matching the old one-per-day
-    // fallback for routes with no measurable deficit (e.g. fuel depots).
+    // fallback for routes with no measurable deficit (e.g. fuel depots). A
+    // bundle now carries several (commodity, destination) route keys at
+    // once (one per item) -- it's only rescored/skipped when EVERY item in
+    // it is already fully claimed; a partially-capped bundle still ships
+    // whichever of its items still have headroom.
     const claimedQuantity = new Map<string, number>();
     const fullRoutes = new Set<string>();
+    const routeKeysFor = (b: TradeDirective) => b.items.map((i) => `${i.commodity}||${b.destination}`);
     for (let [trader, best] of candidates) {
       if (directives.has(trader)) continue;
-      let routeKey = `${best.commodity}||${best.destination}`;
-      if (fullRoutes.has(routeKey)) {
+      if (routeKeysFor(best).every((k) => fullRoutes.has(k))) {
         const alt = trader.findBestLocalRoute(
           buyMarkets, sellMarkets, commodities, closedLocations, new Set(fullRoutes),
         );
         if (alt === null) continue;
         best = alt;
-        routeKey = `${best.commodity}||${best.destination}`;
-        if (fullRoutes.has(routeKey)) continue;
+        if (routeKeysFor(best).every((k) => fullRoutes.has(k))) continue;
       }
 
       directives.set(trader, best);
-      const claimed = (claimedQuantity.get(routeKey) ?? 0) + best.quantity;
-      claimedQuantity.set(routeKey, claimed);
-      if (claimed >= this.remainingDemand(best.commodity, best.destination)) {
-        fullRoutes.add(routeKey);
+      for (const item of best.items) {
+        const routeKey = `${item.commodity}||${best.destination}`;
+        const claimed = (claimedQuantity.get(routeKey) ?? 0) + item.quantity;
+        claimedQuantity.set(routeKey, claimed);
+        if (claimed >= this.remainingDemand(item.commodity, best.destination)) {
+          fullRoutes.add(routeKey);
+        }
       }
     }
     return directives;
@@ -964,6 +1026,73 @@ export class SoloTrader extends Company {
   }
 }
 
+/**
+ * The exploration-mode analog of SoloTrader: manages exactly one Explorer
+ * (in the "captain" role) commanding exactly one PorterParty (its single
+ * Transport) -- non-pooling, like SoloTrader, since a lone expedition has no
+ * fleet to pool cash across. Unlike SoloTrader, this doesn't extend `Faction`
+ * itself (which is hardcoded to Captain's Ship/cargo/contract machinery --
+ * none of it applies to an Explorer); it extends the shared `BaseFaction<TMember>`
+ * core directly, the same base `Faction` itself is built on.
+ *
+ * An Explorer already boards its PorterParty the moment it's constructed
+ * (see Explorer's own constructor) and manages its own `cash` directly --
+ * this wrapper doesn't move money around or re-place the Transport, it just
+ * gives the expedition a Faction-shaped handle (name, `captains` -- here
+ * always exactly one Explorer -- `politicalEntity`, `startingCash`) for
+ * anything that expects one, and a home for future hiring machinery (e.g.
+ * recruiting more porters from a village) to be added onto, the same way
+ * SoloTrader is the natural home for Captain-side crew hiring today.
+ */
+export interface ExpeditionPartyOptions {
+  startingCash?: number;
+  /** Whether this party trades/moves autonomously (see directFleet) rather than waiting on the player's manual UI actions -- false (player-controlled) by default, so no existing World changes behavior unless explicitly opted into. */
+  aiControlled?: boolean;
+}
+
+export class ExpeditionParty extends BaseFaction<Explorer> {
+  aiControlled: boolean;
+
+  constructor(name: string, explorer: Explorer, options: ExpeditionPartyOptions = {}) {
+    super(name, [[explorer.transport!, explorer, explorer.locationName]], options.startingCash ?? 0.0);
+    this.aiControlled = options.aiControlled ?? false;
+    // Mirrors Faction's own constructor doing `captain.company = this` --
+    // lets Explorer read `aiControlled` (see Explorer.arrive/tick) without
+    // World having to thread it through separately.
+    explorer.company = this;
+  }
+
+  /** Always false -- a lone expedition has no fleet to pool cash across, matching SoloTrader. */
+  override get poolsCash(): boolean {
+    return false;
+  }
+
+  /** The Explorer this party manages -- always exactly one, set at construction and never replaced (mirrors SoloTrader's single Captain). */
+  get explorer(): Explorer {
+    return this.captains[0];
+  }
+
+  /**
+   * AI-controlled counterpart to Company.directFleet -- much simpler, since
+   * there's exactly one Explorer (no idle-partitioning, no fleet-wide
+   * per-route demand capping needed). Returns a bundle to execute (see
+   * Explorer.executeTradeDirective) if this Explorer is idle (not already
+   * travelling or sitting on unsold cargo) and a profitable one exists;
+   * null otherwise -- World.runDay only calls this for aiControlled parties.
+   */
+  directFleet(
+    day: number,
+    buyMarkets: Map<string, Market>,
+    sellMarkets: Map<string, Market>,
+    commodities: string[],
+    closedLocations: ReadonlySet<string>,
+  ): TradeDirective | null {
+    void day;
+    if (this.explorer.destination !== null || this.explorer.cargo !== null) return null;
+    return this.explorer.findBestLocalRoute(buyMarkets, sellMarkets, commodities, closedLocations);
+  }
+}
+
 export class PirateBrigade extends Faction {
   override get poolsCash(): boolean {
     return false;
@@ -1142,39 +1271,43 @@ export class PirateBrigade extends Faction {
       sinks = victimCaptain.transport!.condition <= 0;
     }
 
-    let seizedCommodity: string | null = null;
-    let seizedQuantity = 0.0;
-    let destroyedQuantity = 0.0;
+    interface SeizedItem { commodity: string; seizedQuantity: number; destroyedQuantity: number; }
+    const seizedItems: SeizedItem[] = [];
     if (victimCaptain.cargo !== null) {
       const cargo = victimCaptain.cargo;
-      seizedCommodity = cargo.commodity;
-      seizedQuantity = cargo.quantity;
 
       // A raid is messy -- some of the haul gets damaged, dumped, or lost in
       // the scuffle before it ever reaches the fence, rolled fresh per
-      // attack (see MIN/MAX_CARGO_DESTRUCTION_FRACTION). Only what survives
-      // boards the pirate ship; the rest is gone for good.
+      // attack (see MIN/MAX_CARGO_DESTRUCTION_FRACTION). One shared roll for
+      // the whole hold -- a raid isn't messier for one commodity than
+      // another in the same hold. Only what survives boards the pirate
+      // ship; the rest is gone for good.
       const destructionFraction = randUniform(MIN_CARGO_DESTRUCTION_FRACTION, MAX_CARGO_DESTRUCTION_FRACTION);
-      destroyedQuantity = round2(cargo.quantity * destructionFraction);
-      const survivingQuantity = round2(cargo.quantity - destroyedQuantity);
+      const survivingCargoItems: CargoItem[] = [];
+      for (const item of cargo.items) {
+        const destroyedQuantity = round2(item.quantity * destructionFraction);
+        const survivingQuantity = round2(item.quantity - destroyedQuantity);
+        seizedItems.push({ commodity: item.commodity, seizedQuantity: item.quantity, destroyedQuantity });
+
+        // Contract-bound cargo never reaches its destination either way
+        // (fenced or destroyed), so the delivery is cancelled outright --
+        // the fulfiller is never paid (fulfillContract only pays out on
+        // actual arrival, which can no longer happen now that cargo is
+        // null) and the pair becomes eligible for a fresh tender again (see
+        // World's activeContractKeys / ContractFulfiller.pruneFulfilled).
+        if (item.contract !== null) {
+          item.contract.cancelled = true;
+          item.contract.inFlightCaptain = null;
+        }
+        if (survivingQuantity > 0) {
+          survivingCargoItems.push({ commodity: item.commodity, quantity: survivingQuantity, unitCost: 0, contract: null });
+        }
+      }
       victimCaptain.cargo = null;
 
-      // Contract-bound cargo never reaches its destination either way (fenced
-      // or destroyed), so the delivery is cancelled outright -- the fulfiller
-      // is never paid (fulfillContract only pays out on actual arrival, which
-      // can no longer happen now that cargo is null) and the pair becomes
-      // eligible for a fresh tender again (see World's activeContractKeys /
-      // ContractFulfiller.pruneFulfilled).
-      if (cargo.contract !== null) {
-        cargo.contract.cancelled = true;
-        cargo.contract.inFlightCaptain = null;
-      }
-
-      if (survivingQuantity > 0) {
+      if (survivingCargoItems.length > 0) {
         pirateCaptain.cargo = {
-          commodity: cargo.commodity,
-          quantity: survivingQuantity,
-          unitCost: 0,
+          items: survivingCargoItems,
           origin: pirateCaptain.locationName,
           destination: pirateCaptain.locationName,
           distance: 0,
@@ -1185,34 +1318,60 @@ export class PirateBrigade extends Faction {
           fuelCostTotal: 0,
           totalCost: 0,
           departureDay: day,
-          contract: null,
         };
       }
     }
 
     // Even an otherwise-empty raid (no cash, no cargo) is still worth
     // logging/resolving if it happened to sink the Ship.
-    if (stolenCash <= 0 && seizedCommodity === null && !sinks) return;
+    if (stolenCash <= 0 && seizedItems.length === 0 && !sinks) return;
 
-    pirateCaptain.tradeLog.push({
-      day,
-      action: "ATTACK",
-      commodity: seizedCommodity,
-      location: pirateCaptain.locationName,
-      destination: victimCaptain.name,
-      quantity: round2(seizedQuantity),
-      price: null,
-      distance: null,
-      routeType: null,
-      travelDays: null,
-      fuelPrice: null,
-      fuelUnitsConsumed: null,
-      fuelCostPaid: 0.0,
-      profit: round2(stolenCash),
-    });
+    if (seizedItems.length > 0) {
+      // The stolen-cash profit is recorded once, on the first item's row --
+      // it's a single lump sum for the whole raid, not per commodity.
+      seizedItems.forEach((s, i) => {
+        pirateCaptain.tradeLog.push({
+          day,
+          action: "ATTACK",
+          commodity: s.commodity,
+          location: pirateCaptain.locationName,
+          destination: victimCaptain.name,
+          quantity: round2(s.seizedQuantity),
+          price: null,
+          distance: null,
+          routeType: null,
+          travelDays: null,
+          fuelPrice: null,
+          fuelUnitsConsumed: null,
+          fuelCostPaid: 0.0,
+          profit: i === 0 ? round2(stolenCash) : null,
+        });
+      });
+    } else {
+      pirateCaptain.tradeLog.push({
+        day,
+        action: "ATTACK",
+        commodity: null,
+        location: pirateCaptain.locationName,
+        destination: victimCaptain.name,
+        quantity: 0,
+        price: null,
+        distance: null,
+        routeType: null,
+        travelDays: null,
+        fuelPrice: null,
+        fuelUnitsConsumed: null,
+        fuelCostPaid: 0.0,
+        profit: round2(stolenCash),
+      });
+    }
+
     let detail = stolenCash > 0 ? `-$${stolenCash.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cash` : "cash pooled -- untouchable";
-    if (seizedCommodity !== null) {
-      detail += `, ${seizedQuantity.toFixed(1)} ${seizedCommodity} seized (${destroyedQuantity.toFixed(1)} destroyed)`;
+    if (seizedItems.length > 0) {
+      const itemsDesc = seizedItems
+        .map((s) => `${s.seizedQuantity.toFixed(1)} ${s.commodity} (${s.destroyedQuantity.toFixed(1)} destroyed)`)
+        .join(", ");
+      detail += `, ${itemsDesc} seized`;
     }
     if (sinks) detail += ", and the Ship sank";
     victimCaptain.agentEventLog.push({

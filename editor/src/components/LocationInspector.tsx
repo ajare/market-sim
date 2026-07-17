@@ -17,10 +17,14 @@ export function LocationInspector() {
   // an infinite re-render loop ("Maximum update depth exceeded").
   const otherLocationNames = locations.filter((l) => l.id !== selectedId).map((l) => l.name);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
+  const commodities = useEditorStore((s) => s.commodities);
   const updateLocation = useEditorStore((s) => s.updateLocation);
   const toggleTerminalType = useEditorStore((s) => s.toggleTerminalType);
   const removeLocation = useEditorStore((s) => s.removeLocation);
   const worldScale = useEditorStore((s) => s.worldScale);
+  const setLocationHasRuler = useEditorStore((s) => s.setLocationHasRuler);
+  const updateLocationRuler = useEditorStore((s) => s.updateLocationRuler);
+  const toggleRulerGiftCategory = useEditorStore((s) => s.toggleRulerGiftCategory);
 
   if (selectedId === null || location === undefined) {
     return (
@@ -137,6 +141,69 @@ export function LocationInspector() {
           </label>
         ))}
       </div>
+
+      <div className="field-label-row">
+        <div className="field-label">Ruler (exploration mode)</div>
+        <label className="terminal-type-checkbox">
+          <input
+            type="checkbox"
+            checked={location.ruler !== null}
+            onChange={(e) => setLocationHasRuler(location.id, e.target.checked)}
+          />
+          Has a personal ruler
+        </label>
+      </div>
+      {location.ruler !== null && (
+        <div className="ruler-section">
+          <div className="field-row">
+            <label>
+              Name
+              <input
+                value={location.ruler.name}
+                onChange={(e) => updateLocationRuler(location.id, { name: e.target.value })}
+              />
+            </label>
+            <label>
+              Passage tax %
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={Math.round(location.ruler.passageTaxRate * 100)}
+                onChange={(e) => updateLocationRuler(location.id, { passageTaxRate: Number(e.target.value) / 100 })}
+              />
+            </label>
+            <label>
+              Trust
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={location.ruler.trust}
+                onChange={(e) => updateLocationRuler(location.id, { trust: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          <div className="field-label">Accepts as gift</div>
+          {commodities.length === 0 ? (
+            <div className="routes-empty">No commodities defined yet.</div>
+          ) : (
+            <div className="terminal-types">
+              {commodities.map((c) => (
+                <label key={c.name} className="terminal-type-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={location.ruler!.giftCategories.includes(c.name)}
+                    onChange={() => toggleRulerGiftCategory(location.id, c.name)}
+                  />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <LocationRoutesTable locationId={location.id} />
 
