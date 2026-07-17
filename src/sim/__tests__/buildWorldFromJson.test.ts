@@ -41,6 +41,20 @@ describe("buildWorldFromJson -- exploration mode fields", () => {
     }
   }, 20000);
 
+  it("doesn't crash on a Location whose ruler is explicitly null (not just absent) -- the editor's own export always writes the field", () => {
+    // Regression test: the editor's EditorLocation.ruler is `EditorChieftain
+    // | null`, never just omitted, so a real exported World JSON always
+    // includes `"ruler": null` for a Location with none. The parser used to
+    // check `loc.ruler !== undefined` only, which let an explicit `null`
+    // through and crashed on `loc.ruler.name`.
+    const raw = JSON.parse(minimalPreExplorationWorldJson());
+    raw.locations[0].ruler = null;
+    const { world } = buildWorldFromJson(JSON.stringify(raw), {
+      targetShipsPerLocation: 0, numPirateShips: 0, numPoliceShips: 0,
+    });
+    expect(world.locations[0].ruler).toBeNull();
+  }, 20000);
+
   it("loads the exploration demo fixture with villages, a ruler, Trail routes, and an Explorer", () => {
     const { world } = buildWorldFromJson(buildExploreDemoWorldJson(), {
       targetShipsPerLocation: 0, numPirateShips: 0, numPoliceShips: 0,

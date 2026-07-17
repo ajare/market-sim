@@ -7,7 +7,7 @@ import { create } from "zustand";
 import {
   createLocation, createChieftain, compatibleRouteTypes, factionType,
   DEFAULT_COMMODITY_RATE, DEFAULT_COMMODITY_TYPE, DEFAULT_COMMODITY_GIFT, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
-  DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH,
+  DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH, DEFAULT_EXPLORER_AI_CONTROLLED,
   ROUTE_TERMINAL_COMPATIBILITY,
   type Commodity, type CommodityField, type CommodityType, type EditorChieftain, type EditorCompany,
   type EditorExplorer, type EditorFleetMember, type EditorRoute,
@@ -824,6 +824,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         animalCount: DEFAULT_EXPLORER_ANIMAL_COUNT,
         startingCash: DEFAULT_EXPLORER_STARTING_CASH,
         politicalEntityId,
+        aiControlled: DEFAULT_EXPLORER_AI_CONTROLLED,
       };
       return { explorers: [...s.explorers, explorer] };
     }),

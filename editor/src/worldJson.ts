@@ -18,7 +18,7 @@ import type {
 import {
   COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, DEFAULT_COMMODITY_GIFT, SETTLEMENT_TYPES, DEFAULT_SETTLEMENT_TYPE, sortRouteControlPoints,
   DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE, DEFAULT_CHIEFTAIN_TRUST,
-  DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH,
+  DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH, DEFAULT_EXPLORER_AI_CONTROLLED,
 } from "./types";
 import {
   DEFAULT_DISTANCE_MODE, DEFAULT_GLOBE_LON_SPAN, defaultGlobeRadius, type DistanceMode,
@@ -29,8 +29,8 @@ import { DEFAULT_NATIONALITY, NATIONALITIES, type Nationality } from "./nameGene
 import { DEFAULT_START_DATE } from "@market-sim/shared/world";
 export { DEFAULT_START_DATE };
 
-/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"); version 10 added Location.settlementType (absent in older files, which default to "Town"); version 11 added Location.ruler and top-level explorers (exploration mode -- absent in older files, which default to no ruler / an empty explorers list); version 12 added EditorExplorer.politicalEntityId (absent in older files, which default to null/Independent, same as EditorCompany's); version 13 removed EditorChieftain.giftCategories (a per-chieftain gift-preference list) and added Commodity.gift (absent in older files, which default to DEFAULT_COMMODITY_GIFT/0 -- not gift-worthy) -- gift-worthiness is now a global property of the commodity, not per-chieftain, so older files' ruler.giftCategories is simply ignored on load. */
-export const WORLD_JSON_VERSION = 13;
+/** Current on-disk schema version -- bump if the shape changes in a way old files can't satisfy. Version 3 added distanceMode/globeRadius/globeLonSpan; version 4 added PoliticalEntity.nationality (absent in older files, which default to English); version 5 added EditorCompany.homeLocationId (absent in older files, which get one computed on load -- see useEditorStore.loadWorld); version 6 added Commodity.type (absent in older files, which default to "General"); version 7 added startDate (absent in older files, which default to DEFAULT_START_DATE); version 8 added distanceUnit (absent in older files, which default to "miles"); version 9 added weatherProfile (absent in older files, which default to "default"); version 10 added Location.settlementType (absent in older files, which default to "Town"); version 11 added Location.ruler and top-level explorers (exploration mode -- absent in older files, which default to no ruler / an empty explorers list); version 12 added EditorExplorer.politicalEntityId (absent in older files, which default to null/Independent, same as EditorCompany's); version 13 removed EditorChieftain.giftCategories (a per-chieftain gift-preference list) and added Commodity.gift (absent in older files, which default to DEFAULT_COMMODITY_GIFT/0 -- not gift-worthy) -- gift-worthiness is now a global property of the commodity, not per-chieftain, so older files' ruler.giftCategories is simply ignored on load; version 14 added EditorExplorer.aiControlled (absent in older files, which default to DEFAULT_EXPLORER_AI_CONTROLLED/true) -- older files' ExpeditionParties were silently stuck player-controlled-only in the main sim app (no editor UI ever set the flag, and buildWorldFromJson's own default is false), so defaulting true on load actually changes older files' runtime behavior for the better rather than preserving it exactly; a user who wants the old frozen-in-place behavior can uncheck it. */
+export const WORLD_JSON_VERSION = 14;
 
 /** The full authored World in the editor's own (normalized) coordinate space -- UI-only state like selection is excluded. */
 export interface EditorWorld {
@@ -130,6 +130,7 @@ function normalizeExplorer(raw: unknown): EditorExplorer | null {
     // useEditorStore.loadWorld (this function has no access to it) -- here,
     // just type-narrowed to string | null.
     politicalEntityId: typeof e.politicalEntityId === "string" ? e.politicalEntityId : null,
+    aiControlled: typeof e.aiControlled === "boolean" ? e.aiControlled : DEFAULT_EXPLORER_AI_CONTROLLED,
   };
 }
 

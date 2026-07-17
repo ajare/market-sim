@@ -111,8 +111,8 @@ interface JsonLocation {
   terminalTypes: string[];
   /** Settlement scale (exploration mode) -- absent/unrecognized falls back to Location's own "Town" default. */
   settlementType?: string;
-  /** This Location's personal ruler (exploration mode, e.g. a native village's chieftain) -- absent for every Location without one. */
-  ruler?: JsonChieftain;
+  /** This Location's personal ruler (exploration mode, e.g. a native village's chieftain) -- absent OR explicitly null for every Location without one (the editor's export always writes the field, as `null` when there's no ruler, since EditorLocation.ruler is never just omitted). */
+  ruler?: JsonChieftain | null;
 }
 
 /** A Location's personally-ruling authority (exploration mode) -- see chieftain.ts. */
@@ -341,7 +341,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     const settlementType = VALID_SETTLEMENT_TYPES.has(loc.settlementType as SettlementType)
       ? (loc.settlementType as SettlementType)
       : undefined;
-    const ruler = loc.ruler !== undefined
+    const ruler = loc.ruler !== undefined && loc.ruler !== null
       ? new Chieftain({
           name: loc.ruler.name,
           gender: resolveGender(loc.ruler.gender),

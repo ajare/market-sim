@@ -274,11 +274,14 @@ export interface EditorExplorer {
   startingCash: number;
   /** The PoliticalEntity this ExpeditionParty is affiliated with, or null for an independent operator (mirrors EditorCompany.politicalEntityId) -- set via the ExplorerPartiesPanel, same as a Company's. */
   politicalEntityId: string | null;
+  /** Whether this ExpeditionParty wanders autonomously once the World is running (see src/sim/faction.ts's ExpeditionParty.direct), instead of waiting on a player's manual leg choice. Defaults to true (DEFAULT_EXPLORER_AI_CONTROLLED) -- unlike a Ship, which always trades/moves on its own regardless of this flag, an Explorer needs it explicitly set or it never moves at all once dropped into the main sim app. */
+  aiControlled: boolean;
 }
 
 export const DEFAULT_EXPLORER_PORTER_COUNT = 4;
 export const DEFAULT_EXPLORER_ANIMAL_COUNT = 0;
 export const DEFAULT_EXPLORER_STARTING_CASH = 500;
+export const DEFAULT_EXPLORER_AI_CONTROLLED = true;
 
 /** A user-placed bend in a Route's path between its two Locations -- created/moved by shift-dragging on the Route (see WorldCanvas). Mirrors src/sim/routes.ts's Bezier control points; the Route is rendered as a sampled Bezier curve through them (see routeRenderPoints). */
 export interface RouteControlPoint {

@@ -153,13 +153,15 @@ export function ExplorerPanel() {
                       </button>
                     </>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => openLegChoice(selectedExplorer)}
-                    disabled={pendingDecision !== null || selectedExplorer.destination !== null}
-                  >
-                    Choose next leg
-                  </button>
+                  {!selectedExplorer.aiControlled && (
+                    <button
+                      type="button"
+                      onClick={() => openLegChoice(selectedExplorer)}
+                      disabled={pendingDecision !== null || selectedExplorer.destination !== null}
+                    >
+                      Choose next leg
+                    </button>
+                  )}
                   {message !== null && <span className="stat">{message}</span>}
                 </div>
               )}

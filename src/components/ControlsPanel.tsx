@@ -57,6 +57,7 @@ export function ControlsPanel() {
   }
 
   const traderCount = world?.shipCaptains.length ?? 0;
+  const explorerCount = world?.explorers.length ?? 0;
   const locationCount = world?.locations.length ?? 0;
   // world mutates in place (see useSimStore's docstring) -- `version` is what
   // actually signals these counts changed, `world` itself never does.
@@ -142,6 +143,7 @@ export function ControlsPanel() {
       )}
       <span className="stat">{factions.length} factions</span>
       <span className="stat">{traderCount} traders</span>
+      {explorerCount > 0 && <span className="stat">{explorerCount} explorers</span>}
       <span className="stat">{locationCount} locations</span>
       {pasteError !== null && <span className="paste-error" role="alert">{pasteError}</span>}
     </div>

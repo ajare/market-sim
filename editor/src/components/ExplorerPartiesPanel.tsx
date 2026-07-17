@@ -129,6 +129,14 @@ export function ExplorerPartiesPanel() {
                       onChange={(e) => updateExplorer(explorer.id, { startingCash: Number(e.target.value) })}
                     />
                   </label>
+                  <label className="terminal-type-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={explorer.aiControlled}
+                      onChange={(e) => updateExplorer(explorer.id, { aiControlled: e.target.checked })}
+                    />
+                    AI-controlled (wanders/restocks on its own each day; unchecked means it only moves when a player picks its next leg)
+                  </label>
                 </>
               )}
             </div>

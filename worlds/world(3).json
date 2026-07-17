@@ -1,0 +1,804 @@
+{
+  "version": 14,
+  "worldScale": 100,
+  "distanceMode": "flat",
+  "globeRadius": 31.83,
+  "globeLonSpan": 180,
+  "distanceUnit": "miles",
+  "weatherProfile": "default",
+  "startDate": "1800-01-01T00:00:00.000Z",
+  "politicalEntities": [
+    {
+      "id": "political-entity-1",
+      "name": "Tribe",
+      "type": "Tribe",
+      "nationality": "Portuguese"
+    },
+    {
+      "id": "political-entity-2",
+      "name": "England",
+      "type": "State",
+      "nationality": "English"
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-1",
+      "name": "Location 1",
+      "x": 18.63,
+      "y": 18.84,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Pawpaw": 1,
+        "Salt": 1,
+        "Hides": 1
+      },
+      "consumedCommodities": {},
+      "stockpiles": {
+        "Pawpaw": 120,
+        "Salt": 120,
+        "Hides": 120
+      },
+      "minStockpiles": {},
+      "basePriceModifiers": {
+        "Pawpaw": 1,
+        "Salt": 1,
+        "Hides": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": {
+        "name": "Chief Location 1",
+        "passageTaxRate": 0.1,
+        "trust": 0.5
+      }
+    },
+    {
+      "id": "loc-2",
+      "name": "Location 2",
+      "x": 46.91,
+      "y": 19.99,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Rum": 1,
+        "Salt": 1,
+        "Breadfruit": 1
+      },
+      "consumedCommodities": {},
+      "stockpiles": {
+        "Rum": 120,
+        "Salt": 120,
+        "Breadfruit": 120
+      },
+      "minStockpiles": {},
+      "basePriceModifiers": {
+        "Rum": 1,
+        "Salt": 1,
+        "Breadfruit": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": {
+        "name": "Chief Location 2",
+        "passageTaxRate": 0.1,
+        "trust": 0.5
+      }
+    },
+    {
+      "id": "loc-3",
+      "name": "Location 3",
+      "x": 57.13,
+      "y": 46.17,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Salt": 1,
+        "Quinine": 1,
+        "Manioc": 1
+      },
+      "consumedCommodities": {},
+      "stockpiles": {
+        "Salt": 120,
+        "Quinine": 120,
+        "Manioc": 120
+      },
+      "minStockpiles": {},
+      "basePriceModifiers": {
+        "Salt": 1,
+        "Quinine": 1,
+        "Manioc": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": {
+        "name": "Chief Location 3",
+        "passageTaxRate": 0.1,
+        "trust": 0.5
+      }
+    },
+    {
+      "id": "loc-4",
+      "name": "Location 4",
+      "x": 34.68,
+      "y": 65.01,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Rum": 1
+      },
+      "consumedCommodities": {},
+      "stockpiles": {
+        "Rum": 120
+      },
+      "minStockpiles": {},
+      "basePriceModifiers": {
+        "Rum": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": {
+        "name": "Chief Location 4",
+        "passageTaxRate": 0.1,
+        "trust": 0.5
+      }
+    },
+    {
+      "id": "loc-5",
+      "name": "Location 5",
+      "x": 12.48,
+      "y": 46.98,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Millet": 1,
+        "Furs": 1
+      },
+      "consumedCommodities": {},
+      "stockpiles": {
+        "Millet": 120,
+        "Furs": 120
+      },
+      "minStockpiles": {},
+      "basePriceModifiers": {
+        "Millet": 1,
+        "Furs": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": {
+        "name": "Chief Location 5",
+        "passageTaxRate": 0.1,
+        "trust": 0.5
+      }
+    },
+    {
+      "id": "loc-6",
+      "name": "Location 6",
+      "x": 28.85,
+      "y": 40.08,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {
+        "Pawpaw": 1
+      },
+      "consumedCommodities": {},
+      "stockpiles": {
+        "Pawpaw": 120
+      },
+      "minStockpiles": {},
+      "basePriceModifiers": {
+        "Pawpaw": 1
+      },
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": {
+        "name": "Chief Location 6",
+        "passageTaxRate": 0.1,
+        "trust": 0.5
+      }
+    },
+    {
+      "id": "loc-7",
+      "name": "Location 7",
+      "x": 55.03,
+      "y": 67.99,
+      "politicalEntityId": "political-entity-2",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-8",
+      "name": "Location 8",
+      "x": 58.47,
+      "y": 10.11,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-9",
+      "name": "Location 9",
+      "x": 71.94,
+      "y": 24.12,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-10",
+      "name": "Location 10",
+      "x": 77.29,
+      "y": 44.91,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-11",
+      "name": "Location 11",
+      "x": 72.71,
+      "y": 77.64,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-12",
+      "name": "Location 12",
+      "x": 48.44,
+      "y": 87.98,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-13",
+      "name": "Location 13",
+      "x": 15,
+      "y": 76.03,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-14",
+      "name": "Location 14",
+      "x": 8.12,
+      "y": 60.07,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-15",
+      "name": "Location 15",
+      "x": 7.93,
+      "y": 19.07,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-16",
+      "name": "Location 16",
+      "x": 29.04,
+      "y": 8.73,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-17",
+      "name": "Location 17",
+      "x": 40.13,
+      "y": 7.81,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-18",
+      "name": "Location 18",
+      "x": 56.37,
+      "y": 24.81,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-19",
+      "name": "Location 19",
+      "x": 84.55,
+      "y": 62.94,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    },
+    {
+      "id": "loc-20",
+      "name": "Location 20",
+      "x": 86.27,
+      "y": 79.02,
+      "politicalEntityId": "political-entity-1",
+      "producedCommodities": {},
+      "consumedCommodities": {},
+      "stockpiles": {},
+      "minStockpiles": {},
+      "basePriceModifiers": {},
+      "fuelPrice": 1,
+      "terminalTypes": [
+        "Market"
+      ],
+      "settlementType": "Town",
+      "ruler": null
+    }
+  ],
+  "commodities": [
+    {
+      "name": "Rum",
+      "basePrice": 46,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0.1
+    },
+    {
+      "name": "Quinine",
+      "basePrice": 340,
+      "type": "General",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Hides",
+      "basePrice": 24,
+      "type": "Textile",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Pawpaw",
+      "basePrice": 22,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Salt",
+      "basePrice": 8,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Tobacco",
+      "basePrice": 52,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Cochineal",
+      "basePrice": 110,
+      "type": "Textile",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Furs",
+      "basePrice": 58,
+      "type": "Textile",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Vanilla",
+      "basePrice": 190,
+      "type": "General",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Millet",
+      "basePrice": 9,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Breadfruit",
+      "basePrice": 17,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    },
+    {
+      "name": "Manioc",
+      "basePrice": 11,
+      "type": "Foodstuff",
+      "productionRate": 8,
+      "consumptionRate": 8,
+      "gift": 0
+    }
+  ],
+  "companies": [],
+  "routes": [
+    {
+      "id": "route-1",
+      "locationAId": "loc-1",
+      "locationBId": "loc-2",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-2",
+      "locationAId": "loc-2",
+      "locationBId": "loc-6",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-3",
+      "locationAId": "loc-6",
+      "locationBId": "loc-5",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-4",
+      "locationAId": "loc-5",
+      "locationBId": "loc-1",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-5",
+      "locationAId": "loc-1",
+      "locationBId": "loc-6",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-6",
+      "locationAId": "loc-5",
+      "locationBId": "loc-4",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-7",
+      "locationAId": "loc-4",
+      "locationBId": "loc-6",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-8",
+      "locationAId": "loc-4",
+      "locationBId": "loc-3",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-9",
+      "locationAId": "loc-3",
+      "locationBId": "loc-2",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-10",
+      "locationAId": "loc-6",
+      "locationBId": "loc-3",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-11",
+      "locationAId": "loc-7",
+      "locationBId": "loc-3",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-12",
+      "locationAId": "loc-7",
+      "locationBId": "loc-4",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-13",
+      "locationAId": "loc-16",
+      "locationBId": "loc-1",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-14",
+      "locationAId": "loc-1",
+      "locationBId": "loc-15",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-15",
+      "locationAId": "loc-5",
+      "locationBId": "loc-14",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-16",
+      "locationAId": "loc-14",
+      "locationBId": "loc-13",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-17",
+      "locationAId": "loc-13",
+      "locationBId": "loc-4",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-18",
+      "locationAId": "loc-4",
+      "locationBId": "loc-12",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-19",
+      "locationAId": "loc-12",
+      "locationBId": "loc-11",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-20",
+      "locationAId": "loc-11",
+      "locationBId": "loc-7",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-21",
+      "locationAId": "loc-3",
+      "locationBId": "loc-10",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-22",
+      "locationAId": "loc-10",
+      "locationBId": "loc-9",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-23",
+      "locationAId": "loc-9",
+      "locationBId": "loc-18",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-24",
+      "locationAId": "loc-18",
+      "locationBId": "loc-2",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-25",
+      "locationAId": "loc-16",
+      "locationBId": "loc-17",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-26",
+      "locationAId": "loc-17",
+      "locationBId": "loc-2",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-27",
+      "locationAId": "loc-2",
+      "locationBId": "loc-8",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-28",
+      "locationAId": "loc-8",
+      "locationBId": "loc-9",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-29",
+      "locationAId": "loc-19",
+      "locationBId": "loc-10",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-30",
+      "locationAId": "loc-20",
+      "locationBId": "loc-19",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-31",
+      "locationAId": "loc-19",
+      "locationBId": "loc-11",
+      "routeType": "Trail",
+      "controlPoints": []
+    },
+    {
+      "id": "route-32",
+      "locationAId": "loc-11",
+      "locationBId": "loc-20",
+      "routeType": "Trail",
+      "controlPoints": []
+    }
+  ],
+  "explorers": [
+    {
+      "id": "explorer-1",
+      "name": "Elizabeth Davies",
+      "homeLocationId": "loc-7",
+      "porterCount": 4,
+      "animalCount": 20,
+      "startingCash": 500,
+      "politicalEntityId": "political-entity-2",
+      "aiControlled": true
+    }
+  ]
+}

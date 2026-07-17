@@ -20,7 +20,7 @@ import { NATIONALITY_POOLS, randomNationality, type Nationality } from "./nation
 import { FleetOwner, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet, ExpeditionParty } from "./faction";
 import type { Explorer } from "./explorer";
 import type { PendingDecision } from "./decisions";
-import { generateSailorPool, addToSailorPool, tickPoolPiracy } from "./sailorPool";
+import { generateSailorPool, addToSailorPool, tickPoolPiracy, isSeaCapable } from "./sailorPool";
 import { locationSupportsTransport } from "./companyHome";
 import type { PoliticalEntity } from "./politicalEntity";
 import { primeRouteGraphCache } from "./pathfinding";
@@ -244,16 +244,25 @@ export class World {
 
     this.factions = init.factions ? [...init.factions] : [];
 
+    // Pirates/police only ever base out of a Port or Platform, same as any
+    // other Ship -- see isSeaCapable. Computed once, shared by both blocks
+    // below (and by addPirateShip/addPoliceShip later).
+    const seaCapableLocations = init.locations.filter(isSeaCapable);
+
     // A single World-wide PirateBrigade, built the same way as the Coast
     // Guard PoliceFleet below (random home ports, one flat ship count) --
     // must run BEFORE the PoliceFleet block so its `this.factions.filter(f
-    // => f instanceof PirateBrigade)` target lookup actually finds it.
-    const numPirateShips = init.numPirateShips ?? 0;
+    // => f instanceof PirateBrigade)` target lookup actually finds it. A
+    // World with no sea-capable Location at all (e.g. a hand-authored
+    // land-only exploration-mode world) simply gets none -- silently
+    // treated the same as numPirateShips being 0, not a hard error, since
+    // this World is still perfectly valid without any Ships in it at all.
+    const numPirateShips = seaCapableLocations.length > 0 ? (init.numPirateShips ?? 0) : 0;
     this.pirateShipStartingCash = numPirateShips > 0 ? (init.pirateStartingCash ?? 0) / numPirateShips : (init.pirateStartingCash ?? 0);
     if (numPirateShips > 0) {
       const pirateCrew: Array<[Ship, Captain, string]> = [];
       for (let i = 0; i < numPirateShips; i++) {
-        const homeLocation = randChoice(init.locations);
+        const homeLocation = randChoice(seaCapableLocations);
         const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
         const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES, "Spanish"), homeLocation });
         pirateCrew.push([ship, captain, homeLocation.name]);
@@ -269,11 +278,13 @@ export class World {
       this.pirateBrigade = null;
     }
 
-    const numPoliceShips = init.numPoliceShips ?? 3;
+    // Same graceful skip as numPirateShips above -- no sea-capable Location
+    // means no Coast Guard, not a hard error.
+    const numPoliceShips = seaCapableLocations.length > 0 ? (init.numPoliceShips ?? 3) : 0;
     if (numPoliceShips > 0) {
       const policeCrew: Array<[Ship, Captain, string]> = [];
       for (let i = 0; i < numPoliceShips; i++) {
-        const homeLocation = randChoice(init.locations);
+        const homeLocation = randChoice(seaCapableLocations);
         const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
         const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES, "English"), homeLocation });
         policeCrew.push([ship, captain, homeLocation.name]);
@@ -328,9 +339,13 @@ export class World {
    * the single World-wide PirateBrigade -- lazily creating that brigade if
    * numPirateShips was 0 at construction (e.g. a pirate-free world whose UI
    * later asks to add one). The new ship gets the same average starting
-   * cash as the initial fleet (see pirateShipStartingCash).
+   * cash as the initial fleet (see pirateShipStartingCash). Returns null,
+   * a no-op, if this World has no sea-capable (Port/Platform) Location at
+   * all for it to be based out of.
    */
-  addPirateShip(): Captain {
+  addPirateShip(): Captain | null {
+    const seaCapableLocations = this.locations.filter(isSeaCapable);
+    if (seaCapableLocations.length === 0) return null;
     if (this.pirateBrigade === null) {
       this.pirateBrigade = new PirateBrigade(
         "Pirate Brigade",
@@ -340,7 +355,7 @@ export class World {
       this.factions.push(this.pirateBrigade);
       if (this.policeFleet !== null) this.policeFleet.targets.push(this.pirateBrigade);
     }
-    const homeLocationObj = randChoice(this.locations);
+    const homeLocationObj = randChoice(seaCapableLocations);
     const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
     const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES, "Spanish"), homeLocation: homeLocationObj });
     this.pirateBrigade.addTransport(ship, captain, homeLocationObj.name, this.pirateShipStartingCash);
@@ -358,8 +373,10 @@ export class World {
     return captain;
   }
 
-  /** Recruits a new Coast Guard Ship/Captain at a random Location -- lazily creating the PoliceFleet if numPoliceShips was 0 at construction. Mirrors addPirateShip. */
-  addPoliceShip(): Captain {
+  /** Recruits a new Coast Guard Ship/Captain at a random Location -- lazily creating the PoliceFleet if numPoliceShips was 0 at construction. Mirrors addPirateShip, including returning null (a no-op) if this World has no sea-capable Location at all. */
+  addPoliceShip(): Captain | null {
+    const seaCapableLocations = this.locations.filter(isSeaCapable);
+    if (seaCapableLocations.length === 0) return null;
     if (this.policeFleet === null) {
       this.policeFleet = new PoliceFleet(
         "Coast Guard",
@@ -371,7 +388,7 @@ export class World {
         if (faction instanceof PirateBrigade) faction.policeFleets.push(this.policeFleet);
       }
     }
-    const homeLocationObj = randChoice(this.locations);
+    const homeLocationObj = randChoice(seaCapableLocations);
     const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
     const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES, "English"), homeLocation: homeLocationObj });
     this.policeFleet.addTransport(ship, captain, homeLocationObj.name);

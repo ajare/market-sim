@@ -90,7 +90,8 @@ function randomPoolSailor(): Sailor {
   return new Sailor({ name, gender: "Male", nationality, dateOfBirth });
 }
 
-function isSeaCapable(location: Location): boolean {
+/** Whether a Ship could ever dock/be based at `location` -- a Port or Platform terminal type. Used for anything that needs a real Ship home port: the Sailor pool (Ship crew only ever hires/rotates through a sea-capable Location), and World's pirate/police fleet placement. */
+export function isSeaCapable(location: Location): boolean {
   return location.terminalTypes.has("Port") || location.terminalTypes.has("Platform");
 }
 

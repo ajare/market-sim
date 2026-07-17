@@ -5,6 +5,7 @@ import { convertSpeed, speedUnitLabel } from "@market-sim/shared/units";
 import { ROUTES, getRoute, routeTravelDays, type Point, type Route, type RouteType } from "../sim/routes";
 import { Ship, WagonTrain, Plane, type Transport } from "../sim/transport";
 import type { Captain } from "../sim/captain";
+import type { Explorer } from "../sim/explorer";
 import { PirateBrigade, PoliceFleet, SoloTrader, Company } from "../sim/faction";
 import type { Location, TerminalType } from "../sim/location";
 import type { PoliticalEntity } from "../sim/politicalEntity";
@@ -116,6 +117,9 @@ const FACTION_COLORS = {
   company: "#3b82f6",
   soloTrader: "#eab308",
 };
+
+/** ExpeditionParty markers get their own fixed color (a distinct amber/orange), drawn as a triangle rather than a circle so they read as a different kind of mover from Ships at a glance, not just a different-colored Ship. */
+const EXPLORER_COLOR = "#f97316";
 
 /**
  * A ship's marker color signals who's operating it: pirates red, police
@@ -565,9 +569,23 @@ interface StormMarker {
   r: number;
 }
 
+interface ExplorerMarker {
+  explorer: Explorer;
+  x: number;
+  y: number;
+  r: number;
+}
+
 interface CaptainHoverState {
   kind: "captain";
   captain: Captain;
+  x: number;
+  y: number;
+}
+
+interface ExplorerHoverState {
+  kind: "explorer";
+  explorer: Explorer;
   x: number;
   y: number;
 }
@@ -589,7 +607,7 @@ interface StormHoverState {
   y: number;
 }
 
-type HoverState = CaptainHoverState | LocationHoverState | StormHoverState;
+type HoverState = CaptainHoverState | LocationHoverState | StormHoverState | ExplorerHoverState;
 
 /** Every currently active MarketEvent touching any commodity market at `location`, deduped by name+daysRemaining -- a broad (Global/Location/Worldwide) event is applied as a separate MarketEvent instance to each affected market, so the same logical event otherwise shows up once per commodity/side. */
 function locationActiveEvents(world: World, location: string): MarketEvent[] {
@@ -625,6 +643,8 @@ export function NetworkView() {
   const addLocationAction = useSimStore((s) => s.addLocation);
   const selectedCaptain = useSimStore((s) => s.selectedCaptain);
   const selectTransport = useSimStore((s) => s.selectTransport);
+  const selectedExplorer = useSimStore((s) => s.selectedExplorer);
+  const selectExplorer = useSimStore((s) => s.selectExplorer);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -678,7 +698,15 @@ export function NetworkView() {
       else list.push(captain);
     }
 
+    const explorersByLocation = new Map<string, Explorer[]>();
+    for (const explorer of world.explorers) {
+      const list = explorersByLocation.get(explorer.locationName);
+      if (list === undefined) explorersByLocation.set(explorer.locationName, [explorer]);
+      else list.push(explorer);
+    }
+
     let markers: Marker[] = [];
+    let explorerMarkers: ExplorerMarker[] = [];
     let locationMarkers: LocationMarker[] = [];
     let stormMarkers: StormMarker[] = [];
     let highlightedCaptain: Captain | null = null;
@@ -942,7 +970,41 @@ export function NetworkView() {
         markers.push({ captain, x: mx, y: my, r: markerRadius });
       }
 
+      /** Draws one ExpeditionParty marker (a triangle, distinguishing it from a Ship's circle) at (mx, my) -- shared by the docked grid and the in-transit route placement below, mirroring drawShipMarker's structure. */
+      function drawExplorerMarker(explorer: Explorer, mx: number, my: number, docked: boolean): void {
+        const explorerRadius = markerRadius;
+        ctx!.beginPath();
+        ctx!.moveTo(mx, my - explorerRadius);
+        ctx!.lineTo(mx + explorerRadius, my + explorerRadius);
+        ctx!.lineTo(mx - explorerRadius, my + explorerRadius);
+        ctx!.closePath();
+        ctx!.fillStyle = EXPLORER_COLOR;
+        ctx!.fill();
+        ctx!.strokeStyle = border;
+        ctx!.lineWidth = 0.75;
+        ctx!.stroke();
+
+        if (docked) {
+          ctx!.beginPath();
+          ctx!.arc(mx, my, explorerRadius + 2.6, 0, Math.PI * 2);
+          ctx!.strokeStyle = textColor;
+          ctx!.lineWidth = 1;
+          ctx!.stroke();
+        }
+
+        if (explorer === selectedExplorer) {
+          ctx!.beginPath();
+          ctx!.arc(mx, my, explorerRadius + 5, 0, Math.PI * 2);
+          ctx!.strokeStyle = accent;
+          ctx!.lineWidth = 2;
+          ctx!.stroke();
+        }
+
+        explorerMarkers.push({ explorer, x: mx, y: my, r: explorerRadius });
+      }
+
       markers = [];
+      explorerMarkers = [];
 
       // Docked ships: stacked in a grid directly above the location they're
       // currently at.
@@ -1028,6 +1090,72 @@ export function NetworkView() {
         });
       }
 
+      // Docked ExpeditionParties: stacked above the location they're camped
+      // at, same grid layout as docked ships -- offset one extra row-height
+      // further out than the ship grid (whether or not any ships are
+      // actually docked here) so an Explorer and a Ship at the same
+      // Location stack in clearly separate bands instead of overlapping.
+      for (const loc of locations) {
+        const explorersHere = (explorersByLocation.get(loc.name) ?? []).filter((e) => e.destination === null);
+        if (explorersHere.length === 0) continue;
+        const [cx, cy] = project(loc.name);
+        const n = explorersHere.length;
+        const cols = Math.min(gridCols, n);
+        const bottomRowY = cy - gridGap - rowSize;
+        explorersHere.forEach((explorer, i) => {
+          const row = Math.floor(i / cols);
+          const itemsInRow = Math.min(cols, n - row * cols);
+          const col = i % cols;
+          const rowWidth = (itemsInRow - 1) * cellSize;
+          const mx = cx - rowWidth / 2 + col * cellSize;
+          const my = bottomRowY - row * rowSize;
+          drawExplorerMarker(explorer, mx, my, true);
+        });
+      }
+
+      // In-transit ExpeditionParties: Explorer only ever moves a single,
+      // direct Trail hop at a time (see Explorer.departToward), so unlike
+      // ships there's no multi-hop path to fall back to -- always a straight
+      // Route lookup between its current node and its destination.
+      const explorerInTransitGroups = new Map<string, Explorer[]>();
+      for (const explorer of world!.explorers) {
+        if (explorer.destination === null) continue;
+        const key = [explorer.locationName, explorer.destination].sort().join("||");
+        const list = explorerInTransitGroups.get(key);
+        if (list === undefined) explorerInTransitGroups.set(key, [explorer]);
+        else list.push(explorer);
+      }
+      for (const group of explorerInTransitGroups.values()) {
+        const [ox, oy] = project(group[0].locationName);
+        const [dx, dy] = project(group[0].destination!);
+        const lineDx = dx - ox;
+        const lineDy = dy - oy;
+        const lineLen = Math.hypot(lineDx, lineDy) || 1;
+        const perpX = -lineDy / lineLen;
+        const perpY = lineDx / lineLen;
+        const n = group.length;
+        group.forEach((explorer, i) => {
+          const legRoute = getRoute(explorer.locationName, explorer.destination!);
+          const totalDays = legRoute !== undefined
+            ? routeTravelDays(legRoute, explorer.porterParty.speedUnitsPerDay)
+            : travelDaysBetween(explorer.locationName, explorer.destination!, explorer.porterParty.speedUnitsPerDay);
+          const fraction = totalDays > 0 ? Math.min(1, Math.max(0, (totalDays - explorer.daysRemaining) / totalDays)) : 0;
+          let baseX: number;
+          let baseY: number;
+          if (legRoute !== undefined) {
+            const curveFraction = legRoute.origin === explorer.locationName ? fraction : 1 - fraction;
+            [baseX, baseY] = projectPoint(legRoute.pointAtFraction(curveFraction));
+          } else {
+            const [cox, coy] = project(explorer.locationName);
+            const [cdx, cdy] = project(explorer.destination!);
+            baseX = cox + (cdx - cox) * fraction;
+            baseY = coy + (cdy - coy) * fraction;
+          }
+          const offset = (i - (n - 1) / 2) * shipSpacing;
+          drawExplorerMarker(explorer, baseX + perpX * offset, baseY + perpY * offset, false);
+        });
+      }
+
       ctx.font = "10px system-ui, sans-serif";
       ctx.textBaseline = "top";
       ctx.textAlign = "center";
@@ -1068,7 +1196,7 @@ export function NetworkView() {
     const resizeObserver = new ResizeObserver(draw);
     resizeObserver.observe(container);
 
-    let hoveredKey: Captain | Location | Storm | null = null;
+    let hoveredKey: Captain | Location | Storm | Explorer | null = null;
     function handleMouseMove(e: MouseEvent): void {
       const rect = canvas!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -1081,6 +1209,18 @@ export function NetworkView() {
         highlightedCaptain = shipHit.captain;
         draw();
         setHover({ kind: "captain", captain: shipHit.captain, x: shipHit.x, y: shipHit.y });
+        return;
+      }
+
+      const explorerHit = explorerMarkers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      if (explorerHit !== undefined) {
+        if (hoveredKey === explorerHit.explorer) return;
+        hoveredKey = explorerHit.explorer;
+        if (highlightedCaptain !== null) {
+          highlightedCaptain = null;
+          draw();
+        }
+        setHover({ kind: "explorer", explorer: explorerHit.explorer, x: explorerHit.x, y: explorerHit.y });
         return;
       }
 
@@ -1151,6 +1291,11 @@ export function NetworkView() {
         selectTransport(shipHit.captain);
         return;
       }
+      const explorerHit = explorerMarkers.find((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
+      if (explorerHit !== undefined) {
+        selectExplorer(explorerHit.explorer);
+        return;
+      }
       const hitLocation = locationMarkers.some((m) => Math.hypot(m.x - mx, m.y - my) <= m.r + 3);
       if (hitLocation) return;
       const worldX = (mx - projection.pad) / projection.scaleX + projection.minX;
@@ -1168,7 +1313,7 @@ export function NetworkView() {
       canvas.removeEventListener("mouseleave", handleMouseLeave);
       canvas.removeEventListener("click", handleClick);
     };
-  }, [world, version, politicalEntities, selectedCaptain, selectTransport, weatherGrid, directionGrid, overlayMode, showWindDirection]);
+  }, [world, version, politicalEntities, selectedCaptain, selectTransport, selectedExplorer, selectExplorer, weatherGrid, directionGrid, overlayMode, showWindDirection]);
 
   if (world === null) return null;
 
@@ -1264,6 +1409,12 @@ export function NetworkView() {
         <span><i className="legend-line" style={{ borderBottomColor: "var(--warning, #f59e0b)" }} />Hover a ship to see its route</span>
         <span>Click a ship to select it (also selectable from the Fleet panel)</span>
         <span>Click empty water to add a Location</span>
+        {world.explorers.length > 0 && (
+          <>
+            <span><i className="legend-swatch" style={{ background: EXPLORER_COLOR, clipPath: "polygon(50% 0, 100% 100%, 0 100%)" }} />ExpeditionParty</span>
+            <span>Click an ExpeditionParty to select it (also selectable from the Explorers panel)</span>
+          </>
+        )}
       </div>
       <div className="network-canvas-wrap" ref={containerRef}>
         <canvas ref={canvasRef} />
@@ -1358,6 +1509,21 @@ export function NetworkView() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+        {hover !== null && hover.kind === "explorer" && (
+          <div className="network-tooltip" style={{ left: hover.x, top: hover.y }}>
+            <div className="network-tooltip-title">{hover.explorer.name}</div>
+            <div>ExpeditionParty — {hover.explorer.porterParty.porterCount} porters, {hover.explorer.porterParty.animalCount} pack animals</div>
+            <div>
+              {hover.explorer.destination !== null ? `In transit → ${hover.explorer.destination}` : `Camped @ ${hover.explorer.locationName}`}
+            </div>
+            {hover.explorer.cargo !== null && (
+              <div>
+                Cargo: {hover.explorer.cargo.items.map((item) => `${item.commodity} × ${item.quantity.toFixed(1)}`).join(", ")}
+              </div>
+            )}
+            <div>Cash: ${hover.explorer.cash.toFixed(2)}</div>
           </div>
         )}
         {hover !== null && hover.kind === "location" && (

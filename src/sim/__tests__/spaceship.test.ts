@@ -87,6 +87,11 @@ describe("Spaceship / Space route / Spaceport", () => {
 
     const { world, factions } = buildWorldFromJson(json);
     expect(world.locations.length).toBe(20);
+    // This world is Spaceport-only -- no Port/Platform anywhere for a
+    // pirate/police Ship (Sea-only) to be based out of -- World's
+    // constructor gracefully skips both rather than erroring.
+    expect(world.pirateBrigade).toBeNull();
+    expect(world.policeFleet).toBeNull();
 
     // Fleet synthesis (see buildWorldFromJson) adds sea ships to reach the
     // required ship count; in this all-Space world they can't use any route and
