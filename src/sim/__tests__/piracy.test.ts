@@ -37,7 +37,7 @@ describe("Sailor.piracy", () => {
   });
 });
 
-describe("Faction.hirePiracyThreshold", () => {
+describe("FleetOwner.hirePiracyThreshold", () => {
   it("is 0.1 for Company (inherited by SoloTrader), 0 for PoliceFleet, 1 for PirateBrigade", () => {
     makeDock();
     const companyShip = new Ship({ name: "C" });
@@ -92,7 +92,7 @@ describe("hireFromSailorPool piracy filtering", () => {
   });
 });
 
-describe("Company.hireCrewIfPossible / Faction.fillExtraSeats respect the threshold", () => {
+describe("Company.hireCrewIfPossible / FleetOwner.fillExtraSeats respect the threshold", () => {
   it("a Company docked Ship skips a too-piracy-tainted pool Sailor when hiring", () => {
     makeDock();
     const tainted = makeSailor("Tainted", 0.5);
@@ -123,7 +123,7 @@ describe("Daily piracy tick (World.runDay)", () => {
     const pirateCaptain = world.pirateBrigade!.captains[0];
     const pirateExtra = pirateCaptain.transport!.crew.find((m) => m !== pirateCaptain);
 
-    const merchantCaptain = world.captains.find(
+    const merchantCaptain = world.shipCaptains.find(
       (c) => c.transport instanceof Ship && c.company instanceof Company && c.transport.crew.length > 1,
     )!;
     const merchantExtra = merchantCaptain.transport!.crew.find((m) => m !== merchantCaptain)!;

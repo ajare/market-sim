@@ -13,7 +13,7 @@ interface WorldCompanyReplacementAccess {
 function findCompanyCaptain(
   world: ReturnType<typeof buildWorld>["world"], cargoCapacity?: number,
 ): Captain {
-  return world.captains.find(
+  return world.shipCaptains.find(
     (c): c is Captain =>
       c.company instanceof Company && !(c.company instanceof SoloTrader) &&
       c.transport instanceof Ship &&

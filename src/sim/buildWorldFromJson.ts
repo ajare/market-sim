@@ -11,13 +11,13 @@
  * message so the caller can surface it (see ControlsPanel's "Paste World"
  * button) rather than the paste silently doing nothing.
  */
-import { Commodity, COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, type CommodityType } from "./commodity";
+import { Commodity, COMMODITY_TYPES, DEFAULT_COMMODITY_TYPE, DEFAULT_GIFT_VALUE, type CommodityType } from "./commodity";
 import { Location, type TerminalType } from "./location";
 import { Route, addRouteToNetwork, type Point, type RouteType } from "./routes";
 import { PoliticalEntity, type PoliticalEntityType } from "./politicalEntity";
 import { Ship, WagonTrain, Plane, Spaceship, Lorry, FreightTrain, PorterParty, SHIP_CLASSES, type Transport } from "./transport";
 import { Captain } from "./captain";
-import { Company, SoloTrader, ExpeditionParty, type Faction, type FleetCrew } from "./faction";
+import { Company, SoloTrader, ExpeditionParty, type FleetOwner, type FleetCrew } from "./faction";
 import { World } from "./world";
 import {
   setCommodities, setGeography, setDistanceConfig, getLocation, COORDINATE_SPREAD, setWorldStartDate,
@@ -92,6 +92,8 @@ interface JsonCommodity {
   consumptionRate: number;
   /** Absent in pre-type-field files, which default to DEFAULT_COMMODITY_TYPE. */
   type?: string;
+  /** How good a gift this commodity makes for a Chieftain, in [0, 1] -- see Commodity.gift. Absent in pre-gift-field files, which default to DEFAULT_GIFT_VALUE (0 -- not gift-worthy). */
+  gift?: number;
 }
 
 interface JsonLocation {
@@ -122,7 +124,6 @@ interface JsonChieftain {
   dateOfBirth?: string;
   passageTaxRate?: number;
   trust?: number;
-  giftCategories?: string[];
 }
 
 /** An expedition party (exploration mode) -- see explorer.ts. */
@@ -135,7 +136,7 @@ interface JsonExplorer {
   porterCount?: number;
   animalCount?: number;
   startingCash?: number;
-  /** Whether this expedition trades/moves autonomously (see faction.ts's ExpeditionParty.directFleet) instead of waiting on the player's manual UI actions. Absent/omitted defaults to false (player-controlled), matching every pre-Round-B World JSON. */
+  /** Whether this expedition wanders autonomously (see faction.ts's ExpeditionParty.direct) instead of waiting on the player's manual UI actions. Absent/omitted defaults to false (player-controlled), matching every pre-Round-B World JSON. */
   aiControlled?: boolean;
   /** The PoliticalEntity this ExpeditionParty is affiliated with, or null/absent for an independent operator. */
   politicalEntityId?: string | null;
@@ -322,8 +323,10 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
     const type: CommodityType = COMMODITY_TYPES.includes(c.type as CommodityType)
       ? (c.type as CommodityType)
       : DEFAULT_COMMODITY_TYPE;
+    const gift = typeof c.gift === "number" ? c.gift : DEFAULT_GIFT_VALUE;
     commodityRecord[c.name] = new Commodity(
       c.name, c.basePrice, undefined, undefined, undefined, [], c.productionRate, c.consumptionRate, type,
+      undefined, gift,
     );
   }
   setCommodities(commodityRecord);
@@ -345,7 +348,6 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
           dateOfBirth: resolveBirthDate(loc.ruler.dateOfBirth),
           passageTaxRate: loc.ruler.passageTaxRate,
           trust: loc.ruler.trust,
-          giftCategories: loc.ruler.giftCategories,
         })
       : undefined;
     return new Location({
@@ -612,7 +614,7 @@ export function buildWorldFromJson(text: string, options: BuildWorldFromJsonOpti
   // 5c. Construct the (possibly augmented) authored Companies, then append
   // every SoloTrader (authored 1-ship companies, plus the newly synthesized
   // ones).
-  const factions: Faction[] = [];
+  const factions: FleetOwner[] = [];
   for (const f of pending) {
     const company = new Company(f.name, f.crew, f.startingFunds, f.homeLocation);
     company.politicalEntity = f.entity;

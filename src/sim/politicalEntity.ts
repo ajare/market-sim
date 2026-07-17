@@ -2,7 +2,7 @@
  * PoliticalEntity: a group of Locations that share one cash balance --
  * Locations don't keep their own once they join a PoliticalEntity; every
  * member's `cash` (see `location.ts`) redirects to `PoliticalEntity.cash`
- * instead, the same way a Faction's Captains share its pool. TypeScript-only;
+ * instead, the same way a FleetOwner's Captains share its pool. TypeScript-only;
  * no Python original.
  */
 import type { Location } from "./location";

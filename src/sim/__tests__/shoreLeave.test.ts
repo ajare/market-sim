@@ -8,7 +8,7 @@ import { Ship, CONDITION_REPAIR_THRESHOLD } from "../transport";
 /** A SoloTrader Captain with zero cash: findBestLocalRoute/considerRepositioning/executeLocalRoute all require cash>0, so this Captain can never trade or reposition and stays docked indefinitely -- a stable "eligible every night" fixture for the statistical Shore Leave test below, with no interference from real trading. */
 function pinDocked(): { world: ReturnType<typeof buildWorld>["world"]; captain: Captain } {
   const { world } = buildWorld();
-  const captain = world.captains.find(
+  const captain = world.shipCaptains.find(
     (c): c is Captain =>
       c.company instanceof SoloTrader && c.transport instanceof Ship &&
       c.status === "AtLocation" && c.transport.crew.length > 1,
@@ -50,7 +50,7 @@ describe("Shore Leave", () => {
 
   it("never grants leave to a Ship that is repairing tonight (condition below CONDITION_REPAIR_THRESHOLD), regardless of the roll", () => {
     const { world } = buildWorld();
-    const repairingCaptain = world.captains.find(
+    const repairingCaptain = world.shipCaptains.find(
       (c): c is Captain => c.company instanceof Company && c.transport instanceof Ship &&
         c.status === "AtLocation" && c.transport.crew.length > 1,
     )!;
@@ -85,7 +85,7 @@ describe("Shore Leave", () => {
     let transitCaptain: Captain | undefined;
     for (let day = 0; day < 10 && transitCaptain === undefined; day++) {
       world.step();
-      transitCaptain = world.captains.find(
+      transitCaptain = world.shipCaptains.find(
         (c): c is Captain => c.status === "InTransit" && c.transport!.crew.length > 1,
       );
     }
@@ -99,7 +99,7 @@ describe("Shore Leave", () => {
     crewSpy.mockRestore();
   });
 
-  it("PirateBrigade docked crews are eligible for Shore Leave (Faction.grantsShoreLeave defaults true, only PoliceFleet overrides it)", () => {
+  it("PirateBrigade docked crews are eligible for Shore Leave (FleetOwner.grantsShoreLeave defaults true, only PoliceFleet overrides it)", () => {
     const { world } = buildWorld(undefined, { numPirateShips: 5 });
     expect(world.pirateBrigade).not.toBeNull();
     expect(world.pirateBrigade!.grantsShoreLeave).toBe(true);

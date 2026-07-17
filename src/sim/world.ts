@@ -11,12 +11,13 @@ import { type Event, MarketEvent, LocationClosure } from "./events";
 import { Location } from "./location";
 import { Market, marketKey, type MarketRecord } from "./markets";
 import { Ship, SHIP_CLASSES, type Transport } from "./transport";
-import { Captain, isRepairDirective, type Directive } from "./captain";
+import { Captain, isRepairDirective, isRepositionDirective, isTradeDirective, type Directive } from "./captain";
+import type { Leader } from "./tradingAgent";
 import { ENGLISH_NAMES, SPANISH_NAMES, randomPersonName, type Gender, type NamePool, type NameRng } from "./names";
 import { ENGLISH_SHIP_NAMES, SPANISH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { randomLocationName } from "./locationNames";
 import { NATIONALITY_POOLS, randomNationality, type Nationality } from "./nationality";
-import { Faction, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet, ExpeditionParty } from "./faction";
+import { FleetOwner, Company, SoloTrader, ContractFulfiller, PirateBrigade, PoliceFleet, ExpeditionParty } from "./faction";
 import type { Explorer } from "./explorer";
 import type { PendingDecision } from "./decisions";
 import { generateSailorPool, addToSailorPool, tickPoolPiracy } from "./sailorPool";
@@ -24,7 +25,7 @@ import { locationSupportsTransport } from "./companyHome";
 import type { PoliticalEntity } from "./politicalEntity";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randChoice, randInt, randRandom, randShuffle, seedSimRandom, randSample, randUniform } from "./simRandom";
-import { randomBirthDate } from "./person";
+import { randomBirthDate, type Person } from "./person";
 import {
   SAILOR_MIN_AGE, SAILOR_MAX_AGE, PIRACY_INCREASE_PER_DAY, PIRACY_DECAY_PER_DAY, SHORE_LEAVE_PROBABILITY,
 } from "./sailor";
@@ -113,12 +114,12 @@ export interface WorldInit {
   companyEventProbability?: number;
   seed?: number;
   traders?: Captain[];
-  factions?: Faction[];
+  factions?: FleetOwner[];
   agentOrderFn?: AgentOrderFn;
   numPoliceShips?: number;
   /** Ship count for the single World-built PirateBrigade -- see numPoliceShips for the analogous Coast Guard knob. Default 0 (no pirates). */
   numPirateShips?: number;
-  /** Starting cash for the whole PirateBrigade (split evenly across its captains -- PirateBrigade.poolsCash is false, see Faction's constructor). Default 0. */
+  /** Starting cash for the whole PirateBrigade (split evenly across its captains -- PirateBrigade.poolsCash is false, see FleetOwner's constructor). Default 0. */
   pirateStartingCash?: number;
   /** Overrides for Location.tenderContracts' tunable knobs (expiry, fee curve, quantity multiplier) -- defaults to contracts.ts's module constants if omitted. */
   contractOptions?: TenderContractsOptions;
@@ -128,7 +129,7 @@ export interface WorldInit {
   weather?: WeatherSystem | null;
   /** Discrete storm/cyclone entities driven by `weather` -- see storms.ts. Null (default) if this World has no WeatherSystem to drive them (StormSystem needs one; the two are always constructed together). */
   storms?: StormSystem | null;
-  /** Exploration-mode expedition parties (see faction.ts's ExpeditionParty, explorer.ts) -- empty by default, fully independent of the captains/factions/locations loops below. */
+  /** Exploration-mode expedition parties (see faction.ts's ExpeditionParty, explorer.ts) -- empty by default, fully independent of the shipCaptains/factions/locations loops below. */
   expeditionParties?: ExpeditionParty[];
 }
 
@@ -151,21 +152,27 @@ export class World {
   activeBroadEvents: BroadEventEntry[] = [];
   broadEventLog: BroadEventLogEntry[] = [];
   eventLog: Event[] = [];
-  factions: Faction[];
+  factions: FleetOwner[];
   pirateBrigade: PirateBrigade | null;
   policeFleet: PoliceFleet | null;
-  captains: Captain[];
+  /** Every Captain currently crewing a Ship in this World -- see the public `leaders` getter for the unified Captain+Explorer view (both satisfy tradingAgent.ts's `Leader`). Kept as its own field (not derived) since it's mutated directly by ship purchases/sinkings/replacements throughout this class. */
+  shipCaptains: Captain[];
   agentOrderFn: AgentOrderFn;
   bulletinBoard = new BulletinBoard();
   contractOptions: TenderContractsOptions;
   weather: WeatherSystem | null;
   storms: StormSystem | null;
-  /** Exploration-mode expedition parties -- see faction.ts's ExpeditionParty. Ticked once per day in runDay, fully independent of the captains/factions/locations loops. */
+  /** Exploration-mode expedition parties -- see faction.ts's ExpeditionParty. Ticked once per day in runDay, fully independent of the shipCaptains/factions/locations loops. */
   expeditionParties: ExpeditionParty[];
 
   /** Read-only convenience view of `expeditionParties`' Explorers -- every existing consumer (ExplorerPanel, decisions.ts, buildWorldFromJson) just wants the Explorer, not the ExpeditionParty wrapper managing it. */
   get explorers(): Explorer[] {
     return this.expeditionParties.map((party) => party.explorer);
+  }
+
+  /** Every Leader in this World -- every Captain crewing a Ship plus every Explorer leading an expedition, regardless of which kind of Faction owns it. Computed fresh each access (not stored) since `shipCaptains` and `explorers` are each already the live source of truth. */
+  get leaders(): Leader[] {
+    return [...this.shipCaptains, ...this.explorers];
   }
   /**
    * A decision the player must resolve before the simulation can advance
@@ -284,16 +291,16 @@ export class World {
       this.policeFleet = null;
     }
 
-    // Every initial Faction (Company/SoloTrader from init.factions, plus the
+    // Every initial FleetOwner (Company/SoloTrader from init.factions, plus the
     // PirateBrigade/PoliceFleet just built above) has registered its
     // Transports but only seated its Captains so far -- crewFleet() (which
     // fills the remaining seats from the Sailor pool) hasn't run yet, so the
-    // pool can be sized off every Faction's true demand before any of them
-    // draw from it. See sailorPool.generateSailorPool / Faction.crewFleet.
+    // pool can be sized off every FleetOwner's true demand before any of them
+    // draw from it. See sailorPool.generateSailorPool / FleetOwner.crewFleet.
     generateSailorPool(this.factions);
     for (const faction of this.factions) faction.crewFleet();
 
-    this.captains = [...(init.traders ?? []), ...this.factions.flatMap((f) => f.captains)];
+    this.shipCaptains = [...(init.traders ?? []), ...this.factions.flatMap((f) => f.captains)];
     this.agentOrderFn = init.agentOrderFn ?? randomAgentOrder;
     this.expeditionParties = init.expeditionParties ?? [];
 
@@ -337,7 +344,7 @@ export class World {
     const ship = new Ship({ name: randomShipName(globalNameRng, SPANISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
     const captain = new Captain({ ...randomCaptainPersonFields(SPANISH_NAMES, "Spanish"), homeLocation: homeLocationObj });
     this.pirateBrigade.addTransport(ship, captain, homeLocationObj.name, this.pirateShipStartingCash);
-    this.captains.push(captain);
+    this.shipCaptains.push(captain);
     return captain;
   }
 
@@ -346,8 +353,8 @@ export class World {
     if (this.pirateBrigade === null || this.pirateBrigade.captains.length === 0) return null;
     const captain = randChoice(this.pirateBrigade.captains);
     this.pirateBrigade.removeTransport(captain);
-    const idx = this.captains.indexOf(captain);
-    if (idx !== -1) this.captains.splice(idx, 1);
+    const idx = this.shipCaptains.indexOf(captain);
+    if (idx !== -1) this.shipCaptains.splice(idx, 1);
     return captain;
   }
 
@@ -368,7 +375,7 @@ export class World {
     const ship = new Ship({ name: randomShipName(globalNameRng, ENGLISH_SHIP_NAMES), crewRequirement: randInt(1, 5) });
     const captain = new Captain({ ...randomCaptainPersonFields(ENGLISH_NAMES, "English"), homeLocation: homeLocationObj });
     this.policeFleet.addTransport(ship, captain, homeLocationObj.name);
-    this.captains.push(captain);
+    this.shipCaptains.push(captain);
     return captain;
   }
 
@@ -377,8 +384,8 @@ export class World {
     if (this.policeFleet === null || this.policeFleet.captains.length === 0) return null;
     const captain = randChoice(this.policeFleet.captains);
     this.policeFleet.removeTransport(captain);
-    const idx = this.captains.indexOf(captain);
-    if (idx !== -1) this.captains.splice(idx, 1);
+    const idx = this.shipCaptains.indexOf(captain);
+    if (idx !== -1) this.shipCaptains.splice(idx, 1);
     return captain;
   }
 
@@ -390,7 +397,7 @@ export class World {
    * Company's fixed homeLocation). The new Captain draws its name/ship name
    * from the Company's own politicalEntity nationality, same as addLocation's
    * fleet top-up. Crew fills for free from that Location's Sailor pool (see
-   * Faction.addTransport/fillExtraSeats) -- only the hull itself costs cash.
+   * FleetOwner.addTransport/fillExtraSeats) -- only the hull itself costs cash.
    * Throws if shipClassName is unknown, the Company can't afford it, or the
    * Location doesn't exist/support a Ship. Not available for a SoloTrader
    * (its own ship replacement is automatic -- see the private
@@ -434,14 +441,14 @@ export class World {
   /**
    * Picks the Captain for a freshly bought Ship (manual Company purchase,
    * the SoloTrader auto-replacement, or the PoliceFleet auto-replacement):
-   * if an inactive Captain (see Faction.inactiveCaptains/sinkInPort) is
+   * if an inactive Captain (see FleetOwner.inactiveCaptains/sinkInPort) is
    * sitting right at `location`, they become the new Captain -- longest-
    * benched first -- instead of generating a fresh one, per the grilled
    * spec. Otherwise generates a new Captain from `nationality`'s name pool,
-   * same as addLocation's fleet top-up. `Faction`-typed (not `Company`) so
+   * same as addLocation's fleet top-up. `FleetOwner`-typed (not `Company`) so
    * PoliceFleet -- which doesn't extend Company -- can use this too.
    */
-  private captainForNewShip(faction: Faction, location: Location, nationality: Nationality): Captain {
+  private captainForNewShip(faction: FleetOwner, location: Location, nationality: Nationality): Captain {
     const idx = faction.inactiveCaptains.findIndex((c) => c.location?.name === location.name);
     if (idx !== -1) return faction.inactiveCaptains.splice(idx, 1)[0];
     const pools = NATIONALITY_POOLS[nationality];
@@ -453,14 +460,14 @@ export class World {
    * SoloTrader auto-replacement, and the PoliceFleet auto-replacement
    * (`noCrew`, per the grilled spec -- the new Ship starts with nobody but
    * its Captain aboard, for both). Registers the new Captain in
-   * `this.captains` either way (a reused inactive Captain was removed from
+   * `this.shipCaptains` either way (a reused inactive Captain was removed from
    * it when benched -- see sinkInPort -- so it always needs re-adding, same
-   * as a brand new one). `Faction`-typed (not `Company`) so PoliceFleet can
-   * use this too -- see Faction.buyShipAt for how a Faction with no
+   * as a brand new one). `FleetOwner`-typed (not `Company`) so PoliceFleet can
+   * use this too -- see FleetOwner.buyShipAt for how a FleetOwner with no
    * home-location-forcing `addTransport` override (PirateBrigade/
    * PoliceFleet) still places the Ship at exactly `location`.
    */
-  private acquireShip(faction: Faction, location: Location, shipClass: Ship, noCrew: boolean, day: number): Captain {
+  private acquireShip(faction: FleetOwner, location: Location, shipClass: Ship, noCrew: boolean, day: number): Captain {
     const nationality = faction.politicalEntity?.nationality ?? randomNationality(globalNameRng);
     const ship = shipClass.clone({ name: randomShipName(globalNameRng, NATIONALITY_POOLS[nationality].ships) });
     const captain = this.captainForNewShip(faction, location, nationality);
@@ -474,7 +481,7 @@ export class World {
         addToSailorPool(location.name, member);
       }
     }
-    this.captains.push(captain);
+    this.shipCaptains.push(captain);
     // Consumed by this Captain's own recordShipLog -- either later THIS SAME
     // day (an automatic replacement, called from inside runDay's per-captain
     // loop) or immediately by the caller (a manual purchase -- see
@@ -512,7 +519,7 @@ export class World {
     const location = captain.location;
     // SoloTrader.poolsCash is false -- its real money lives on the
     // Captain's OWN balance (captain.cash resolves to captain.ownCash),
-    // never on the Faction-level `cash` field a pooling Company would use.
+    // never on the FleetOwner-level `cash` field a pooling Company would use.
     if (location !== null && captain.cash >= cheapest.purchasePrice) {
       captain.cash -= cheapest.purchasePrice;
       this.acquireShip(soloTrader, location, cheapest, true, day);
@@ -525,11 +532,11 @@ export class World {
    * A SoloTrader whose Captain survived a sinking but can't afford even the
    * cheapest replacement Ship (see buySoloTraderReplacementIfPossible) is
    * dissolved outright -- removed from `this.factions` entirely (nothing
-   * else currently does this to a Faction mid-simulation). All cash is
+   * else currently does this to a FleetOwner mid-simulation). All cash is
    * lost -- zeroed on `captain` directly (SoloTrader.poolsCash is false, so
-   * that's where its real money lives, not the unused Faction-level `cash`
+   * that's where its real money lives, not the unused FleetOwner-level `cash`
    * field), not returned anywhere. The Captain disappears for good --
-   * already out of `this.captains` (see World.runDay) and now dropped from
+   * already out of `this.shipCaptains` (see World.runDay) and now dropped from
    * `inactiveCaptains` too, so nothing references it anymore.
    */
   private dissolveSoloTrader(soloTrader: SoloTrader, captain: Captain): void {
@@ -548,7 +555,7 @@ export class World {
    * still around (benched in `policeFleet.inactiveCaptains`, sunk in port --
    * acquireShip's captainForNewShip lookup reuses it) or already fully
    * discarded (dead, sunk at sea -- a fresh Captain is generated instead);
-   * either way `captain.location` is set (see Faction.sinkAtSea, which
+   * either way `captain.location` is set (see FleetOwner.sinkAtSea, which
    * disembarks even a fatally-lost Captain purely so this has somewhere to
    * spawn the replacement). No affordability check or dissolution fallback
    * -- PoliceFleet is hardcoded to Infinity cash (see its constructor), so
@@ -742,7 +749,7 @@ export class World {
     // Only real (multi-ship) Companies with a home Location that can host a
     // Ship are eligible -- a SoloTrader's homeLocation is always null (see
     // faction.ts), so it's naturally excluded without an extra check.
-    const shipsBefore = this.captains.filter((c) => c.transport !== null).length;
+    const shipsBefore = this.shipCaptains.filter((c) => c.transport !== null).length;
     const locationsBefore = this.locations.length - 1;
     const shipsToAdd = locationsBefore > 0 ? Math.round(shipsBefore / locationsBefore) : 0;
     const probeShip = new Ship({ name: "_ProbeShip" });
@@ -761,7 +768,7 @@ export class World {
         const ship = new Ship({ name: randomShipName(globalNameRng, pools.ships), crewRequirement: randInt(1, 5) });
         const captain = new Captain({ ...randomCaptainPersonFields(pools.names, nationality), homeLocation: getLocation(home)! });
         target.addTransport(ship, captain, home, 0);
-        this.captains.push(captain);
+        this.shipCaptains.push(captain);
       }
     }
 
@@ -804,7 +811,7 @@ export class World {
       daysRemaining: entry.event.daysRemaining,
       durationDays: entry.event.durationDays,
     }));
-    for (const captain of this.captains) {
+    for (const captain of this.shipCaptains) {
       for (const event of captain.activeAgentEvents) {
         result.push({
           scope: "Agent",
@@ -863,15 +870,15 @@ export class World {
     if (this.pendingDecision !== null) return;
 
     // Contracts are pruned/tendered at the very start of the day, before any
-    // Faction acts, against yesterday's closing stockpile levels -- so
-    // Factions see today's fresh offers (and never a stale/expired one).
+    // FleetOwner acts, against yesterday's closing stockpile levels -- so
+    // FleetOwners see today's fresh offers (and never a stale/expired one).
     this.bulletinBoard.prune(this.locations, day);
     // A Location must not re-tender for a pair some ContractFulfiller has
     // already accepted (even though it's no longer on the board) -- so the
     // dedup key set spans both the board and every fulfiller's own list,
     // excluding contracts fulfilled or cancelled (its in-flight cargo was
     // seized by pirates -- see PirateBrigade.attack) since a fulfiller only
-    // prunes those lazily inside its own next directFleet call (after this
+    // prunes those lazily inside its own next direct call (after this
     // loop).
     const activeContractKeys = new Set<string>([
       ...this.bulletinBoard.open.map((c) => contractKey(c.location, c.commodity)),
@@ -904,11 +911,11 @@ export class World {
 
     // Formal day-order step 2 (see CLAUDE.md): crew hiring for every ship
     // ALREADY sitting in port -- a global pass over the whole fleet, before
-    // any Faction plans (step 3) or any Captain acts today, so directFleet's
+    // any FleetOwner plans (step 3) or any Captain acts today, so direct's
     // route-economics see this crew, not yesterday's. A ship that instead
     // arrives (or finishes a crew rotation) today gets its hire folded into
     // its own act() call instead -- see Captain.act's justArrived handling.
-    for (const captain of this.captains) {
+    for (const captain of this.shipCaptains) {
       if (captain.status !== "AtLocation") continue;
       if (closedLocations.has(captain.locationName)) continue;
       if (captain.groundedDaysRemaining > 0) continue;
@@ -916,16 +923,16 @@ export class World {
     }
 
     // Traders act first, against the previous day's closing prices.
-    const directedRoutes = new Map<Captain, Directive>();
+    const directedRoutes = new Map<Person, Directive>();
     for (const faction of this.factions) {
-      const directives = faction.directFleet(
+      const directives = faction.direct(
         day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations, this.bulletinBoard,
         this.pirateCountsByLocation,
       );
       for (const [captain, directive] of directives) directedRoutes.set(captain, directive);
     }
 
-    const todaysOrder = this.agentOrderFn(this.captains, day);
+    const todaysOrder = this.agentOrderFn(this.shipCaptains, day);
     for (const trader of todaysOrder) {
       trader.act(
         day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations,
@@ -935,9 +942,9 @@ export class World {
         if (e.day === day) this.eventLog.push(e);
       }
 
-      // A Ship sinking this turn (see Faction.sinkAtSea/sinkInPort) leaves
+      // A Ship sinking this turn (see FleetOwner.sinkAtSea/sinkInPort) leaves
       // its Captain transport-less -- either dead (at sea) or benched (in
-      // port, pushed onto Faction.inactiveCaptains). Either way it no
+      // port, pushed onto FleetOwner.inactiveCaptains). Either way it no
       // longer belongs in the daily loop's own captains list. A benched
       // SoloTrader Captain gets an immediate shot at a replacement Ship
       // (see buySoloTraderReplacementIfPossible) if it survived; a sunk
@@ -947,8 +954,8 @@ export class World {
       // (dead or benched) leaves a permanent gap; it has no replacement
       // mechanism at all.
       if (trader.transport === null) {
-        const idx = this.captains.indexOf(trader);
-        if (idx !== -1) this.captains.splice(idx, 1);
+        const idx = this.shipCaptains.indexOf(trader);
+        if (idx !== -1) this.shipCaptains.splice(idx, 1);
         if (trader.company instanceof SoloTrader && trader.company.inactiveCaptains.includes(trader)) {
           this.buySoloTraderReplacementIfPossible(trader.company, trader, day);
         } else if (trader.company instanceof PoliceFleet) {
@@ -968,7 +975,7 @@ export class World {
     // profitable to sell there (see Market.pirateMultiplier), and richer
     // delivery fees on any Contract tendered there tomorrow (see
     // Location.tenderContracts) -- recomputed once per day, off end-of-day
-    // positions (after every Faction/Captain has acted), the same timing
+    // positions (after every FleetOwner/Captain has acted), the same timing
     // Market events already use. Persisted on the instance (rather than a
     // local var) so tomorrow's tenderContracts pass, which runs before
     // anyone's had a chance to move, can still read today's picture.
@@ -992,16 +999,16 @@ export class World {
     // equivalent to trimming after every push but far cheaper.
     trimHistory(this.combinedHistory, day);
 
-    for (const trader of this.captains) trader.recordPortfolioSnapshot(day, this.sellMarkets);
+    for (const trader of this.shipCaptains) trader.recordPortfolioSnapshot(day, this.sellMarkets);
     for (const faction of this.factions) faction.recordNetWorthSnapshot(day, this.sellMarkets);
 
-    // Daily piracy tick (see Sailor.piracy/Faction.hirePiracyThreshold): every
+    // Daily piracy tick (see Sailor.piracy/FleetOwner.hirePiracyThreshold): every
     // currently-crewing Sailor (including the Captain -- Captain extends
     // Sailor) rises if the Ship it's aboard belongs to a PirateBrigade, falls
     // otherwise; every pool Sailor (not aboard anything) falls too. A single
     // pass at the end of the day, once every Ship's crew is settled, rather
-    // than folded into any one Faction's own turn.
-    for (const captain of this.captains) {
+    // than folded into any one FleetOwner's own turn.
+    for (const captain of this.shipCaptains) {
       if (captain.transport === null) continue;
       const delta = captain.company instanceof PirateBrigade ? PIRACY_INCREASE_PER_DAY : -PIRACY_DECAY_PER_DAY;
       for (const member of captain.transport.crew) member.piracy = clamp01(member.piracy + delta);
@@ -1010,11 +1017,11 @@ export class World {
 
     // Shore Leave -- the final act of the day (see World.runDay's own doc
     // comment on the formal day order): a single per-ship coin flip for
-    // every Ship still docked tonight, skipping Factions that don't grant it
-    // (PoliceFleet -- see Faction.grantsShoreLeave) and any Ship that spent
-    // today repairing (see isRepairDirective/Company.directFleet's
+    // every Ship still docked tonight, skipping FleetOwners that don't grant it
+    // (PoliceFleet -- see FleetOwner.grantsShoreLeave) and any Ship that spent
+    // today repairing (see isRepairDirective/Company.direct's
     // partitionForRepair) -- a repairing crew never gets leave, roll or not.
-    for (const captain of this.captains) {
+    for (const captain of this.shipCaptains) {
       if (captain.status !== "AtLocation") continue;
       if (!captain.company?.grantsShoreLeave) continue;
       const directive = directedRoutes.get(captain);
@@ -1032,23 +1039,36 @@ export class World {
     // (tradeLog/agentEventLog/the shore-leave flag just set) plus the
     // arrivedToday/repairedToday/newShipDay flags set earlier in today's
     // act()/acquireShip calls -- see Captain.recordShipLog. A Captain whose
-    // Ship sank today isn't in `this.captains` any more by this point (see
+    // Ship sank today isn't in `this.shipCaptains` any more by this point (see
     // the post-act() cleanup above), so it already got its own final entry
-    // written directly by Faction.sinkAtSea/sinkInPort instead.
-    for (const captain of this.captains) captain.recordShipLog(day);
+    // written directly by FleetOwner.sinkAtSea/sinkInPort instead.
+    for (const captain of this.shipCaptains) captain.recordShipLog(day);
 
     // Exploration-mode expedition parties -- a fully independent pass, not
-    // folded into the captains/factions loops above. May itself set
-    // `this.pendingDecision` on arrival at a Village (a player-controlled
-    // party only -- see Explorer.arrive), which simply means the NEXT
-    // runDay call (not this one) is the one that pauses. An aiControlled
-    // party plans its own trade/move first (mirrors the Faction.directFleet
-    // pass above, just scoped to one Explorer -- see
-    // ExpeditionParty.directFleet) before ticking.
+    // folded into the captains/factions loops above. Each party's own daily
+    // cycle is a deliberate two-step guarantee, not an accident of this
+    // loop's ordering: arrival ("evening") is handled entirely by tick()/
+    // arrive() below -- the passage-tax talk with the Location's leader (if
+    // any), "camp" is narrative only, no separate state -- and only THEN,
+    // the following day ("morning"), does direct() restock/choose a new
+    // route, since its own `destination === null` check can only pass once
+    // tick() has already cleared today's arrival. A pending decision (a
+    // player-controlled party only -- see Explorer.arrive) simply means the
+    // NEXT runDay call (not this one) is the one that pauses.
     for (const party of this.expeditionParties) {
-      if (party.aiControlled && party.explorer.destination === null && party.explorer.cargo === null) {
-        const directive = party.directFleet(day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations);
-        if (directive !== null) party.explorer.executeTradeDirective(directive, day, this.buyMarkets, this.sellMarkets);
+      if (party.aiControlled && party.explorer.destination === null) {
+        const directives = party.direct(day, this.buyMarkets, this.sellMarkets, commoditiesPresent, closedLocations);
+        const directive = directives.get(party.explorer);
+        if (directive !== undefined) {
+          // isTradeDirective is unreachable via the default AI today (see
+          // ExpeditionParty.direct) but kept -- executeTradeDirective still
+          // exists and works, just isn't called by this default anymore.
+          if (isTradeDirective(directive)) {
+            party.explorer.executeTradeDirective(directive, day, this.buyMarkets, this.sellMarkets);
+          } else if (isRepositionDirective(directive)) {
+            party.explorer.departToward(directive.destination);
+          }
+        }
       }
       party.explorer.tick(day, this);
     }

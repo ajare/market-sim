@@ -3,22 +3,25 @@
  * counterpart for a PorterParty. Extends Person directly (not Sailor) --
  * Captain's Sailor baggage (wage/rank/piracy) doesn't apply here, and an
  * Explorer's own arrival-triggered decisions have nowhere to hook into
- * Captain's private arrive()/act() -- but trades under the SAME rules as a
- * Ship (price impact, capacity/cash limits -- see tradingAgent.ts, shared
- * with Captain) and, once wrapped in an `aiControlled` ExpeditionParty (see
- * faction.ts), can plan and execute its own trades autonomously the same way
- * Company.directFleet drives idle Ships. A player-controlled Explorer's
- * movement stays exactly as designed in EXP-5: one player-picked leg at a
- * time (departFor), never autonomous route planning -- only an
- * aiControlled party's own directFleet ever calls findBestLocalRoute/
- * executeTradeDirective.
+ * Captain's private arrive()/act(). Its manual buy/sell trade under the SAME
+ * rules as a Ship (price impact, capacity/cash limits -- see tradingAgent.ts,
+ * shared with Captain), but an `aiControlled` ExpeditionParty (see faction.ts)
+ * has a different motive than Company's profit-seeking ships: it wanders to a
+ * uniformly random neighbor (never chosen for profit) and, before picking
+ * that destination, restocks gift-worthy goods purely out of necessity -- to
+ * have something to offer whichever Chieftain it meets next -- via
+ * restockGiftsIfNeeded, not findBestLocalRoute/planTradeTo (still present,
+ * still functional, just unused by this default AI; see ExpeditionParty.direct
+ * for why). A player-controlled Explorer's movement stays exactly as designed
+ * in EXP-5: one player-picked leg at a time (departFor), never autonomous
+ * route planning.
  */
 import { Person, type PersonInit } from "./person";
 import type { PorterParty } from "./transport";
 import type { CargoItem } from "./transport";
 import type { Route } from "./routes";
 import { routeTravelDays } from "./routes";
-import type { Market } from "./markets";
+import { marketKey, type Market } from "./markets";
 import { COMMODITIES, getLocation } from "./worldData";
 import { DEFAULT_WEIGHT_PER_UNIT } from "./commodity";
 import type { ShipLogEntry } from "./log";
@@ -26,11 +29,11 @@ import type { TradeLogEntry } from "./captain";
 import type { Location } from "./location";
 import type { World } from "./world";
 import type { ExpeditionParty } from "./faction";
-import { buildPassageTaxDecision, autoResolveDecision } from "./decisions";
+import { buildPassageTaxDecision, autoResolveDecision, GIFT_QUANTITY_OFFERED } from "./decisions";
 import { primeRouteGraphCache } from "./pathfinding";
 import {
-  findBestBundle, reverifyBundle, applyPurchases, routeEconomicsFromPath, buySingleCommodity, sellSingleCommodity,
-  sellCargoShared, type TradeDirective, type TripCostParams,
+  findBestBundle, allocateBundleForDestination, reverifyBundle, applyPurchases, routeEconomicsFromPath,
+  buySingleCommodity, sellSingleCommodity, type TradeDirective, type TripCostParams, type Leader,
 } from "./tradingAgent";
 import { round2 } from "./utils";
 
@@ -42,7 +45,7 @@ export interface ExplorerInit extends Omit<PersonInit, "location" | "transport" 
   minDailyReturnPct?: number;
 }
 
-export class Explorer extends Person {
+export class Explorer extends Person implements Leader {
   cash: number;
   /** Node name the party is currently travelling toward -- null while AtLocation (not travelling). */
   destination: string | null = null;
@@ -55,7 +58,7 @@ export class Explorer extends Person {
   priceImpact: number;
   /** Same meaning as Captain's -- the minimum daily-return threshold `findBestLocalRoute` requires before an aiControlled party will commit to a bundle. Irrelevant to the player's own manual buy/sell, which always succeeds if affordable/available. */
   minDailyReturnPct: number;
-  /** The ExpeditionParty managing this Explorer -- set by ExpeditionParty's constructor (mirrors Captain.company). Null only for an Explorer never wrapped in one (shouldn't happen once constructed by buildWorldFromJson/tests, but not assumed non-null here the way Captain assumes a Faction). */
+  /** The ExpeditionParty managing this Explorer -- set by ExpeditionParty's constructor (mirrors Captain.company). Null only for an Explorer never wrapped in one (shouldn't happen once constructed by buildWorldFromJson/tests, but not assumed non-null here the way Captain assumes a FleetOwner). */
   company: ExpeditionParty | null = null;
 
   constructor(init: ExplorerInit) {
@@ -89,7 +92,7 @@ export class Explorer extends Person {
     this.porterParty.cargo = value;
   }
 
-  /** Whether this Explorer's ExpeditionParty trades/moves autonomously (see faction.ts's ExpeditionParty.directFleet) -- false (player-controlled, the only mode that existed before Round B) if unset or not yet wrapped in a party. */
+  /** Whether this Explorer's ExpeditionParty trades/moves autonomously (see faction.ts's ExpeditionParty.direct) -- false (player-controlled, the only mode that existed before Round B) if unset or not yet wrapped in a party. */
   get aiControlled(): boolean {
     return this.company?.aiControlled ?? false;
   }
@@ -97,7 +100,7 @@ export class Explorer extends Person {
   /**
    * Player-picked single leg -- sets daysRemaining/destination from `route`
    * directly. Deliberately NOT an autonomous multi-hop planner for the
-   * player: the caller (UI, or an aiControlled party's own directFleet via
+   * player: the caller (UI, or an aiControlled party's own direct via
    * executeTradeDirective) is responsible for choosing which viable outgoing
    * route to use -- see doc/ExploreGameIntegration.md's "Leg-choice event is
    * optional, not forced" decision. No-op if already travelling.
@@ -111,19 +114,23 @@ export class Explorer extends Person {
 
   /**
    * Advances one simulated day: decrements daysRemaining while travelling,
-   * arrives once it hits zero, then (aiControlled only -- a player-controlled
-   * party still sells via the manual "Sell" button) immediately tries to
-   * sell whatever it's carrying. No-op while AtLocation with no cargo and
-   * nothing already travelling.
+   * arrives once it hits zero (see arrive() -- this is where the passage-tax
+   * "talk to the Location leader" happens, before any trading; "setting up
+   * camp" is narrative only, no separate state). No-op while AtLocation and
+   * nothing is travelling -- an aiControlled party's own restocking/route
+   * choice happens in ExpeditionParty.direct instead, called separately by
+   * World.runDay (deliberately the NEXT day: direct's own idle-check only
+   * passes once `destination` has already gone null here, so a party never
+   * plans a new move the same day it arrives). Deliberately never auto-sells
+   * gift-stock on arrival -- unlike Captain's cargo, it's kept in reserve for
+   * a future passage-tax gift, not something to offload.
    */
   tick(day: number, world: World): void {
+    void day;
     if (this.destination !== null) {
       this.daysRemaining -= 1;
       if (this.daysRemaining > 0) return;
       this.arrive(world);
-    }
-    if (this.aiControlled && this.cargo !== null) {
-      this.sellCargoIfPossible(day, world.sellMarkets);
     }
   }
 
@@ -245,6 +252,29 @@ export class Explorer extends Person {
     return sold;
   }
 
+  /**
+   * Buys toward a GIFT_QUANTITY_OFFERED-unit reserve of every gift-worthy
+   * commodity (Commodity.gift > 0), best (highest-scoring) first, from
+   * whatever's available at the current Location -- same-spot purchases via
+   * the existing buy() above (no destination, no voyage economics), so
+   * capacity/cash capping and cargo bookkeeping are already handled
+   * correctly. Called by ExpeditionParty.direct as an immediate same-day
+   * action before it picks where to go next: an aiControlled Explorer trades
+   * purely out of necessity (to have something to offer whichever Chieftain
+   * it meets next), never for profit. No-op past whatever cash/capacity
+   * allows, and for any gift-worthy commodity with no buy Market here today.
+   */
+  restockGiftsIfNeeded(buyMarkets: Map<string, Market>): void {
+    const giftWorthy = Object.values(COMMODITIES).filter((c) => c.gift > 0).sort((a, b) => b.gift - a.gift);
+    for (const commodity of giftWorthy) {
+      const needed = GIFT_QUANTITY_OFFERED - this.heldQuantity(commodity.name);
+      if (needed <= 0) continue;
+      const market = buyMarkets.get(marketKey(this.locationName, commodity.name));
+      if (market === undefined) continue;
+      this.buy(commodity.name, needed, market);
+    }
+  }
+
   /** This Explorer's trip-cost inputs for the shared tradingAgent.ts functions -- always zero, since a PorterParty burns no fuel, pays no crew, and has no fixed shipment fee. */
   private costParams(): TripCostParams {
     return { fuelConsumptionRate: 0, fixedShipmentCost: 0, dailyCrewCost: 0, speedFn: () => this.porterParty.speedUnitsPerDay };
@@ -260,27 +290,78 @@ export class Explorer extends Person {
     ) ?? null;
   }
 
+  /** Every direct Trail Route from this Explorer's current node its PorterParty can actually use -- the candidate set ExpeditionParty.direct's random-wander step picks a destination from. Empty if this Explorer sits at a dead end (no compatible outgoing Trail). */
+  get reachableNeighbors(): Route[] {
+    const adjacency = primeRouteGraphCache();
+    const neighbors = adjacency.get(this.locationName) ?? [];
+    return neighbors.filter((r) => r.routeType === "Trail" && this.porterParty.canUseRoute(r));
+  }
+
   /**
-   * Autonomous route/cargo planning for an aiControlled ExpeditionParty --
-   * the Explorer-side counterpart to Captain.findBestLocalRoute, sharing the
-   * same destination-first knapsack (tradingAgent.ts's findBestBundle) but
-   * restricted to direct Trail neighbors only (no multi-hop continuation --
-   * this class was never built to travel more than one leg atomically, see
-   * departFor). Called only by ExpeditionParty.directFleet, never by the
-   * player's manual UI.
+   * Departs toward `destination` if it's a direct Trail neighbor this
+   * PorterParty can use -- the aiControlled counterpart to the player's own
+   * departFor(route), used to execute a REPOSITION Directive from
+   * ExpeditionParty.direct (see reachableNeighbors, which is always where
+   * `destination` comes from). No-op if no such direct route exists.
+   */
+  departToward(destination: string): void {
+    const route = this.directRouteTo(destination);
+    if (route !== null) this.departFor(route);
+  }
+
+  /**
+   * Destination-searching route/cargo planning -- the Explorer-side
+   * counterpart to Captain.findBestLocalRoute (same signature -- see the
+   * Leader interface), sharing the same destination-first knapsack
+   * (tradingAgent.ts's findBestBundle) but restricted to direct Trail
+   * neighbors only (no multi-hop continuation -- this class was never built
+   * to travel more than one leg atomically, see departFor). Not currently
+   * called by ExpeditionParty.direct (which picks its destination randomly,
+   * then calls planTradeTo for that ONE destination instead of searching for
+   * the best one) -- kept because it's part of the Leader interface and
+   * still fully functional (exercised directly in tests).
    */
   findBestLocalRoute(
     buyMarkets: Map<string, Market>, sellMarkets: Map<string, Market>, commodities: string[], closedLocations: ReadonlySet<string>,
+    excludeRoutes: ReadonlySet<string> = new Set(),
   ): TradeDirective | null {
     return findBestBundle(
       this.locationName, this.cash, this.porterParty.cargoCapacity, this.porterParty,
-      buyMarkets, sellMarkets, commodities, closedLocations, new Set(), this.minDailyReturnPct,
+      buyMarkets, sellMarkets, commodities, closedLocations, excludeRoutes, this.minDailyReturnPct,
       0, this.costParams(), () => null,
       (destination) => {
         const route = this.directRouteTo(destination);
         return route === null ? null : [route];
       },
     );
+  }
+
+  /**
+   * Trade economics for a SINGLE, already-chosen destination -- no search
+   * across candidates, unlike findBestLocalRoute. Used by
+   * ExpeditionParty.direct's random-wander step to decide what (if anything)
+   * to carry along whichever direct Trail neighbor it just randomly picked,
+   * using the exact same knapsack/price-impact mechanism Captain uses
+   * (allocateBundleForDestination/routeEconomicsFromPath) -- just without a
+   * "best of many" search, since the destination itself wasn't chosen for
+   * profit. Null if nothing has a positive margin to carry there right now
+   * (ExpeditionParty.direct still moves there empty-handed) or if
+   * `destination` isn't actually a direct Trail neighbor.
+   */
+  planTradeTo(
+    destination: string, buyMarkets: Map<string, Market>, sellMarkets: Map<string, Market>, commodities: string[],
+  ): TradeDirective | null {
+    const route = this.directRouteTo(destination);
+    if (route === null) return null;
+    const items = allocateBundleForDestination(
+      this.locationName, destination, commodities, buyMarkets, sellMarkets, this.cash, this.porterParty.cargoCapacity, new Set(),
+    );
+    if (items.length === 0) return null;
+    const econ = routeEconomicsFromPath(
+      [route], this.locationName, items, 0, buyMarkets, this.porterParty, this.costParams(), () => null,
+    );
+    if (econ.path === null) return null;
+    return { destination, items, ...econ };
   }
 
   /**
@@ -327,22 +408,5 @@ export class Explorer extends Person {
     };
 
     this.departFor(route);
-  }
-
-  /** aiControlled-only sell-on-arrival -- shares sellCargoShared with Captain (same per-item, overhead-apportioned economics; overhead is always 0 here, since a PorterParty's cargo.totalCost is pure goods cost). Explorer's cargo never carries a contract-bound item, so remainingItems here is only ever non-empty when a market was closed/unavailable. */
-  private sellCargoIfPossible(day: number, sellMarkets: Map<string, Market>): void {
-    if (this.cargo === null) return;
-    const cargo = this.cargo;
-    const { realizedProfitDelta, proceeds, entries, remainingItems } = sellCargoShared(this.locationName, cargo, sellMarkets, this.priceImpact);
-    this.cash += proceeds;
-    this.realizedProfit += realizedProfitDelta;
-    for (const entry of entries) {
-      this.tradeLog.push({
-        day, action: "SELL", commodity: entry.commodity, location: this.locationName, destination: null,
-        quantity: entry.quantity, price: entry.price, distance: cargo.distance, routeType: cargo.routeType,
-        travelDays: cargo.travelDays, fuelPrice: null, fuelUnitsConsumed: null, fuelCostPaid: 0, profit: entry.profit,
-      });
-    }
-    this.cargo = remainingItems.length > 0 ? { ...cargo, items: remainingItems } : null;
   }
 }

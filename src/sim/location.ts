@@ -151,7 +151,7 @@ export class Location extends ContractIssuer {
    * Location can go broke and stop tendering new Contracts. A Location
    * doesn't keep its own balance once it belongs to a PoliticalEntity:
    * reads/writes redirect to that PoliticalEntity's `cash` (mirrors
-   * `Captain.cash`'s pooling-vs-own-balance split against a `Faction`); a
+   * `Captain.cash`'s pooling-vs-own-balance split against a `FleetOwner`); a
    * standalone Location with no PoliticalEntity (e.g. in a hand-built test
    * world) just uses its own.
    */
@@ -314,7 +314,7 @@ export class Location extends ContractIssuer {
    * currently sitting at this Location (see CONTRACT_PIRATE_FEE_BOOST_PER_SHIP),
    * a risk premium baked in once at tender time since deliveryFee is
    * otherwise fixed. Called at the very start of each simulated day (see
-   * World.runDay), before Factions act, against whatever
+   * World.runDay), before FleetOwners act, against whatever
    * `BulletinBoard.prune` left open.
    */
   tenderContracts(

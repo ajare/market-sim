@@ -6,7 +6,7 @@
 import { create } from "zustand";
 import {
   createLocation, createChieftain, compatibleRouteTypes, factionType,
-  DEFAULT_COMMODITY_RATE, DEFAULT_COMMODITY_TYPE, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
+  DEFAULT_COMMODITY_RATE, DEFAULT_COMMODITY_TYPE, DEFAULT_COMMODITY_GIFT, DEFAULT_COMPANY_STARTING_FUNDS, DEFAULT_POLITICAL_ENTITY_TYPE,
   DEFAULT_EXPLORER_PORTER_COUNT, DEFAULT_EXPLORER_ANIMAL_COUNT, DEFAULT_EXPLORER_STARTING_CASH,
   ROUTE_TERMINAL_COMPATIBILITY,
   type Commodity, type CommodityField, type CommodityType, type EditorChieftain, type EditorCompany,
@@ -126,8 +126,6 @@ interface EditorStore {
   setLocationHasRuler: (id: string, hasRuler: boolean) => void;
   /** Edits fields on a Location's existing ruler -- no-op if the Location has none. */
   updateLocationRuler: (id: string, patch: Partial<EditorChieftain>) => void;
-  /** Toggles a commodity in a Location's ruler's giftCategories -- no-op if the Location has no ruler. */
-  toggleRulerGiftCategory: (id: string, commodity: string) => void;
 
   /** The currently selected Route, shown in the RouteInspector panel; null when none is selected. Selecting a Route clears any selected Location and vice versa -- only one thing is inspected at a time. */
   selectedRouteId: string | null;
@@ -173,6 +171,7 @@ interface EditorStore {
   updateCommodityProductionRate: (name: string, productionRate: number) => void;
   updateCommodityConsumptionRate: (name: string, consumptionRate: number) => void;
   updateCommodityType: (name: string, type: CommodityType) => void;
+  updateCommodityGift: (name: string, gift: number) => void;
   removeCommodity: (name: string) => void;
 
   /** Companies defined for this World -- captain strategy params and home location aren't modeled in the editor, just name, starting funds, and a fleet of (Transport type/name, Captain name) pairs. */
@@ -487,18 +486,6 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       }),
     })),
 
-  toggleRulerGiftCategory: (id, commodity) =>
-    set((s) => ({
-      locations: s.locations.map((loc) => {
-        if (loc.id !== id || loc.ruler === null) return loc;
-        const has = loc.ruler.giftCategories.includes(commodity);
-        const giftCategories = has
-          ? loc.ruler.giftCategories.filter((c) => c !== commodity)
-          : [...loc.ruler.giftCategories, commodity];
-        return { ...loc, ruler: { ...loc.ruler, giftCategories } };
-      }),
-    })),
-
   routes: [],
 
   addRoute: (locationAId, locationBId) =>
@@ -686,6 +673,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         commodities: [...s.commodities, {
           name: trimmed, basePrice, type,
           productionRate: DEFAULT_COMMODITY_RATE, consumptionRate: DEFAULT_COMMODITY_RATE,
+          gift: DEFAULT_COMMODITY_GIFT,
         }],
       };
     }),
@@ -693,6 +681,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   updateCommodityBasePrice: (name, basePrice) =>
     set((s) => ({
       commodities: s.commodities.map((c) => (c.name === name ? { ...c, basePrice } : c)),
+    })),
+
+  updateCommodityGift: (name, gift) =>
+    set((s) => ({
+      commodities: s.commodities.map((c) => (c.name === name ? { ...c, gift } : c)),
     })),
 
   updateCommodityType: (name, type) =>

@@ -1,6 +1,6 @@
 /**
  * Global cap on every day-stamped history array in the simulation
- * (Market.history, World.combinedHistory, Faction.netWorthHistory,
+ * (Market.history, World.combinedHistory, FleetOwner.netWorthHistory,
  * Captain.tradeLog/portfolioHistory/shipLog): as each one appends a new
  * day's entries, entries older than the trailing HISTORY_RETENTION_DAYS
  * window are dropped, so a long-running session's memory footprint stays

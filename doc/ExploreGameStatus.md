@@ -41,14 +41,14 @@ skeleton:
   independently in `runDay`; a pending decision pauses the *entire* simulation
   (fixed a real bug along the way — `World.step()` was still advancing the day
   counter/calendar even when `runDay` no-op'd).
-- **`ExpeditionParty`** (not an EXP ticket): `faction.ts`'s `Faction` (Company/
+- **`ExpeditionParty`** (not an EXP ticket): `faction.ts`'s `FleetOwner` (Company/
   SoloTrader/PirateBrigade/PoliceFleet's Captain-and-Ship-specific machinery — cash
   pooling via `ownCash`, cargo/contracts, condition decay/sinking) was split from a
-  new, generic `BaseFaction<TMember>` core (constructor-time Transport-placement/
+  new, generic `Faction<TMember>` core (constructor-time Transport-placement/
   crew-boarding, display-name deduping) via a minimal `FactionMember` structural
-  interface, with `Faction extends BaseFaction<Captain>` — a zero-behavior-change
-  refactor for every existing Faction subclass. `ExpeditionParty extends
-  BaseFaction<Explorer>` is the new sibling: the exploration mode's SoloTrader
+  interface, with `FleetOwner extends Faction<Captain>` — a zero-behavior-change
+  refactor for every existing FleetOwner subclass. `ExpeditionParty extends
+  Faction<Explorer>` is the new sibling: the exploration mode's SoloTrader
   analog, managing exactly one `Explorer` (in the "captain" role) commanding
   exactly one `PorterParty` (its Transport), `poolsCash = false` like SoloTrader. A
   pure wrapper today — an `Explorer` already boards its `PorterParty` and manages
@@ -70,15 +70,15 @@ skeleton:
   candidate destination by per-unit margin, fill `cargoCapacity`/cash margin-first)
   instead of picking one commodity at a time -- a Ship can now carry a genuine mix
   of goods in one voyage. `sellCargoIfPossible`/`fenceCargoIfPossible`/
-  `maybeSmuggle`/`fulfillContract`, `Faction.netWorth`/`loseCargoAndCash`/
-  `PirateBrigade.attack`, and `Company.directFleet`'s per-route demand capping were
+  `maybeSmuggle`/`fulfillContract`, `FleetOwner.netWorth`/`loseCargoAndCash`/
+  `PirateBrigade.attack`, and `Company.direct`'s per-route demand capping were
   all generalized to loop per item. `Transport.inventory` (PorterParty's old
   separate multi-commodity stockpile) was removed from the base `Transport` class;
   `PorterParty` keeps a private, PorterParty-only `inventory` field used only by
   `Explorer.buy`/`sell` and `buildPassageTaxDecision`'s gift-giving -- a deliberate,
   temporary gap (not yet migrated onto the new item-based `cargo`) left for Round B.
 - **Round B** (done, same conversation): closed that gap. Rather than a shared base
-  class (Captain's `company: Faction` typing, its private `arrive()`, and Sailor's
+  class (Captain's `company: FleetOwner` typing, its private `arrive()`, and Sailor's
   wage/rank/piracy fields all make literal inheritance a bad fit for Explorer) or a
   mixin (unprecedented in this codebase), Captain's route-scoring/execution math was
   extracted into a new `src/sim/tradingAgent.ts` -- free functions
@@ -90,7 +90,7 @@ skeleton:
   unmodified before touching Explorer at all). `Explorer` now trades under the exact
   same rules (real price impact, capacity/cash limits, a `tradeLog`) via `cargo.items`
   -- `PorterParty.inventory` is gone entirely. `ExpeditionParty` gained
-  `directFleet`/`aiControlled` (`faction.ts`) -- much simpler than `Company`'s (exactly
+  `direct`/`aiControlled` (`faction.ts`) -- much simpler than `Company`'s (exactly
   one Explorer, so no idle-partitioning/fleet-wide demand capping), restricted to
   direct Trail-neighbor hops only (no multi-hop continuation -- matches Explorer's
   existing single-leg movement model). Also fixed a real, pre-existing bug along the
@@ -128,6 +128,22 @@ Location, porter/animal counts, starting cash. Both round-trip through
 `buildWorldFromJson.ts`'s existing `ruler`/`explorers` parsing (already in place
 since EXP-9's demo fixture). Deleting a Location cascades to any Explorer whose
 home it was (no fallback home Location, unlike a Company).
+
+**`ExpeditionParty.direct`'s default AI switched from profit-seeking route search to
+random wandering, trading opportunistically along the way** (not an EXP ticket): an
+`aiControlled` party no longer picks its destination for profit -- once idle, it picks
+a uniformly random direct Trail neighbor (excluding closed Locations), then decides
+what (if anything) to carry there using the exact same mechanism Captain uses (price
+impact, capacity/cash limits, margin-first allocation -- see new
+`Explorer.planTradeTo`/tradingAgent.ts's `allocateBundleForDestination`, which scores
+ONE given destination instead of searching for the best one). A `TradeDirective` if
+anything has a positive margin, a bare `REPOSITION` Directive otherwise (still moves
+there empty-handed). Stops for good the moment its `cash` reaches zero, or while still
+sitting on unsold cargo from a previous trip (mirrors the pre-wander design).
+`Explorer.findBestLocalRoute` (the destination-searching version) still exists and
+still works (exercised directly in tests, and part of the `Leader` interface) -- it's
+just not what this default AI calls anymore. New `Explorer.reachableNeighbors`/
+`departToward` support the random pick and its execution.
 
 ## b) Designed, not yet implemented
 

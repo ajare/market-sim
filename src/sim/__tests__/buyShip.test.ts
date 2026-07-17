@@ -17,11 +17,11 @@ describe("World.buyShipForCompany", () => {
       (l) => l.name !== company.homeLocation && (l.terminalTypes.has("Port") || l.terminalTypes.has("Platform")),
     )!;
     const cashBefore = company.cash;
-    const captainsBefore = new Set(world.captains);
+    const captainsBefore = new Set(world.shipCaptains);
 
     const captain = world.buyShipForCompany(company, otherPort.name, "Speedster");
 
-    expect(world.captains).toContain(captain);
+    expect(world.shipCaptains).toContain(captain);
     expect(captainsBefore.has(captain)).toBe(false);
     expect(captain.company).toBe(company);
     expect(captain.transport).toBeInstanceOf(Ship);
@@ -38,12 +38,12 @@ describe("World.buyShipForCompany", () => {
     const company = world.factions.find((f): f is Company => f instanceof Company && !(f instanceof SoloTrader))!;
     company.cash = 1;
     const cashBefore = company.cash;
-    const captainsBefore = world.captains.length;
+    const captainsBefore = world.shipCaptains.length;
     const port = world.locations.find((l) => l.terminalTypes.has("Port") || l.terminalTypes.has("Platform"))!;
 
     expect(() => world.buyShipForCompany(company, port.name, "Speedster")).toThrow(/cannot afford/);
     expect(company.cash).toBe(cashBefore);
-    expect(world.captains.length).toBe(captainsBefore);
+    expect(world.shipCaptains.length).toBe(captainsBefore);
   });
 
   it("throws for an unknown ship class", () => {

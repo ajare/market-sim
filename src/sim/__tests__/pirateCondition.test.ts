@@ -33,10 +33,10 @@ function makeDock(): void {
 }
 
 describe("PirateBrigade/PoliceFleet repair gating (mirrors Company)", () => {
-  it("PirateBrigade.directFleet issues a REPAIR directive for a docked Ship below CONDITION_REPAIR_THRESHOLD", () => {
+  it("PirateBrigade.direct issues a REPAIR directive for a docked Ship below CONDITION_REPAIR_THRESHOLD", () => {
     makeDock();
     // A real target Company (with a captain sitting AT "Dock") is needed --
-    // directFleet's own target-density scan short-circuits to an empty
+    // direct's own target-density scan short-circuits to an empty
     // Directive map before ever reaching the repair check if there's
     // nothing to chase.
     const targetShip = new Ship({ name: "Merchant" });
@@ -48,25 +48,25 @@ describe("PirateBrigade/PoliceFleet repair gating (mirrors Company)", () => {
     const brigade = new PirateBrigade("Brigade", [[transport, captain, "Dock"]], [company]);
     transport.condition = CONDITION_REPAIR_THRESHOLD - 0.01;
 
-    const directives = brigade.directFleet(1, new Map(), new Map(), [], new Set(), new BulletinBoard());
+    const directives = brigade.direct(1, new Map(), new Map(), [], new Set(), new BulletinBoard());
     expect(directives.get(captain)).toEqual({ action: "REPAIR" });
   });
 
-  it("PoliceFleet.directFleet issues a REPAIR directive for a docked Ship below CONDITION_REPAIR_THRESHOLD", () => {
+  it("PoliceFleet.direct issues a REPAIR directive for a docked Ship below CONDITION_REPAIR_THRESHOLD", () => {
     makeDock();
     const transport = new Ship({ name: "Cutter", crewRequirement: 1 });
     const captain = makeCaptain("Constable", "Dock");
     const police = new PoliceFleet("Coast Guard", [[transport, captain, "Dock"]]);
     transport.condition = CONDITION_REPAIR_THRESHOLD - 0.01;
 
-    const directives = police.directFleet(1, new Map(), new Map(), [], new Set(), new BulletinBoard());
+    const directives = police.direct(1, new Map(), new Map(), [], new Set(), new BulletinBoard());
     expect(directives.get(captain)).toEqual({ action: "REPAIR" });
   });
 });
 
 // A Company victim pools cash by default, so `victimCaptain.cash` is ALWAYS
 // untouched by theft regardless of whether an attack fires ("cash pooled --
-// untouchable" -- see Faction.attack) -- not a usable "did the attack
+// untouchable" -- see PirateBrigade.attack) -- not a usable "did the attack
 // happen" signal. `pirateCaptain.groundedDaysRemaining` is: set to 1 by
 // EVERY successful attack (see maybeAttackOnArrival), 0 otherwise.
 
@@ -149,7 +149,7 @@ describe("PirateBrigade sinking has no auto-replacement (fleet just shrinks)", (
     expect(pirateCaptain.transport).toBeNull();
     expect(brigade.inactiveCaptains).not.toContain(pirateCaptain); // fatal -- never benched
     expect(brigade.captains).not.toContain(pirateCaptain);
-    // No World involved here (this is a pure Faction-level check) -- there's
+    // No World involved here (this is a pure FleetOwner-level check) -- there's
     // simply no code path that buys PirateBrigade a replacement, unlike
     // PoliceFleet's World.buyPoliceReplacementImmediately.
   });

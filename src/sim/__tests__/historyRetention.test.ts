@@ -54,7 +54,7 @@ describe("historyRetention", () => {
 });
 
 describe("historyRetention -- integrated with a running World", () => {
-  it("keeps Market.history, World.combinedHistory, Captain.tradeLog/portfolioHistory, and Faction.netWorthHistory bounded to the retention window after running well past it", () => {
+  it("keeps Market.history, World.combinedHistory, Captain.tradeLog/portfolioHistory, and FleetOwner.netWorthHistory bounded to the retention window after running well past it", () => {
     setHistoryRetentionDays(5);
     const { world, factions } = buildWorld(3000, { autoMinStockpileDaysFromRoutes: true });
 
@@ -65,7 +65,7 @@ describe("historyRetention -- integrated with a running World", () => {
       expect(market.history.length).toBeLessThanOrEqual(5);
     }
     expect(world.combinedHistory.length).toBeLessThanOrEqual(5 * [...world.buyMarkets.values(), ...world.sellMarkets.values()].length);
-    for (const captain of world.captains) {
+    for (const captain of world.shipCaptains) {
       expect(captain.portfolioHistory.length).toBeLessThanOrEqual(5);
     }
     for (const faction of factions) {

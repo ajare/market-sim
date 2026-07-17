@@ -19,6 +19,9 @@ export const DEFAULT_BASE_CONSUMPTION_RATE = 8.0;
 /** Fallback weight/bulk per unit -- only consulted by PorterParty's capacity math (see transport.ts); every existing commodity's implicit weight stays 1.0, matching how every other Transport type treats cargoCapacity as a plain unit count. */
 export const DEFAULT_WEIGHT_PER_UNIT = 1.0;
 
+/** Fallback gift-worthiness -- see Commodity.gift. Nothing is gift-worthy unless explicitly authored otherwise. */
+export const DEFAULT_GIFT_VALUE = 0.0;
+
 /** Fallback reference price for a Location.basePrice() lookup whose commodity has no registry entry at all. */
 export const DEFAULT_BASE_PRICE = 1.0;
 
@@ -58,6 +61,8 @@ export class Commodity {
   type: CommodityType;
   /** Weight/bulk per unit -- only PorterParty's capacity math (transport.ts) reads this; every other Transport type ignores it entirely. */
   weightPerUnit: number;
+  /** How good a gift this commodity makes for a Chieftain, in [0, 1] -- 0 (default) means not gift-worthy at all. Global, not per-chieftain: every Chieftain shares the same taste (see decisions.ts's buildPassageTaxDecision). Scales the trust gained by offering it as a passage-tax gift, and ranks what an aiControlled ExpeditionParty restocks (see Explorer.restockGiftsIfNeeded). */
+  gift: number;
 
   constructor(
     name: string,
@@ -70,6 +75,7 @@ export class Commodity {
     baseConsumptionRate: number = DEFAULT_BASE_CONSUMPTION_RATE,
     type: CommodityType = DEFAULT_COMMODITY_TYPE,
     weightPerUnit: number = DEFAULT_WEIGHT_PER_UNIT,
+    gift: number = DEFAULT_GIFT_VALUE,
   ) {
     this.name = name;
     this.basePrice = basePrice;
@@ -81,6 +87,7 @@ export class Commodity {
     this.baseConsumptionRate = baseConsumptionRate;
     this.type = type;
     this.weightPerUnit = weightPerUnit;
+    this.gift = gift;
   }
 }
 
@@ -219,6 +226,7 @@ export function buildCommodities(
   consumptionRates: Record<string, number> = {},
   types: Record<string, CommodityType> = {},
   weights: Record<string, number> = {},
+  gifts: Record<string, number> = {},
 ): Record<string, Commodity> {
   if (names.length < MIN_COMMODITIES || names.length > MAX_COMMODITIES) {
     throw new Error(
@@ -239,6 +247,7 @@ export function buildCommodities(
       consumptionRates[name] ?? BASE_CONSUMPTION_RATE[name] ?? DEFAULT_BASE_CONSUMPTION_RATE,
       types[name] ?? COMMODITY_TYPE[name] ?? DEFAULT_COMMODITY_TYPE,
       weights[name] ?? DEFAULT_WEIGHT_PER_UNIT,
+      gifts[name] ?? DEFAULT_GIFT_VALUE,
     );
   }
   return result;

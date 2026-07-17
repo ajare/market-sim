@@ -8,7 +8,7 @@ import type { World } from "../sim/world";
 
 /** Every Person in the World right now: every Transport's full crew (Captain + Sailors, aboard) plus every Location's Sailor pool (idle, not yet hired -- see sailorPool.ts). */
 function allPersons(world: World): Person[] {
-  const aboard = world.captains.flatMap((c) => c.transport?.crew ?? []);
+  const aboard = world.shipCaptains.flatMap((c) => c.transport?.crew ?? []);
   const pooled = world.locations.flatMap((loc) => getSailorPoolAt(loc.name));
   return [...aboard, ...pooled];
 }

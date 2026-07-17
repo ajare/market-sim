@@ -56,7 +56,7 @@ export function ControlsPanel() {
     }
   }
 
-  const traderCount = world?.captains.length ?? 0;
+  const traderCount = world?.shipCaptains.length ?? 0;
   const locationCount = world?.locations.length ?? 0;
   // world mutates in place (see useSimStore's docstring) -- `version` is what
   // actually signals these counts changed, `world` itself never does.

@@ -60,13 +60,13 @@ export interface ConditionRecord {
 }
 
 // Tunable knobs for Ship condition -- see the `condition` field doc on
-// Transport. Apply to every decaysCondition Faction's Ships (Company/
-// SoloTrader/PirateBrigade/PoliceFleet -- see Faction.decaysCondition in
-// faction.ts, the actual per-Faction gate; Captain.act is the consumer).
+// Transport. Apply to every decaysCondition FleetOwner's Ships (Company/
+// SoloTrader/PirateBrigade/PoliceFleet -- see FleetOwner.decaysCondition in
+// faction.ts, the actual per-FleetOwner gate; Captain.act is the consumer).
 
 /** How much a Ship's condition drops for every day it spends genuinely InTransit -- see Captain.act. At this rate a Ship needs 25 days of continuous, unrepaired travel to go from full condition to needing repair. */
 export const CONDITION_DECAY_PER_TRANSIT_DAY = 0.02;
-/** A docked Ship below this condition must repair (a whole-day REPAIR Directive, see Company.directFleet/Captain.act) before it's allowed to depart again. */
+/** A docked Ship below this condition must repair (a whole-day REPAIR Directive, see Company.direct/Captain.act) before it's allowed to depart again. */
 export const CONDITION_REPAIR_THRESHOLD = 0.5;
 /** Random extra condition damage a pirate attack inflicts on top of stealing cash/cargo -- see PirateBrigade.attack. */
 export const MIN_ATTACK_CONDITION_DAMAGE = 0.0;
@@ -106,7 +106,7 @@ export class Transport {
    * tracks it (initialized to 1), but only `Ship` actually decays it or does
    * anything when it bottoms out -- see `handlesZeroCondition`. What
    * actually HAPPENS when a Ship's condition hits zero (crew fate, cash/
-   * cargo loss, Company bookkeeping) lives in Captain.act/Faction, not here
+   * cargo loss, Company bookkeeping) lives in Captain.act/FleetOwner, not here
    * -- Transport is deliberately decoupled from the trading agent that owns
    * it (see this file's doc comment) and has no access to a Captain's cash,
    * cargo, or Company.
@@ -151,7 +151,7 @@ export class Transport {
    * the subclass-dispatched "handler" for zero condition. False (and inert)
    * in the base class and every subclass except `Ship`; the actual
    * consequences of a Ship hitting zero (crew/Captain fate, cash/cargo loss,
-   * Company/World bookkeeping) are orchestrated by Captain.act/Faction,
+   * Company/World bookkeeping) are orchestrated by Captain.act/FleetOwner,
    * which check this before acting -- see this class's `condition` doc.
    */
   handlesZeroCondition(): boolean {

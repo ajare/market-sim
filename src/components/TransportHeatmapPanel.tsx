@@ -97,7 +97,7 @@ export function TransportHeatmapPanel() {
     const canvas = canvasRef.current;
     if (canvas === null || world === null) return;
     const locations = world.locations;
-    const { counts, days, maxCount } = buildCounts(world.captains);
+    const { counts, days, maxCount } = buildCounts(world.shipCaptains);
 
     const dpr = window.devicePixelRatio || 1;
     const width = LEFT_PAD + Math.max(1, days.length) * CELL_WIDTH + 8;
@@ -188,7 +188,7 @@ export function TransportHeatmapPanel() {
   return (
     <div className="panel heatmap-panel">
       <h2>Transports per Location</h2>
-      {world.captains.length === 0 || world.captains.every((c) => c.portfolioHistory.length === 0) ? (
+      {world.shipCaptains.length === 0 || world.shipCaptains.every((c) => c.portfolioHistory.length === 0) ? (
         <p className="muted">No data yet -- step the simulation.</p>
       ) : (
         <>

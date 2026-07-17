@@ -3,7 +3,7 @@
  * and route-economics aggregation both Captain (Ships) and Explorer
  * (PorterParty) trade under, so the two apply the SAME rules (price impact,
  * capacity/cash limits, margin-first allocation) without a shared class
- * hierarchy -- ruled out because Captain's `company: Faction` typing, its
+ * hierarchy -- ruled out because Captain's `company: FleetOwner` typing, its
  * private `arrive()`, and Sailor's wage/rank/piracy fields all make literal
  * inheritance a bad fit for Explorer, and this codebase already favors free
  * functions over mixins for shared, transport-agnostic math (see
@@ -17,6 +17,7 @@ import { routeTravelDays, type Route, type RouteType } from "./routes";
 import { pathNodeSequence } from "./pathfinding";
 import { Market, marketKey } from "./markets";
 import { round2 } from "./utils";
+import type { TradeLogEntry } from "./captain";
 
 /** One commodity's share of a planned or executed trade route -- see TradeDirective/findBestBundle's knapsack allocation. */
 export interface CargoAllocation {
@@ -39,7 +40,7 @@ export interface RouteEconomics {
   dailyReturnPct: number;
   path: Route[] | null;
   crewCost: number;
-  /** Combined quantity across every commodity in the bundle -- lets a Faction gauge how much of a route's demand one ship covers, and sizes fuel/capacity the same way a single-commodity quantity used to. */
+  /** Combined quantity across every commodity in the bundle -- lets a FleetOwner gauge how much of a route's demand one ship covers, and sizes fuel/capacity the same way a single-commodity quantity used to. */
   quantity: number;
 }
 
@@ -47,6 +48,33 @@ export interface TradeDirective extends RouteEconomics {
   destination: string;
   /** The mix of commodities this trip buys here and carries to `destination` -- see findBestBundle's knapsack allocation. */
   items: CargoAllocation[];
+}
+
+/**
+ * The trading capability Captain and Explorer both bring to this module's
+ * free functions -- cash, a single Transport's cargo, a running trade log,
+ * per-trade price sensitivity, and the minimum daily-return bar
+ * `findBestLocalRoute` requires before committing to a bundle. Purely
+ * structural (not a base class -- see this file's own doc comment for why a
+ * shared class hierarchy was ruled out): Captain and Explorer already
+ * satisfy this today without any changes to either, so declaring it costs
+ * nothing and just formalizes what was previously only informal ("Explorer
+ * mirrors Captain's X") into something the compiler checks going forward.
+ */
+export interface Leader {
+  cash: number;
+  cargo: CargoState | null;
+  tradeLog: TradeLogEntry[];
+  priceImpact: number;
+  minDailyReturnPct: number;
+  readonly locationName: string;
+  findBestLocalRoute(
+    buyMarkets: Map<string, Market>,
+    sellMarkets: Map<string, Market>,
+    commodities: string[],
+    closedLocations: ReadonlySet<string>,
+    excludeRoutes?: ReadonlySet<string>,
+  ): TradeDirective | null;
 }
 
 /**

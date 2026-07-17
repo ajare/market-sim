@@ -10,6 +10,7 @@ export function CommoditiesPanel() {
   const updateCommodityProductionRate = useEditorStore((s) => s.updateCommodityProductionRate);
   const updateCommodityConsumptionRate = useEditorStore((s) => s.updateCommodityConsumptionRate);
   const updateCommodityType = useEditorStore((s) => s.updateCommodityType);
+  const updateCommodityGift = useEditorStore((s) => s.updateCommodityGift);
   const removeCommodity = useEditorStore((s) => s.removeCommodity);
   const [newName, setNewName] = useState("");
   const [expandedNames, setExpandedNames] = useState<Set<string>>(new Set());
@@ -108,6 +109,17 @@ export function CommoditiesPanel() {
                       type="number"
                       value={commodity.consumptionRate}
                       onChange={(e) => updateCommodityConsumptionRate(commodity.name, Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="commodity-field">
+                    Gift value
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={commodity.gift}
+                      onChange={(e) => updateCommodityGift(commodity.name, Number(e.target.value))}
                     />
                   </label>
                 </div>

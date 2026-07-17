@@ -193,9 +193,9 @@ describe("Ship sinking in port (survivable)", () => {
 });
 
 describe("Repair", () => {
-  it("Company.directFleet issues a REPAIR directive (preempting trade) for a docked Ship below CONDITION_REPAIR_THRESHOLD, and it can't depart until repaired", () => {
+  it("Company.direct issues a REPAIR directive (preempting trade) for a docked Ship below CONDITION_REPAIR_THRESHOLD, and it can't depart until repaired", () => {
     const { world } = buildWorld();
-    const shipCaptain = world.captains.find((c) => c.transport instanceof Ship && c.company instanceof Company)!;
+    const shipCaptain = world.shipCaptains.find((c) => c.transport instanceof Ship && c.company instanceof Company)!;
     const transport = shipCaptain.transport as Ship;
     transport.condition = CONDITION_REPAIR_THRESHOLD - 0.01;
 

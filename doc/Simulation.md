@@ -343,7 +343,7 @@ current defaults hold -- see Finding 3.
 
 Every finding above assumed the original dispatch rule: a `Company`
 (`src/sim/faction.ts`) claims and services its due Contracts first, then
-arbitrages with whatever ships are left over (`Company.directFleet`,
+arbitrages with whatever ships are left over (`Company.direct`,
 `contractStrategy = "prioritise"`). That's a reasonable default when
 Contracts are assumed to matter more than any single arbitrage trade, but it
 means a ship can be pulled off a strongly profitable arbitrage route to

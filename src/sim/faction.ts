@@ -1,16 +1,20 @@
 /**
- * Faction: owns a fleet of Captains and their money -- and Company (its
- * actively fleet-directing subclass, with SoloTrader a non-pooling
- * variant) / PirateBrigade (a raiding subclass) / PoliceFleet (a
- * currently-passive law-enforcement subclass). Ported from sim/faction.py.
+ * Faction<TMember>: the generic core shared by every crew-owning party in
+ * the sim -- a name, a roster of crew members, and their money. FleetOwner is
+ * its Captain-crewed branch (owns a fleet of Ships): Company (its actively
+ * fleet-directing subclass, with SoloTrader a non-pooling variant) /
+ * PirateBrigade (a raiding subclass) / PoliceFleet (a currently-passive
+ * law-enforcement subclass). ExpeditionParty is the other branch, crewed by
+ * a single Explorer instead. Ported from sim/faction.py (FleetOwner's side
+ * of this hierarchy only -- ExpeditionParty is TS-only, no Python original).
  *
- * `poolsCash` is a GETTER, not a plain field: Faction's constructor reads
+ * `poolsCash` is a GETTER, not a plain field: FleetOwner's constructor reads
  * `this.poolsCash` while running, and a plain class-field override
  * (`poolsCash = false` on SoloTrader/PirateBrigade) would not yet be
  * applied at that point -- JS initializes subclass fields only AFTER the
  * base constructor body finishes running, unlike Python's class-attribute
  * MRO lookup, which resolves an override immediately even during
- * `Faction.__init__`. A getter on the prototype chain is resolved
+ * `FleetOwner.__init__`. A getter on the prototype chain is resolved
  * dynamically (like Python's MRO), so it works correctly here.
  */
 import { Captain, isShipLogEnabled, type Directive, type TradeDirective } from "./captain";
@@ -31,18 +35,18 @@ import type { PoliticalEntity } from "./politicalEntity";
 import { locationSupportsTransport } from "./companyHome";
 import { round2 } from "./utils";
 import { randomGender, type NameRng } from "./names";
-import { randomBirthDate } from "./person";
+import { randomBirthDate, type Person } from "./person";
 import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
 import { randomNationality } from "./nationality";
 
 export type FleetCrew = Array<[Transport, Captain, string]>;
 
 /**
- * The minimal surface BaseFaction's constructor-time registration needs from
+ * The minimal surface Faction's constructor-time registration needs from
  * a "crew member" -- satisfied by both Captain (via Person) and Explorer (via
  * Person) without either needing to know about the other. Everything beyond
  * this (cash-pool bookkeeping, contracts, condition/cargo) is specific to the
- * concrete Faction subclass and lives there instead (see Faction, below).
+ * concrete FleetOwner subclass and lives there instead (see FleetOwner, below).
  */
 export interface FactionMember {
   name: string;
@@ -51,7 +55,7 @@ export interface FactionMember {
   disembarkAt(location: Location): void;
 }
 
-/** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see BaseFaction.dedupeMemberName. */
+/** 0-based index -> bijective base-26 letters: 0="A", 25="Z", 26="AA", 27="AB", ... -- see Faction.dedupeMemberName. */
 function alphaSequenceBase(index: number): string {
   let n = index + 1;
   let s = "";
@@ -64,15 +68,15 @@ function alphaSequenceBase(index: number): string {
 }
 
 /**
- * The generic core every Faction-like grouping shares: a name, a roster of
- * crew members each paired with the Transport they command, and the
- * constructor-time bookkeeping (placing the Transport, boarding the member,
- * deduping display names) that's identical regardless of what kind of member
- * this is. Everything Captain/Ship-specific (cash pooling via ownCash,
- * contracts, condition/cargo, sinking, repair) stays on `Faction` itself
- * (below) rather than here, since none of it applies to a non-Captain member
- * like Explorer -- see ExpeditionParty, the other concrete subclass of this
- * base.
+ * The generic core every concrete subclass shares -- FleetOwner (Captain-crewed) or
+ * ExpeditionParty (Explorer-crewed): a name, a roster of crew members each
+ * paired with the Transport they command, and the constructor-time
+ * bookkeeping (placing the Transport, boarding the member, deduping display
+ * names) that's identical regardless of what kind of member this is.
+ * Everything Captain/Ship-specific (cash pooling via ownCash, contracts,
+ * condition/cargo, sinking, repair) stays on `FleetOwner` itself (below)
+ * rather than here, since none of it applies to a non-Captain member like
+ * Explorer -- see ExpeditionParty, the other concrete subclass of this base.
  *
  * `captains` keeps its name (rather than something like `members`) even
  * though it holds Explorers for ExpeditionParty -- renaming it would ripple
@@ -80,7 +84,7 @@ function alphaSequenceBase(index: number): string {
  * for zero behavioral benefit, since those all only ever see the Captain
  * flavor of this base in practice.
  */
-export abstract class BaseFaction<TMember extends FactionMember> {
+export abstract class Faction<TMember extends FactionMember> {
   /** Whether this Faction pools its crew members' cash into one shared balance (true) or leaves each to their own (false) -- true by default; overridden false on SoloTrader/PirateBrigade/ExpeditionParty. See the class doc on why this is a getter, not a plain field. */
   get poolsCash(): boolean {
     return true;
@@ -149,6 +153,27 @@ export abstract class BaseFaction<TMember extends FactionMember> {
     }
     this.memberNames.add(member.name);
   }
+
+  /**
+   * Per-day autonomous planning hook -- decide what this Faction's crew
+   * should do today, called once per day by World.runDay, never manually.
+   * Always keyed by `TMember` (a Captain or an Explorer, both Persons), so a
+   * caller holding only a `Faction<TMember>`-typed reference can still
+   * dispatch every returned Directive without knowing which concrete
+   * subclass produced it. A no-op here (empty map); FleetOwner overrides it
+   * with its own ship-fleet no-op default (further overridden by Company/
+   * PirateBrigade/PoliceFleet with their real routing logic, one entry per
+   * idle Captain), and ExpeditionParty overrides it directly with its own
+   * single-Explorer planning (at most one entry, for its one Explorer). The
+   * two branches' overrides still take different parameter lists (a
+   * FleetOwner's needs the contract board/pirate-density counts;
+   * ExpeditionParty's doesn't), so this base signature's parameters stay
+   * loose (`unknown[]`) -- only the return type is unified, since that's
+   * the shape every caller actually needs to rely on.
+   */
+  direct(..._args: unknown[]): Map<Person, Directive> {
+    return new Map();
+  }
 }
 
 /** Adapts the global sim RNG to the NameRng surface randomPersonName/randomGender need, so a newly crewed Sailor's name/gender/birth date draw off the same seeded stream as the rest of the simulation. */
@@ -176,27 +201,27 @@ export interface FactionNetWorthSnapshot {
   netWorth: number;
 }
 
-export class Faction extends BaseFaction<Captain> {
+export class FleetOwner extends Faction<Captain> {
   override get poolsCash(): boolean {
     return true;
   }
 
-  /** Whether this Faction's Captains can attempt to smuggle cargo through a closed port's black market instead of waiting for it to reopen -- see Captain.maybeSmuggle. False by default; only SoloTrader overrides it. */
+  /** Whether this FleetOwner's Captains can attempt to smuggle cargo through a closed port's black market instead of waiting for it to reopen -- see Captain.maybeSmuggle. False by default; only SoloTrader overrides it. */
   get canSmuggle(): boolean {
     return false;
   }
 
-  /** Whether this Faction's hired Sailors rotate out after JOURNEYS_PER_HIRE journeys (see Captain.advanceCrewRotation/hireCrewIfPossible) -- true for Company/SoloTrader, false (permanent crew) for PirateBrigade/PoliceFleet and by default here. */
+  /** Whether this FleetOwner's hired Sailors rotate out after JOURNEYS_PER_HIRE journeys (see Captain.advanceCrewRotation/hireCrewIfPossible) -- true for Company/SoloTrader, false (permanent crew) for PirateBrigade/PoliceFleet and by default here. */
   get rotatesCrew(): boolean {
     return false;
   }
 
-  /** Whether this Faction's Captains fence cargo (seized in a raid, at a Location's discounted fenceFraction) rather than sell it at the live market price -- see Captain.act/fenceCargoIfPossible. False by default; only PirateBrigade overrides it. */
+  /** Whether this FleetOwner's Captains fence cargo (seized in a raid, at a Location's discounted fenceFraction) rather than sell it at the live market price -- see Captain.act/fenceCargoIfPossible. False by default; only PirateBrigade overrides it. */
   get fencesCargo(): boolean {
     return false;
   }
 
-  /** Whether this Faction's Ships accumulate condition decay/damage and can sink (see Transport.condition, Captain.act, PirateBrigade.attack, Faction.sinkAtSea/sinkInPort). False here in the base class; every concrete Faction (Company, inherited by SoloTrader; PirateBrigade; PoliceFleet) overrides it to true -- there is currently no Faction kind that actually leaves this false. */
+  /** Whether this FleetOwner's Ships accumulate condition decay/damage and can sink (see Transport.condition, Captain.act, PirateBrigade.attack, FleetOwner.sinkAtSea/sinkInPort). False here in the base class; every concrete FleetOwner (Company, inherited by SoloTrader; PirateBrigade; PoliceFleet) overrides it to true -- there is currently no FleetOwner kind that actually leaves this false. */
   get decaysCondition(): boolean {
     return false;
   }
@@ -208,8 +233,8 @@ export class Faction extends BaseFaction<Captain> {
 
   /**
    * The most `Sailor.piracy` a candidate can have and still be hired by this
-   * Faction (see sailorPool.hireFromSailorPool, called from both
-   * Captain.hireCrewIfPossible and Faction.fillExtraSeats) -- 0 (maximally
+   * FleetOwner (see sailorPool.hireFromSailorPool, called from both
+   * Captain.hireCrewIfPossible and FleetOwner.fillExtraSeats) -- 0 (maximally
    * strict) by default here and on PoliceFleet, 0.1 on Company (inherited by
    * SoloTrader), 1 (accepts anyone, since piracy never exceeds 1) on
    * PirateBrigade.
@@ -222,7 +247,7 @@ export class Faction extends BaseFaction<Captain> {
    * Cargo and cash are ALWAYS lost when a Ship sinks -- at sea or in port,
    * survived or not (per the grilled spec, no partial retention either way).
    * "Cash on board" only has a literal meaning for a non-pooling Captain
-   * (SoloTrader) -- their own balance is wiped; a pooling Faction's shared
+   * (SoloTrader) -- their own balance is wiped; a pooling FleetOwner's shared
    * purse isn't "on" any one Ship, so it's untouched by a single Ship's
    * loss (mirroring how a pirate attack already only ever steals from a
    * non-pooling victim -- see PirateBrigade.attack). Shared by sinkAtSea and
@@ -246,13 +271,13 @@ export class Faction extends BaseFaction<Captain> {
    * decay (see Captain.act) -- pirates can never cause this, since an attack
    * only ever lands on an already-AtLocation victim (see maybeAttackOnArrival
    * / sinkInPort). Fatal: the crew AND the Captain die, permanently -- this
-   * only removes `captain` from THIS Faction's own `captains`; the caller
-   * (World.runDay) still has to splice it out of `world.captains` too.
+   * only removes `captain` from THIS FleetOwner's own `captains`; the caller
+   * (World.runDay) still has to splice it out of `world.shipCaptains` too.
    * Never actually reached unless decaysCondition is true (checked by every
    * caller -- Captain.act's InTransit decay, PirateBrigade.attack), so a
-   * Faction where decaysCondition stays false never sinks at all. Declared
-   * here (not just on the Factions that enable it) so callers holding only
-   * a `Faction`-typed reference (e.g. Captain.company) can invoke it
+   * FleetOwner where decaysCondition stays false never sinks at all. Declared
+   * here (not just on the FleetOwners that enable it) so callers holding only
+   * a `FleetOwner`-typed reference (e.g. Captain.company) can invoke it
    * without a value import of any specific subclass.
    */
   sinkAtSea(captain: Captain, day: number): void {
@@ -273,7 +298,7 @@ export class Faction extends BaseFaction<Captain> {
     captain.lastTransport = sunkTransport;
     // This Captain's final Ship's Log entry -- World.runDay's own end-of-day
     // recordShipLog pass never runs for it (already spliced out of
-    // world.captains by the time that pass would reach it), so this is the
+    // world.shipCaptains by the time that pass would reach it), so this is the
     // only place this ever gets written. Gated the same as recordShipLog
     // itself (see isShipLogEnabled) -- off by default.
     if (isShipLogEnabled()) {
@@ -289,8 +314,8 @@ export class Faction extends BaseFaction<Captain> {
    * rotation departure -- see Captain.advanceCrewRotation) and the Captain is
    * benched into `inactiveCaptains`, disembarked (no Transport, no crew) at
    * this Location -- see the class doc on `inactiveCaptains`. Only removes
-   * `captain` from THIS Faction's own `captains`; the caller (World.runDay)
-   * still has to splice it out of `world.captains` too.
+   * `captain` from THIS FleetOwner's own `captains`; the caller (World.runDay)
+   * still has to splice it out of `world.shipCaptains` too.
    */
   sinkInPort(captain: Captain, day: number): void {
     const transport = captain.transport!;
@@ -308,7 +333,7 @@ export class Faction extends BaseFaction<Captain> {
     captain.lastTransport = transport;
     // This Captain's final Ship's Log entry for this Ship -- World.runDay's
     // own end-of-day recordShipLog pass never runs for it today (already
-    // spliced out of world.captains by the time that pass would reach it).
+    // spliced out of world.shipCaptains by the time that pass would reach it).
     // If a replacement Ship is bought later this same turn (see
     // World.acquireShip), that gets its own fresh entry via newShipDay.
     // Gated the same as recordShipLog itself (see isShipLogEnabled) -- off
@@ -324,14 +349,14 @@ export class Faction extends BaseFaction<Captain> {
    * logic -- a Ship below CONDITION_REPAIR_THRESHOLD can't depart at all
    * today, see Captain.act's RepairDirective handling) and the rest, still
    * free to be assigned something else this turn. Shared by every
-   * decaysCondition Faction's own directFleet (Company, PirateBrigade,
-   * PoliceFleet) -- pointless to call from a Faction where decaysCondition
+   * decaysCondition FleetOwner's own direct (Company, PirateBrigade,
+   * PoliceFleet) -- pointless to call from a FleetOwner where decaysCondition
    * stays false, since its Ships' condition never moves off 1 and this would
    * just return every idle Captain in `idle`, none in the repair map.
    */
-  protected partitionForRepair(closedLocations: ReadonlySet<string>): { idle: Captain[]; directives: Map<Captain, Directive> } {
+  protected partitionForRepair(closedLocations: ReadonlySet<string>): { idle: Captain[]; directives: Map<Person, Directive> } {
     const idleAll = this.captains.filter((t) => t.isIdleInPort(closedLocations));
-    const directives = new Map<Captain, Directive>();
+    const directives = new Map<Person, Directive>();
     const idle: Captain[] = [];
     for (const captain of idleAll) {
       if (captain.transport!.condition < CONDITION_REPAIR_THRESHOLD) {
@@ -363,7 +388,7 @@ export class Faction extends BaseFaction<Captain> {
 
   /**
    * Captains benched after their Ship sank in port (see sinkInPort) -- no
-   * longer in `captains` (or `world.captains`; World.runDay excludes them
+   * longer in `captains` (or `world.shipCaptains`; World.runDay excludes them
    * from the daily loop entirely) and no longer aboard anything (disembarked
    * at wherever the sinking happened -- see Person.disembarkAt), just
    * sitting here until a future Ship purchase at their Location reactivates
@@ -376,7 +401,7 @@ export class Faction extends BaseFaction<Captain> {
   netWorthHistory: FactionNetWorthSnapshot[] = [];
 
   constructor(name: string, crew: FleetCrew, startingCash: number = 0.0) {
-    // BaseFaction's constructor handles the member-agnostic bookkeeping
+    // Faction's constructor handles the member-agnostic bookkeeping
     // (placing each Transport, boarding each Captain, deduping display
     // names); only the Captain-specific bits (the Sailor-typed crew seat,
     // and ownCash/company cash wiring) are left to do here.
@@ -384,10 +409,10 @@ export class Faction extends BaseFaction<Captain> {
     for (const [transport, captain] of crew) {
       // Only the Captain's own seat is filled here -- extra Sailor seats are
       // deferred to crewFleet(), since the world-wide Sailor pool can only be
-      // sized correctly once every initial Faction's demand (Company/
+      // sized correctly once every initial FleetOwner's demand (Company/
       // SoloTrader/PirateBrigade/PoliceFleet) is known (see
       // sailorPool.generateSailorPool / World's constructor, which calls
-      // crewFleet() on every Faction right after generating the pool).
+      // crewFleet() on every FleetOwner right after generating the pool).
       transport.crew = [captain];
     }
     if (this.poolsCash) {
@@ -423,7 +448,7 @@ export class Faction extends BaseFaction<Captain> {
    * Captain) from the world-wide Sailor pool -- deferred out of the
    * constructor (see it for why). Safe to call more than once; a no-op for
    * any Transport already at its crewRequirement. Called by World's
-   * constructor right after generating the pool, and (for a Faction already
+   * constructor right after generating the pool, and (for a FleetOwner already
    * live in a running World) implicitly via addTransport's single-recruit path.
    */
   crewFleet(): void {
@@ -466,7 +491,7 @@ export class Faction extends BaseFaction<Captain> {
    * single-recruit equivalent of what the constructor does for the whole
    * initial crew array. `startingCash` folds in the same way the
    * constructor's `startingCash` does: added to the shared pool if this
-   * Faction pools cash, or credited directly to the new captain's own
+   * FleetOwner pools cash, or credited directly to the new captain's own
    * balance otherwise. Returns `captain` for convenience.
    */
   addTransport(transport: Transport, captain: Captain, homeLocation: string, startingCash: number = 0.0): Captain {
@@ -529,12 +554,12 @@ export class Faction extends BaseFaction<Captain> {
   }
 
   /**
-   * A plain Faction has no active routing strategy -- its ships plan and
+   * A plain FleetOwner has no active routing strategy -- its ships plan and
    * execute trades entirely autonomously. Returning an empty Map has the
    * same net effect as Python's NotImplementedError-caught-and-skipped
    * (World.merges whatever's returned into directedRoutes either way).
    */
-  directFleet(
+  direct(
     _day: number,
     _buyMarkets: Map<string, Market>,
     _sellMarkets: Map<string, Market>,
@@ -542,18 +567,18 @@ export class Faction extends BaseFaction<Captain> {
     _closedLocations: ReadonlySet<string>,
     _board: BulletinBoard,
     _pirateCounts: ReadonlyMap<string, number> = new Map(),
-  ): Map<Captain, Directive> {
+  ): Map<Person, Directive> {
     return new Map();
   }
 }
 
 /**
- * A Faction that accepts Contracts from a BulletinBoard, filtered to the
+ * A FleetOwner that accepts Contracts from a BulletinBoard, filtered to the
  * ContractTypes it declares it can handle (`contractTypes` -- empty means it
  * never accepts anything, e.g. SoloTrader). `contracts` holds every Contract
  * this fulfiller has accepted but not yet had fulfilled.
  */
-export class ContractFulfiller extends Faction {
+export class ContractFulfiller extends FleetOwner {
   /** Contract types this fulfiller can accept. Empty by default -- a plain ContractFulfiller (like SoloTrader) accepts nothing. */
   contractTypes: readonly ContractType[] = [];
 
@@ -579,36 +604,36 @@ export class ContractFulfiller extends Faction {
 }
 
 /**
- * A Faction that actively directs its fleet: coordinated routing (every
+ * A FleetOwner that actively directs its fleet: coordinated routing (every
  * idle transport's best local route is scored and assigned in descending
  * daily-return order, spreading coverage rather than piling onto one
- * route) plus shared capital (inherited from Faction). Also the only kind
+ * route) plus shared capital (inherited from FleetOwner). Also the only kind
  * of ContractFulfiller that can accept anything by default (`contractTypes`,
  * emptied on SoloTrader) -- how an accepted contract is weighed against
  * arbitrage is per-Company, via `contractStrategy` (see ContractStrategy and
- * directFleet).
+ * direct).
  */
 export class Company extends ContractFulfiller {
   override contractTypes: readonly ContractType[] = ["Commodity"];
 
-  /** Company/SoloTrader hires rotate out after JOURNEYS_PER_HIRE journeys -- see Faction.rotatesCrew. */
+  /** Company/SoloTrader hires rotate out after JOURNEYS_PER_HIRE journeys -- see FleetOwner.rotatesCrew. */
   override get rotatesCrew(): boolean {
     return true;
   }
 
-  /** Company/SoloTrader Ships accumulate condition decay and can sink -- see Faction.decaysCondition. */
+  /** Company/SoloTrader Ships accumulate condition decay and can sink -- see FleetOwner.decaysCondition. */
   override get decaysCondition(): boolean {
     return true;
   }
 
-  /** Company/SoloTrader will hire a lightly piracy-tainted Sailor (up to 0.1), unlike PoliceFleet's zero tolerance -- see Faction.hirePiracyThreshold. */
+  /** Company/SoloTrader will hire a lightly piracy-tainted Sailor (up to 0.1), unlike PoliceFleet's zero tolerance -- see FleetOwner.hirePiracyThreshold. */
   override get hirePiracyThreshold(): number {
     return 0.1;
   }
 
   /**
    * Whether THIS Company prioritises contracts over arbitrage, or weighs the
-   * two by expected profit -- see ContractStrategy and directFleet. A plain
+   * two by expected profit -- see ContractStrategy and direct. A plain
    * instance field (not shared state), so each Company could in principle run
    * a different strategy; buildWorld currently starts every Company at the
    * same default ("compare"), and the UI's toggle pushes a single choice onto
@@ -660,7 +685,7 @@ export class Company extends ContractFulfiller {
   }
 
   /**
-   * Same as Faction.addTransport, except: (1) a new Transport incompatible
+   * Same as FleetOwner.addTransport, except: (1) a new Transport incompatible
    * with this Company's home Location throws, matching the constructor's
    * check; (2) the new Captain always starts at the Company's home Location
    * -- the caller-supplied `homeLocation` param is only honored when this
@@ -679,7 +704,7 @@ export class Company extends ContractFulfiller {
    * PoliceFleet auto-replacement's shared engine); `location` is validated
    * here (not just by the caller's UI) since this bypasses addTransport's
    * own validateHomeLocationCompatibility check entirely, going straight to
-   * `super.addTransport` -- see Faction.buyShipAt for why PirateBrigade/
+   * `super.addTransport` -- see FleetOwner.buyShipAt for why PirateBrigade/
    * PoliceFleet don't need (or have) an override of their own.
    */
   override buyShipAt(transport: Transport, captain: Captain, location: string): Captain {
@@ -690,7 +715,7 @@ export class Company extends ContractFulfiller {
     return super.addTransport(transport, captain, location, 0);
   }
 
-  directFleet(
+  direct(
     _day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
@@ -698,9 +723,9 @@ export class Company extends ContractFulfiller {
     closedLocations: ReadonlySet<string>,
     board: BulletinBoard,
     _pirateCounts: ReadonlyMap<string, number> = new Map(),
-  ): Map<Captain, Directive> {
+  ): Map<Person, Directive> {
     // Repair need is checked FIRST, before any trade/contract logic -- see
-    // Faction.partitionForRepair.
+    // FleetOwner.partitionForRepair.
     const { idle, directives } = this.partitionForRepair(closedLocations);
     if (idle.length === 0) return directives;
 
@@ -789,13 +814,13 @@ export class Company extends ContractFulfiller {
    * arbitrage routing runs. Prefers a captain already sitting at a valid
    * producer (immediate CONTRACT_DELIVER); otherwise repositions the nearest
    * available idle captain toward the nearest valid producer, to be handed
-   * the delivery once it arrives (a future day's directFleet call will find
+   * the delivery once it arrives (a future day's direct call will find
    * it idle-at-producer and take the first branch).
    */
   private serviceContracts(
     idle: Captain[],
     assigned: Set<Captain>,
-    directives: Map<Captain, Directive>,
+    directives: Map<Person, Directive>,
     buyMarkets: Map<string, Market>,
     closedLocations: ReadonlySet<string>,
   ): void {
@@ -880,7 +905,7 @@ export class Company extends ContractFulfiller {
   private serviceContractsByProfit(
     idle: Captain[],
     assigned: Set<Captain>,
-    directives: Map<Captain, Directive>,
+    directives: Map<Person, Directive>,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
     commodities: string[],
@@ -997,7 +1022,7 @@ export class Company extends ContractFulfiller {
  * private balance. Also opts out of the Contract system entirely, via an
  * empty `contractTypes` -- `availableContracts` then always returns nothing,
  * so a SoloTrader never accepts a posting regardless of what's on the board.
- * In exchange for being locked out of Contracts, it's the only Faction that
+ * In exchange for being locked out of Contracts, it's the only FleetOwner that
  * can smuggle (`canSmuggle`) -- an independent operator with no corporate
  * oversight is willing to run a blockade a Company wouldn't touch.
  */
@@ -1030,10 +1055,10 @@ export class SoloTrader extends Company {
  * The exploration-mode analog of SoloTrader: manages exactly one Explorer
  * (in the "captain" role) commanding exactly one PorterParty (its single
  * Transport) -- non-pooling, like SoloTrader, since a lone expedition has no
- * fleet to pool cash across. Unlike SoloTrader, this doesn't extend `Faction`
+ * fleet to pool cash across. Unlike SoloTrader, this doesn't extend `FleetOwner`
  * itself (which is hardcoded to Captain's Ship/cargo/contract machinery --
- * none of it applies to an Explorer); it extends the shared `BaseFaction<TMember>`
- * core directly, the same base `Faction` itself is built on.
+ * none of it applies to an Explorer); it extends the shared `Faction<TMember>`
+ * core directly, the same base `FleetOwner` itself is built on.
  *
  * An Explorer already boards its PorterParty the moment it's constructed
  * (see Explorer's own constructor) and manages its own `cash` directly --
@@ -1046,17 +1071,17 @@ export class SoloTrader extends Company {
  */
 export interface ExpeditionPartyOptions {
   startingCash?: number;
-  /** Whether this party trades/moves autonomously (see directFleet) rather than waiting on the player's manual UI actions -- false (player-controlled) by default, so no existing World changes behavior unless explicitly opted into. */
+  /** Whether this party trades/moves autonomously (see direct) rather than waiting on the player's manual UI actions -- false (player-controlled) by default, so no existing World changes behavior unless explicitly opted into. */
   aiControlled?: boolean;
 }
 
-export class ExpeditionParty extends BaseFaction<Explorer> {
+export class ExpeditionParty extends Faction<Explorer> {
   aiControlled: boolean;
 
   constructor(name: string, explorer: Explorer, options: ExpeditionPartyOptions = {}) {
     super(name, [[explorer.transport!, explorer, explorer.locationName]], options.startingCash ?? 0.0);
     this.aiControlled = options.aiControlled ?? false;
-    // Mirrors Faction's own constructor doing `captain.company = this` --
+    // Mirrors FleetOwner's own constructor doing `captain.company = this` --
     // lets Explorer read `aiControlled` (see Explorer.arrive/tick) without
     // World having to thread it through separately.
     explorer.company = this;
@@ -1073,27 +1098,50 @@ export class ExpeditionParty extends BaseFaction<Explorer> {
   }
 
   /**
-   * AI-controlled counterpart to Company.directFleet -- much simpler, since
-   * there's exactly one Explorer (no idle-partitioning, no fleet-wide
-   * per-route demand capping needed). Returns a bundle to execute (see
-   * Explorer.executeTradeDirective) if this Explorer is idle (not already
-   * travelling or sitting on unsold cargo) and a profitable one exists;
-   * null otherwise -- World.runDay only calls this for aiControlled parties.
+   * Default AI behavior for an aiControlled ExpeditionParty, called only the
+   * day AFTER an arrival (this.explorer.destination only goes null once
+   * Explorer.tick has already processed today's arrival -- see World.runDay's
+   * expeditionParties loop and Explorer.tick's own doc comment for why this
+   * ordering is a deliberate guarantee, not incidental): first restocks
+   * gift-worthy goods out of necessity, not profit (see
+   * Explorer.restockGiftsIfNeeded -- unlike Company's ships, this doesn't
+   * depend on which destination gets picked, so it happens BEFORE the pick
+   * below, not after); then picks a uniformly random direct Trail neighbor
+   * (excluding closed Locations) and returns a bare REPOSITION Directive for
+   * it -- no profit motive drives WHICH destination to pick, no idle-
+   * partitioning, no fleet-wide per-route demand capping, since there's no
+   * "fleet" here to direct anyway, just this one Explorer/PorterParty pair.
+   * Stops for good the moment this Explorer's `cash` reaches zero (it can no
+   * longer afford whatever passage toll or gift the next village might
+   * demand): returns empty, permanently idle wherever it happens to be.
+   * (Explorer.findBestLocalRoute/planTradeTo/executeTradeDirective still
+   * exist and still work -- see the Leader interface -- they're just not
+   * what this default AI calls anymore.)
    */
-  directFleet(
-    day: number,
+  direct(
+    _day: number,
     buyMarkets: Map<string, Market>,
-    sellMarkets: Map<string, Market>,
-    commodities: string[],
+    _sellMarkets: Map<string, Market>,
+    _commodities: string[],
     closedLocations: ReadonlySet<string>,
-  ): TradeDirective | null {
-    void day;
-    if (this.explorer.destination !== null || this.explorer.cargo !== null) return null;
-    return this.explorer.findBestLocalRoute(buyMarkets, sellMarkets, commodities, closedLocations);
+  ): Map<Person, Directive> {
+    const directives = new Map<Person, Directive>();
+    if (this.explorer.cash <= 0) return directives;
+    if (this.explorer.destination !== null) return directives;
+    this.explorer.restockGiftsIfNeeded(buyMarkets);
+    const here = this.explorer.locationName;
+    const candidates = this.explorer.reachableNeighbors.filter(
+      (r) => !closedLocations.has(r.origin === here ? r.destination : r.origin),
+    );
+    if (candidates.length === 0) return directives;
+    const route = randChoice(candidates);
+    const destination = route.origin === here ? route.destination : route.origin;
+    directives.set(this.explorer, { action: "REPOSITION", destination });
+    return directives;
   }
 }
 
-export class PirateBrigade extends Faction {
+export class PirateBrigade extends FleetOwner {
   override get poolsCash(): boolean {
     return false;
   }
@@ -1102,12 +1150,12 @@ export class PirateBrigade extends Faction {
     return true;
   }
 
-  /** Pirates hire anyone -- 1 is the max possible piracy, so this never excludes a candidate. See Faction.hirePiracyThreshold. */
+  /** Pirates hire anyone -- 1 is the max possible piracy, so this never excludes a candidate. See FleetOwner.hirePiracyThreshold. */
   override get hirePiracyThreshold(): number {
     return 1.0;
   }
 
-  /** Pirate Ships accumulate condition decay and can sink, same as Company -- see Faction.decaysCondition. */
+  /** Pirate Ships accumulate condition decay and can sink, same as Company -- see FleetOwner.decaysCondition. */
   override get decaysCondition(): boolean {
     return true;
   }
@@ -1116,12 +1164,12 @@ export class PirateBrigade extends Faction {
   laziness: number;
   raidFraction: number;
   policeFleets: PoliceFleet[];
-  /** Fraction of tracked Company/SoloTrader ship-presence at each Location, as of the last scan -- see directFleet's density-matching reposition logic. */
+  /** Fraction of tracked Company/SoloTrader ship-presence at each Location, as of the last scan -- see direct's density-matching reposition logic. */
   private cachedTargetDensity: Map<string, number> | null = null;
   private lastScanDay: number | null = null;
   /**
    * Pirates that have already attacked SOMEONE today, reset once per day at
-   * the top of directFleet (which -- like every Faction's -- still runs
+   * the top of direct (which -- like every FleetOwner's -- still runs
    * exactly once per day, before any Captain's own act()). Needed because
    * groundedDaysRemaining alone isn't a reliable one-attack-per-day gate: a
    * pirate's own act() call (wherever it falls in today's randomized
@@ -1174,7 +1222,7 @@ export class PirateBrigade extends Faction {
     return counts;
   }
 
-  /** This brigade's own current distribution across Locations, in the same AtLocation-or-heading-toward convention as targetShipCountsByLocation -- what directFleet compares against the target density to find under-covered spots. */
+  /** This brigade's own current distribution across Locations, in the same AtLocation-or-heading-toward convention as targetShipCountsByLocation -- what direct compares against the target density to find under-covered spots. */
   private pirateShipCountsByLocation(): Map<string, number> {
     const counts = new Map<string, number>();
     for (const captain of this.captains) {
@@ -1191,7 +1239,7 @@ export class PirateBrigade extends Faction {
    * RepairDirective handling, and PirateBrigade.isEligibleAttacker's
    * mirror-image "a repairing pirate can't attack" check). condition <
    * CONDITION_REPAIR_THRESHOLD is a reliable stand-in for "assigned a
-   * REPAIR directive today" -- see Faction.partitionForRepair, which always
+   * REPAIR directive today" -- see FleetOwner.partitionForRepair, which always
    * issues one to every eligible idle-in-port Ship under threshold.
    */
   private policePresentAt(location: string): boolean {
@@ -1224,7 +1272,7 @@ export class PirateBrigade extends Faction {
    * act() call -- this is now the ONLY way a pirate ever attacks (a docked
    * ship that's already sold its cargo has nothing left worth raiding, so
    * there's no separate "ambush a stationary ship" path anymore -- see
-   * PirateBrigade.directFleet, which now only repositions). Picks the first
+   * PirateBrigade.direct, which now only repositions). Picks the first
    * eligible co-located pirate; a victim can only genuinely arrive once per
    * day, so no same-day dedup is needed on that side (see attackedToday for
    * the attacker side, which does still need one).
@@ -1387,7 +1435,7 @@ export class PirateBrigade extends Faction {
     if (sinks) victimCaptain.company?.sinkInPort(victimCaptain, day);
   }
 
-  directFleet(
+  direct(
     day: number,
     _buyMarkets: Map<string, Market>,
     _sellMarkets: Map<string, Market>,
@@ -1395,7 +1443,7 @@ export class PirateBrigade extends Faction {
     closedLocations: ReadonlySet<string>,
     _board: BulletinBoard,
     _pirateCounts: ReadonlyMap<string, number> = new Map(),
-  ): Map<Captain, Directive> {
+  ): Map<Person, Directive> {
     this.attackedToday = new Set();
 
     const needsScan = this.lastScanDay === null || day - this.lastScanDay >= this.laziness;
@@ -1420,7 +1468,7 @@ export class PirateBrigade extends Faction {
     const totalPirates = this.captains.length;
 
     // Repair need is checked FIRST, before reposition -- see
-    // Faction.partitionForRepair. Attacking is no longer decided here -- see
+    // FleetOwner.partitionForRepair. Attacking is no longer decided here -- see
     // maybeAttackOnArrival, the only remaining attack trigger (a ship
     // already sitting in port has nothing left worth raiding, having
     // already sold on arrival). This loop now purely repositions idle,
@@ -1450,25 +1498,25 @@ export class PirateBrigade extends Faction {
 }
 
 /**
- * A law-enforcement Faction -- currently pure random-wandering patrol.
+ * A law-enforcement FleetOwner -- currently pure random-wandering patrol.
  * Government-funded: always pools cash into a bottomless, infinite pool.
  */
-export class PoliceFleet extends Faction {
+export class PoliceFleet extends FleetOwner {
   override get poolsCash(): boolean {
     return true;
   }
 
-  /** Zero tolerance -- Faction's own base default (0) already means this, but stated explicitly here since Company relaxes it to 0.1. See Faction.hirePiracyThreshold. */
+  /** Zero tolerance -- FleetOwner's own base default (0) already means this, but stated explicitly here since Company relaxes it to 0.1. See FleetOwner.hirePiracyThreshold. */
   override get hirePiracyThreshold(): number {
     return 0.0;
   }
 
-  /** Police Ships accumulate condition decay and can sink, same as Company -- see Faction.decaysCondition. A sunk Police Ship is replaced immediately regardless of outcome -- see World.runDay's post-act() cleanup. */
+  /** Police Ships accumulate condition decay and can sink, same as Company -- see FleetOwner.decaysCondition. A sunk Police Ship is replaced immediately regardless of outcome -- see World.runDay's post-act() cleanup. */
   override get decaysCondition(): boolean {
     return true;
   }
 
-  /** Police crews stay aboard on duty overnight -- no Shore Leave, unlike Company/SoloTrader/PirateBrigade. See Faction.grantsShoreLeave. */
+  /** Police crews stay aboard on duty overnight -- no Shore Leave, unlike Company/SoloTrader/PirateBrigade. See FleetOwner.grantsShoreLeave. */
   override get grantsShoreLeave(): boolean {
     return false;
   }
@@ -1503,7 +1551,7 @@ export class PoliceFleet extends Faction {
     return randChoice(candidates);
   }
 
-  directFleet(
+  direct(
     day: number,
     buyMarkets: Map<string, Market>,
     sellMarkets: Map<string, Market>,
@@ -1511,13 +1559,13 @@ export class PoliceFleet extends Faction {
     closedLocations: ReadonlySet<string>,
     _board: BulletinBoard,
     _pirateCounts: ReadonlyMap<string, number> = new Map(),
-  ): Map<Captain, Directive> {
+  ): Map<Person, Directive> {
     const allLocations = new Set<string>();
     for (const m of buyMarkets.values()) allLocations.add(m.locationName);
     for (const m of sellMarkets.values()) allLocations.add(m.locationName);
 
     // Repair need is checked FIRST, before patrol assignment -- see
-    // Faction.partitionForRepair.
+    // FleetOwner.partitionForRepair.
     const { idle, directives } = this.partitionForRepair(closedLocations);
     for (const captain of idle) {
       const lastPatrolDay = this.lastPatrolDay.get(captain);

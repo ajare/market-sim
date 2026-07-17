@@ -16,7 +16,7 @@ import { buildWorldFromJson } from "../sim/buildWorldFromJson";
 import type { World } from "../sim/world";
 import type { Location } from "../sim/location";
 import type { PoliticalEntity } from "../sim/politicalEntity";
-import { Company, type ContractStrategy, type Faction } from "../sim/faction";
+import { Company, type ContractStrategy, type FleetOwner } from "../sim/faction";
 import type { Transport } from "../sim/transport";
 import type { Sailor } from "../sim/sailor";
 import { isShipLogEnabled, setShipLogEnabled as setSimShipLogEnabled, type Captain } from "../sim/captain";
@@ -27,7 +27,7 @@ import { marketKey } from "../sim/markets";
 
 interface SimStore {
   world: World | null;
-  factions: Faction[];
+  factions: FleetOwner[];
   politicalEntities: PoliticalEntity[];
   day: number;
   /** The in-world calendar date as of `day` -- see World.currentDate. Null before the initial reset(). */
@@ -116,8 +116,8 @@ interface SimStore {
 
 let accumulator = 0;
 
-/** Push a strategy onto every Company in a fleet -- read live by Company.directFleet, so this takes effect on the next simulated day. */
-function applyContractStrategy(factions: Faction[], strategy: ContractStrategy): void {
+/** Push a strategy onto every Company in a fleet -- read live by Company.direct, so this takes effect on the next simulated day. */
+function applyContractStrategy(factions: FleetOwner[], strategy: ContractStrategy): void {
   for (const faction of factions) {
     if (faction instanceof Company) faction.contractStrategy = strategy;
   }

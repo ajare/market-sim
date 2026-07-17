@@ -231,7 +231,7 @@ describe("BulletinBoard.prune", () => {
   });
 });
 
-describe("ContractFulfiller.pruneFulfilled (exercised via Company.directFleet)", () => {
+describe("ContractFulfiller.pruneFulfilled (exercised via Company.direct)", () => {
   it("drops an already-fulfilled contract from its own list on the next servicing pass", () => {
     registerTestport();
     const transport = SHIP_CLASSES.Speedster.clone({ name: "T1", crewRequirement: 1 });
@@ -240,7 +240,7 @@ describe("ContractFulfiller.pruneFulfilled (exercised via Company.directFleet)",
     const fulfilledContract = makeContract({ fulfiller: company, fulfilled: true });
     company.contracts.push(fulfilledContract);
 
-    company.directFleet(1, new Map(), new Map(), [], new Set(), new BulletinBoard());
+    company.direct(1, new Map(), new Map(), [], new Set(), new BulletinBoard());
     expect(company.contracts).not.toContain(fulfilledContract);
   });
 });
@@ -261,7 +261,7 @@ describe("Contract acceptance (location-funded design)", () => {
     const board = new BulletinBoard();
     const contract = makeContract({ location: "Somewhere", commodity: "Gold", deliveryFee: 99_999 });
     board.post(contract);
-    company.directFleet(1, new Map(), new Map(), [], new Set(), board);
+    company.direct(1, new Map(), new Map(), [], new Set(), board);
     expect(contract.fulfiller).toBe(company);
     expect(board.open).not.toContain(contract);
   });
@@ -306,7 +306,7 @@ describe("serviceContracts producer selection", () => {
       [marketKey("FarHigh", "Gold"), new Market("Gold", "FarHigh", farHigh, 100, 100, "buy")],
     ]);
 
-    const directives = company.directFleet(1, buyMarkets, new Map(), ["Gold"], new Set(), new BulletinBoard());
+    const directives = company.direct(1, buyMarkets, new Map(), ["Gold"], new Set(), new BulletinBoard());
     expect(directives.get(captain)).toMatchObject({ action: "REPOSITION", destination: "FarHigh" });
   });
 
@@ -345,7 +345,7 @@ describe("serviceContracts producer selection", () => {
       [marketKey("Far", "Gold"), new Market("Gold", "Far", far, 100, 100, "buy")],
     ]);
 
-    const directives = company.directFleet(1, buyMarkets, new Map(), ["Gold"], new Set(), new BulletinBoard());
+    const directives = company.direct(1, buyMarkets, new Map(), ["Gold"], new Set(), new BulletinBoard());
     expect(directives.get(captain)).toMatchObject({ action: "REPOSITION", destination: "Near" });
   });
 });
@@ -396,7 +396,7 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
     company.contractStrategy = "prioritise";
     const board = new BulletinBoard();
     board.post(contract);
-    const directives = company.directFleet(1, buyMarkets, sellMarkets, commodities, new Set(), board);
+    const directives = company.direct(1, buyMarkets, sellMarkets, commodities, new Set(), board);
     expect(directives.get(captain)).toMatchObject({ action: "REPOSITION", destination: "Mine" });
     expect(contract.fulfiller).toBe(company);
     expect(board.open).not.toContain(contract);
@@ -407,7 +407,7 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
     company.contractStrategy = "compare";
     const board = new BulletinBoard();
     board.post(contract);
-    const directives = company.directFleet(1, buyMarkets, sellMarkets, commodities, new Set(), board);
+    const directives = company.direct(1, buyMarkets, sellMarkets, commodities, new Set(), board);
     const directive = directives.get(captain);
     expect(directive).toBeDefined();
     // An arbitrage directive is a TradeDirective -- no `action` discriminator -- for Silver.
@@ -425,7 +425,7 @@ describe("contract strategy toggle (prioritise vs compare)", () => {
     company.contractStrategy = "compare";
     const board = new BulletinBoard();
     board.post(contract);
-    const directives = company.directFleet(1, buyMarkets, sellMarkets, commodities, new Set(), board);
+    const directives = company.direct(1, buyMarkets, sellMarkets, commodities, new Set(), board);
     expect(directives.get(captain)).toMatchObject({ action: "REPOSITION", destination: "Mine" });
     expect(contract.fulfiller).toBe(company); // accepted at the moment the ship commits
     expect(board.open).not.toContain(contract);
@@ -445,7 +445,7 @@ describe("SoloTrader never accepts a Contract", () => {
     const contract = makeContract({ location: "Testport", commodity: "Gold", deliveryFee: 1_000_000 });
     board.post(contract);
 
-    solo.directFleet(1, new Map(), new Map(), [], new Set(), board);
+    solo.direct(1, new Map(), new Map(), [], new Set(), board);
     expect(contract.fulfiller).toBeNull();
     expect(board.open).toContain(contract);
   });

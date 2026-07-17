@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Location } from "../location";
 import { PoliticalEntity } from "../politicalEntity";
 import { Chieftain } from "../chieftain";
+import { Commodity } from "../commodity";
 import { PorterParty } from "../transport";
 import { Explorer } from "../explorer";
 import { Route, addRouteToNetwork, setRoutes } from "../routes";
-import { setGeography } from "../worldData";
+import { COMMODITIES, setCommodities, setGeography } from "../worldData";
 import { seedSimRandom, randRandom } from "../simRandom";
 import {
   buildPassageTaxDecision,
@@ -13,6 +14,18 @@ import {
   HAGGLE_SUCCESS_PROBABILITY,
   REFUSE_SAFE_PROBABILITY,
 } from "../decisions";
+
+// Tobacco/Beads are gift-worthy (Commodity.gift > 0) for this file's
+// passage-tax gift-giving tests -- gift-worthiness is global, not
+// per-chieftain (see commodity.ts's Commodity.gift), so registering it once
+// here covers every chieftain below.
+const defaultCommodities = COMMODITIES;
+const testCommodities: Record<string, Commodity> = {
+  Tobacco: new Commodity("Tobacco", 10, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, 0.6),
+  Beads: new Commodity("Beads", 5, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, 0.9),
+};
+beforeAll(() => setCommodities(testCommodities));
+afterAll(() => setCommodities(defaultCommodities));
 
 function makeVillage(name: string, overrides: Partial<ConstructorParameters<typeof Location>[0]> = {}): Location {
   return new Location({
@@ -65,7 +78,7 @@ describe("buildPassageTaxDecision -- ruler present", () => {
     setGeography([village], { "Chief's Village": [0, 0] });
     const chieftain = new Chieftain({
       name: "Chief Ombo", gender: "Male", dateOfBirth: new Date("1950-01-01"),
-      passageTaxRate: 0.5, trust: 0.5, giftCategories: ["Tobacco"],
+      passageTaxRate: 0.5, trust: 0.5,
     });
     village.ruler = chieftain;
 
@@ -123,7 +136,7 @@ describe("buildPassageTaxDecision -- ruler present", () => {
     setGeography([village], { "Gift Village": [0, 0] });
     const chieftain = new Chieftain({
       name: "Chief Gift", gender: "Female", dateOfBirth: new Date("1950-01-01"),
-      passageTaxRate: 0.2, trust: 0.5, giftCategories: ["Beads"],
+      passageTaxRate: 0.2, trust: 0.5,
     });
     village.ruler = chieftain;
     const explorer = makeExplorer(village, 100);

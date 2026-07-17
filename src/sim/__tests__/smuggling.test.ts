@@ -32,7 +32,7 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
   const transport = SHIP_CLASSES.Speedster.clone({ name: "Runner", crewRequirement: 1 });
   const captain = makeCaptain("Cap", "Blockaded Port");
   const faction = new FactionCls("Acme", [[transport, captain, "Blockaded Port"]], 100_000);
-  // Transport.arriveAt (called by the Faction constructor above, from the
+  // Transport.arriveAt (called by the FleetOwner constructor above, from the
   // FleetCrew tuple's homeLocation) already put the ship at "Blockaded Port"
   // -- no separate location assignment needed (Captain no longer owns one).
   captain.status = "AtLocation";
@@ -56,7 +56,7 @@ function makeClosedPortScenario(FactionCls: typeof Company | typeof SoloTrader) 
   return { location, market, sellMarkets, faction, captain, closedLocations, cargo };
 }
 
-describe("Faction.canSmuggle", () => {
+describe("FleetOwner.canSmuggle", () => {
   it("is false by default and for a plain Company, true only for SoloTrader", () => {
     const home = new Location({
       name: "Home", producedCommodities: {}, consumedCommodities: {},

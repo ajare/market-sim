@@ -109,7 +109,7 @@ const ROUTE_COLORS: Record<RouteType, string> = {
   Trail: "#65a30d",
 };
 
-/** Ship markers are colored by the operating Faction, not transport kind. */
+/** Ship markers are colored by the operating FleetOwner, not transport kind. */
 const FACTION_COLORS = {
   pirate: "#ef4444",
   police: "#22c55e",
@@ -671,7 +671,7 @@ export function NetworkView() {
     politicalEntities.forEach((politicalEntity, i) => politicalEntityIndex.set(politicalEntity, i));
 
     const captainsByLocation = new Map<string, Captain[]>();
-    for (const captain of world.captains) {
+    for (const captain of world.shipCaptains) {
       if (captain.transport === null) continue;
       const list = captainsByLocation.get(captain.locationName);
       if (list === undefined) captainsByLocation.set(captain.locationName, [captain]);
@@ -880,7 +880,7 @@ export function NetworkView() {
         locationMarkers.push({ location: loc, x, y, r: 14 });
       }
 
-      // Transports -- colored by operating Faction (see factionColor).
+      // Transports -- colored by operating FleetOwner (see factionColor).
       // Docked ships (status AtLocation) stack in a grid above the location
       // they're at; ships in transit are placed on their route line below.
       const markerRadius = 4;
@@ -977,7 +977,7 @@ export function NetworkView() {
       // the same route line are spread out with a small perpendicular
       // offset so they don't stack exactly on top of each other.
       const inTransitGroups = new Map<string, Captain[]>();
-      for (const captain of world!.captains) {
+      for (const captain of world!.shipCaptains) {
         if (captain.transport === null || captain.status !== "InTransit" || captain.destination === null) continue;
         const key = [captain.locationName, captain.destination].sort().join("||");
         const list = inTransitGroups.get(key);

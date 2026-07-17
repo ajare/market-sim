@@ -5,7 +5,10 @@ import { PorterParty } from "../transport";
 import { Explorer } from "../explorer";
 import { ExpeditionParty } from "../faction";
 import { Route, addRouteToNetwork, setRoutes } from "../routes";
-import { setGeography } from "../worldData";
+import { COMMODITIES, setCommodities, setGeography } from "../worldData";
+import { Commodity } from "../commodity";
+import { GIFT_QUANTITY_OFFERED } from "../decisions";
+import { isRepositionDirective } from "../captain";
 
 function makeVillage(name: string, produced: Record<string, number> = {}, consumed: Record<string, number> = {}): Location {
   return new Location({
@@ -77,8 +80,108 @@ describe("ExpeditionParty", () => {
   });
 });
 
-describe("ExpeditionParty.directFleet", () => {
-  function makeTradeWorld() {
+describe("ExpeditionParty.direct", () => {
+  /** Home Town with a single direct Trail neighbor, Dest Village -- neither produces/consumes anything, so no trade is ever profitable between them (isolates the random-wander/movement behavior from trading). */
+  function makeWanderWorld() {
+    const home = makeVillage("Home Town");
+    const dest = makeVillage("Dest Village");
+    setGeography([home, dest], { "Home Town": [0, 0], "Dest Village": [60, 0] });
+    const network = new Map();
+    addRouteToNetwork(network, new Route("Home Town", "Dest Village", "Trail"));
+    setRoutes(network);
+    return { home, dest };
+  }
+
+  const noMarkets = new Map<string, Market>();
+
+  it("returns an empty Map when the Explorer is already travelling", () => {
+    const { home } = makeWanderWorld();
+    const explorer = makeExplorer(home, 1000);
+    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
+
+    explorer.destination = "somewhere";
+    expect(party.direct(1, noMarkets, noMarkets, [], new Set()).size).toBe(0);
+  });
+
+  it("returns an empty Map and never moves once cash has run out", () => {
+    const { home } = makeWanderWorld();
+    const explorer = makeExplorer(home, 0);
+    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
+
+    expect(party.direct(1, noMarkets, noMarkets, [], new Set()).size).toBe(0);
+    expect(explorer.locationName).toBe("Home Town"); // never departed
+  });
+
+  it("picks its one reachable Trail neighbor and returns a bare REPOSITION Directive when nothing is profitable to carry", () => {
+    const { home } = makeWanderWorld();
+    const explorer = makeExplorer(home, 1000);
+    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
+
+    const directives = party.direct(1, noMarkets, noMarkets, [], new Set());
+    const directive = directives.get(explorer);
+    expect(directive).not.toBeUndefined();
+    if (directive === undefined || !isRepositionDirective(directive)) throw new Error("expected a RepositionDirective");
+    expect(directive.destination).toBe("Dest Village");
+
+    explorer.departToward(directive.destination);
+    expect(explorer.destination).toBe("Dest Village");
+  });
+
+  it("excludes closed Locations from the candidate set", () => {
+    const { home } = makeWanderWorld();
+    const explorer = makeExplorer(home, 1000);
+    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
+
+    expect(party.direct(1, noMarkets, noMarkets, [], new Set(["Dest Village"])).size).toBe(0);
+  });
+
+  it("returns an empty Map when this Explorer has no reachable Trail neighbor (a dead end)", () => {
+    const home = makeVillage("Isolated Town");
+    setGeography([home], { "Isolated Town": [0, 0] });
+    const explorer = makeExplorer(home, 1000);
+    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
+
+    expect(party.direct(1, noMarkets, noMarkets, [], new Set()).size).toBe(0);
+  });
+
+  it("restocks a gift-worthy commodity out of necessity, then still returns a REPOSITION Directive for the random neighbor in the SAME call", () => {
+    const home = makeVillage("Home Village", { Beads: 5 }, {});
+    const dest = makeVillage("Dest Village");
+    setGeography([home, dest], { "Home Village": [0, 0], "Dest Village": [60, 0] });
+    const network = new Map();
+    addRouteToNetwork(network, new Route("Home Village", "Dest Village", "Trail"));
+    setRoutes(network);
+
+    const defaultCommodities = COMMODITIES;
+    setCommodities({
+      Beads: new Commodity("Beads", 5, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, 0.8),
+    });
+    try {
+      const buyMarkets = new Map([[marketKey("Home Village", "Beads"), new Market("Beads", "Home Village", home, 5, 5, "buy")]]);
+      const explorer = makeExplorer(home, 1000);
+      const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
+
+      const directives = party.direct(1, buyMarkets, noMarkets, [], new Set());
+
+      // Restocked toward the target -- destination-independent, never a
+      // margin/profit calculation (no sell market at all is even supplied).
+      expect(explorer.heldQuantity("Beads")).toBe(GIFT_QUANTITY_OFFERED);
+      expect(explorer.cash).toBeLessThan(1000);
+
+      // Still picks a destination in the same call -- restocking and route
+      // choice are decoupled but both happen this same "morning".
+      const directive = directives.get(explorer);
+      expect(directive).not.toBeUndefined();
+      if (directive === undefined || !isRepositionDirective(directive)) throw new Error("expected a RepositionDirective");
+      expect(directive.destination).toBe("Dest Village");
+    } finally {
+      setCommodities(defaultCommodities);
+    }
+  });
+});
+
+describe("Explorer.executeTradeDirective", () => {
+  it("still works standalone -- buys the bundle and departs (not called by ExpeditionParty.direct anymore, see it for why)", () => {
     const home = makeVillage("Home Village", { Gold: 5 }, {});
     const dest = makeVillage("Dest Village", {}, { Gold: 5 });
     setGeography([home, dest], { "Home Village": [0, 0], "Dest Village": [60, 0] });
@@ -88,37 +191,15 @@ describe("ExpeditionParty.directFleet", () => {
 
     const buyMarkets = new Map([[marketKey("Home Village", "Gold"), new Market("Gold", "Home Village", home, 10, 10, "buy")]]);
     const sellMarkets = new Map([[marketKey("Dest Village", "Gold"), new Market("Gold", "Dest Village", dest, 50, 50, "sell")]]);
-    return { home, dest, buyMarkets, sellMarkets };
-  }
 
-  it("returns null when the Explorer is already travelling or hasn't sold its cargo yet", () => {
-    const { home, buyMarkets, sellMarkets } = makeTradeWorld();
     const explorer = makeExplorer(home, 1000);
-    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
-
-    explorer.destination = "somewhere";
-    expect(party.directFleet(1, buyMarkets, sellMarkets, ["Gold"], new Set())).toBeNull();
-    explorer.destination = null;
-
-    explorer.cargo = {
-      items: [{ commodity: "Gold", quantity: 1, unitCost: 10, contract: null }],
-      origin: "Home Village", destination: "Dest Village", distance: 0, routeType: "none",
-      travelDays: 0, fuelPricePaid: 0, fuelUnitsConsumed: 0, fuelCostTotal: 0, totalCost: 10, departureDay: 1,
-    };
-    expect(party.directFleet(1, buyMarkets, sellMarkets, ["Gold"], new Set())).toBeNull();
-  });
-
-  it("picks a profitable Trail route and executeTradeDirective buys the bundle and departs", () => {
-    const { home, buyMarkets, sellMarkets } = makeTradeWorld();
-    const explorer = makeExplorer(home, 1000);
-    const party = new ExpeditionParty("AI Party", explorer, { aiControlled: true });
-
-    const directive = party.directFleet(1, buyMarkets, sellMarkets, ["Gold"], new Set());
+    const directive = explorer.findBestLocalRoute(buyMarkets, sellMarkets, ["Gold"], new Set());
     expect(directive).not.toBeNull();
-    expect(directive!.destination).toBe("Dest Village");
-    expect(directive!.items[0].commodity).toBe("Gold");
+    if (directive === null) throw new Error("expected a TradeDirective");
+    expect(directive.destination).toBe("Dest Village");
+    expect(directive.items[0].commodity).toBe("Gold");
 
-    explorer.executeTradeDirective(directive!, 1, buyMarkets, sellMarkets);
+    explorer.executeTradeDirective(directive, 1, buyMarkets, sellMarkets);
     expect(explorer.cargo?.items[0].commodity).toBe("Gold");
     expect(explorer.destination).toBe("Dest Village");
     expect(explorer.cash).toBeLessThan(1000);

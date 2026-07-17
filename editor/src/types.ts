@@ -41,6 +41,9 @@ import { sampleBezierCurve, CURVE_SAMPLE_COUNT, type Point } from "@market-sim/s
 /** Default base rate (units/day, at a Location whose rate modifier is the default 1.0) for a newly defined Commodity -- mirrors DEFAULT_BASE_PRODUCTION_RATE/DEFAULT_BASE_CONSUMPTION_RATE in sim/commodity.py. */
 export const DEFAULT_COMMODITY_RATE = 8;
 
+/** Default gift-worthiness for a newly defined Commodity -- mirrors src/sim/commodity.ts's DEFAULT_GIFT_VALUE (not gift-worthy at all). */
+export const DEFAULT_COMMODITY_GIFT = 0;
+
 /**
  * A registered Commodity: basePrice is this commodity's world-wide reference
  * price; productionRate/consumptionRate are its units/day rate at a Location
@@ -53,6 +56,8 @@ export interface Commodity {
   productionRate: number;
   consumptionRate: number;
   type: CommodityType;
+  /** [0, 1] -- how good a gift this commodity makes for a Chieftain (see src/sim/commodity.ts's Commodity.gift). Global, not per-chieftain: every chieftain shares the same taste. 0 (default) means not gift-worthy at all. */
+  gift: number;
 }
 
 export type CommodityField =
@@ -74,7 +79,7 @@ export interface PoliticalEntity {
 /** Default starting cash for a newly defined Company -- an editor-only convenience default, distinct from src/sim/faction.ts's Company (whose own default startingCash is 0). */
 export const DEFAULT_COMPANY_STARTING_FUNDS = 100_000;
 
-/** A Captain/Transport pair added to a Company's fleet -- mirrors the (Transport, Captain) construction pattern Faction.__init__ expects (src/sim/faction.ts), minus everything (strategy params, home location) that only matters once a simulation actually runs. */
+/** A Captain/Transport pair added to a Company's fleet -- mirrors the (Transport, Captain) construction pattern FleetOwner.__init__ expects (src/sim/faction.ts), minus everything (strategy params, home location) that only matters once a simulation actually runs. */
 export interface EditorFleetMember {
   id: string;
   transportType: TransportType;
@@ -197,7 +202,7 @@ export interface EditorCompany {
   homeLocationId: string | null;
 }
 
-/** Mirrors which Faction subclass src/sim/faction.ts would actually construct for this fleet: SoloTrader requires exactly one Transport/Captain (its constructor throws otherwise), so a fleet of any other size -- including zero -- has to be a plain Company. */
+/** Mirrors which FleetOwner subclass src/sim/faction.ts would actually construct for this fleet: SoloTrader requires exactly one Transport/Captain (its constructor throws otherwise), so a fleet of any other size -- including zero -- has to be a plain Company. */
 export type FactionType = "Company" | "SoloTrader";
 
 export function factionType(fleet: readonly EditorFleetMember[]): FactionType {
@@ -217,8 +222,6 @@ export interface EditorChieftain {
   passageTaxRate: number;
   /** [0, 1] -- persistent trust toward the player's party. */
   trust: number;
-  /** Commodity names this chieftain will accept as a gift/tribute in place of cash. */
-  giftCategories: string[];
 }
 
 export const DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE = 0.1;
@@ -229,7 +232,6 @@ export function createChieftain(name: string): EditorChieftain {
     name,
     passageTaxRate: DEFAULT_CHIEFTAIN_PASSAGE_TAX_RATE,
     trust: DEFAULT_CHIEFTAIN_TRUST,
-    giftCategories: [],
   };
 }
 

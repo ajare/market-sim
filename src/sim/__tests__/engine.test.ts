@@ -158,7 +158,7 @@ describe("commodity roster / per-location spread validation", () => {
   });
 });
 
-describe("Faction cash pooling", () => {
+describe("FleetOwner cash pooling", () => {
   const homeLocation = "Testport";
   // The "buildWorld" describe block's tests overwrite LOCATIONS via their own
   // setGeography calls, and describe() bodies (unlike beforeAll) run once at

@@ -56,7 +56,6 @@ export function buildExploreDemoWorld() {
       name: "Chief Ombo",
       passageTaxRate: 0.15,
       trust: 0.5,
-      giftCategories: ["Beads"],
     },
   };
 
@@ -98,6 +97,14 @@ export function buildExploreDemoWorld() {
     { id: "route-2", locationAId: "loc-coastal-town", locationBId: "loc-village-two", routeType: "Trail" },
   ];
 
+  // Gift-worthy (Commodity.gift > 0) -- every Chieftain shares the same
+  // taste (see commodity.ts's Commodity.gift), so this alone is what makes
+  // "Offer a gift instead of cash" eligible at either village once an
+  // Explorer is carrying some.
+  const commodities = [
+    { name: "Beads", basePrice: 5, productionRate: 8, consumptionRate: 8, type: "General", gift: 0.7 },
+  ];
+
   const explorers = [
     {
       name: "Livia Ashworth",
@@ -112,6 +119,7 @@ export function buildExploreDemoWorld() {
     worldScale: 3000,
     locations: [coastalTown, villageWithRuler, villageWithoutRuler, ...fillerTowns],
     politicalEntities,
+    commodities,
     companies: [],
     routes,
     explorers,

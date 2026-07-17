@@ -9,7 +9,7 @@ export function TransportsPanel() {
   const selectPerson = useSimStore((s) => s.selectPerson);
   if (world === null) return null;
 
-  const ships = world.captains
+  const ships = world.shipCaptains
     .filter((captain) => captain.transport instanceof Ship)
     .map((captain) => captain.transport as Ship);
 
@@ -49,7 +49,7 @@ export function TransportsPanel() {
                         </td>
                         <td>
                           {/* The Captain isn't hired/rehired the way a plain
-                              Sailor is (see Faction.crewFleet/
+                              Sailor is (see FleetOwner.crewFleet/
                               hireCrewIfPossible), so only Able Seamen get a
                               Kill button -- Captain extends Sailor now, so
                               `instanceof Sailor` alone would wrongly include

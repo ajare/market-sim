@@ -17,14 +17,12 @@ export function LocationInspector() {
   // an infinite re-render loop ("Maximum update depth exceeded").
   const otherLocationNames = locations.filter((l) => l.id !== selectedId).map((l) => l.name);
   const politicalEntities = useEditorStore((s) => s.politicalEntities);
-  const commodities = useEditorStore((s) => s.commodities);
   const updateLocation = useEditorStore((s) => s.updateLocation);
   const toggleTerminalType = useEditorStore((s) => s.toggleTerminalType);
   const removeLocation = useEditorStore((s) => s.removeLocation);
   const worldScale = useEditorStore((s) => s.worldScale);
   const setLocationHasRuler = useEditorStore((s) => s.setLocationHasRuler);
   const updateLocationRuler = useEditorStore((s) => s.updateLocationRuler);
-  const toggleRulerGiftCategory = useEditorStore((s) => s.toggleRulerGiftCategory);
 
   if (selectedId === null || location === undefined) {
     return (
@@ -185,23 +183,6 @@ export function LocationInspector() {
               />
             </label>
           </div>
-          <div className="field-label">Accepts as gift</div>
-          {commodities.length === 0 ? (
-            <div className="routes-empty">No commodities defined yet.</div>
-          ) : (
-            <div className="terminal-types">
-              {commodities.map((c) => (
-                <label key={c.name} className="terminal-type-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={location.ruler!.giftCategories.includes(c.name)}
-                    onChange={() => toggleRulerGiftCategory(location.id, c.name)}
-                  />
-                  {c.name}
-                </label>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

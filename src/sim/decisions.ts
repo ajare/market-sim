@@ -15,6 +15,7 @@ import type { Location } from "./location";
 import { primeRouteGraphCache } from "./pathfinding";
 import { randRandom } from "./simRandom";
 import { clamp01 } from "./utils";
+import { COMMODITIES } from "./worldData";
 
 /** State a Choice's eligibility check and resolution read/mutate. Explorer-only for now -- neither existing decision kind needs anything beyond the party's own cash/inventory. */
 export interface DecisionState {
@@ -82,6 +83,20 @@ export const TRUST_DELTA_REFUSE_SAFE = -0.05;
 export const TRUST_DELTA_REFUSE_BAD = -0.3;
 
 /**
+ * The gift-worthy (Commodity.gift > 0) commodity `explorer` currently holds
+ * the most of that commodity, or null if it holds nothing gift-worthy at
+ * all -- every Chieftain shares the same taste (Commodity.gift is global,
+ * not per-chieftain, see commodity.ts), so "the best gift on hand" is the
+ * same regardless of which chieftain is asking.
+ */
+function bestGiftHeld(explorer: Explorer): string | null {
+  const held = (explorer.cargo?.items ?? [])
+    .filter((item) => item.contract === null && (COMMODITIES[item.commodity]?.gift ?? 0) > 0)
+    .sort((a, b) => (COMMODITIES[b.commodity]?.gift ?? 0) - (COMMODITIES[a.commodity]?.gift ?? 0));
+  return held.length > 0 ? held[0].commodity : null;
+}
+
+/**
  * Builds the passage-tax negotiation decision, triggered on arrival at a
  * village -- before any trading, per the design doc. Reads
  * `location.ruler ?? location.politicalEntity`:
@@ -112,14 +127,15 @@ export function buildPassageTaxDecision(explorer: Explorer, location: Location):
 
     choices.push({
       label: "Offer a gift instead of cash",
-      isEligible: (state) => ruler.giftCategories.some((commodity) => state.explorer.heldQuantity(commodity) > 0),
+      isEligible: (state) => bestGiftHeld(state.explorer) !== null,
       riskHint: "Low risk -- trades goods instead of cash; the chieftain may value the gift more or less than a cash payment.",
       resolve: (state) => {
-        const commodity = ruler.giftCategories.find((c) => state.explorer.heldQuantity(c) > 0);
-        if (commodity === undefined) return;
+        const commodity = bestGiftHeld(state.explorer);
+        if (commodity === null) return;
         const given = Math.min(GIFT_QUANTITY_OFFERED, state.explorer.heldQuantity(commodity));
         state.explorer.removeFromCargo(commodity, given);
-        ruler.trust = clamp01(ruler.trust + TRUST_DELTA_GIFT);
+        const giftValue = COMMODITIES[commodity]?.gift ?? 0;
+        ruler.trust = clamp01(ruler.trust + TRUST_DELTA_GIFT * giftValue);
       },
     });
 

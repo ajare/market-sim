@@ -17,7 +17,7 @@ export function FleetPanel() {
             <tr>
               <th>Captain</th>
               <th>Ship</th>
-              <th>Faction</th>
+              <th>Company</th>
               <th>Political entity</th>
               <th>Location</th>
               <th>Destination</th>
@@ -28,7 +28,7 @@ export function FleetPanel() {
             </tr>
           </thead>
           <tbody>
-            {world.captains.map((captain, i) => {
+            {world.shipCaptains.map((captain, i) => {
               const snapshot = captain.portfolioHistory[captain.portfolioHistory.length - 1];
               const netWorth = snapshot !== undefined ? snapshot.totalValue : captain.cash;
               const totalDays =

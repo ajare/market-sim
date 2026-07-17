@@ -75,7 +75,7 @@ function makeCaptain(name: string, homeLocationName: string): Captain {
  * A Speedster (crewRequirement 4) crewed by Captain + Sailors, then
  * optionally left stripped down to the Captain alone. Full crewing now goes
  * through the Sailor pool (initial crewing is deferred -- see
- * Faction.crewFleet), so `fullCrew` seeds "Home"'s pool first and calls
+ * FleetOwner.crewFleet), so `fullCrew` seeds "Home"'s pool first and calls
  * crewFleet() explicitly, standing in for what World's constructor would
  * otherwise do automatically.
  */
@@ -223,7 +223,7 @@ describe("Sailor pool generation", () => {
       fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
     });
     setGeography([dock], { Dock: [0, 0] });
-    generateSailorPool([]); // no Faction demand -- every Sea-capable Location still gets the floor
+    generateSailorPool([]); // no FleetOwner demand -- every Sea-capable Location still gets the floor
     const sailors = getSailorPoolAt("Dock");
     expect(sailors.length).toBe(scaledPoolSize(SAILOR_POOL_FLOOR));
     for (const sailor of sailors) {
@@ -318,7 +318,7 @@ describe("Company/SoloTrader crew rotation", () => {
 });
 
 describe("PirateBrigade/PoliceFleet crew never rotates", () => {
-  it("leaves journeysRemaining null on hires for a Faction with rotatesCrew=false", () => {
+  it("leaves journeysRemaining null on hires for a FleetOwner with rotatesCrew=false", () => {
     const base = new Location({
       name: "Base", producedCommodities: {}, consumedCommodities: {},
       stockpiles: {}, minStockpiles: {}, basePriceModifiers: {}, fuelPrice: 1.0, terminalTypes: new Set(["Port"]),
@@ -431,9 +431,9 @@ describe("a Ship arriving under-crewed at a Port always hires before it can leav
 });
 
 describe("crew refilling in the real default World (not a hand-built fixture)", () => {
-  it("eventually re-hires a Ship stripped down to its Captain, running the actual buildWorld() fleet/Company/directFleet machinery", () => {
+  it("eventually re-hires a Ship stripped down to its Captain, running the actual buildWorld() fleet/Company/direct machinery", () => {
     const { world } = buildWorld();
-    const shipCaptain = world.captains.find((c) => c.transport instanceof Ship && c.transport.crew.length > 1);
+    const shipCaptain = world.shipCaptains.find((c) => c.transport instanceof Ship && c.transport.crew.length > 1);
     expect(shipCaptain).toBeDefined();
     const transport = shipCaptain!.transport as Ship;
     const required = transport.crewRequirement;

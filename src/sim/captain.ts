@@ -6,7 +6,7 @@
  * transcribed 1:1.
  */
 import { Sailor, JOURNEYS_PER_HIRE } from "./sailor";
-import type { Faction, PirateBrigade } from "./faction";
+import type { FleetOwner, PirateBrigade } from "./faction";
 import { TransportEvent, type TransportEventKind } from "./events";
 import { Ship, crewSpeedFraction, CONDITION_DECAY_PER_TRANSIT_DAY, type Transport, type TransportStatus, type CargoState, type CargoItem } from "./transport";
 import {
@@ -28,7 +28,7 @@ export type { ShipLogEntry };
 import { hireFromSailorPool, addToSailorPool } from "./sailorPool";
 import {
   routeEconomicsFromPath, findBestBundle, reverifyBundle, applyPurchases, applyMarketPriceImpact, sellCargoShared,
-  type CargoAllocation, type RouteEconomics, type TradeDirective, type TripCostParams,
+  type CargoAllocation, type RouteEconomics, type TradeDirective, type TripCostParams, type Leader,
 } from "./tradingAgent";
 export type { CargoAllocation, RouteEconomics, TradeDirective };
 
@@ -41,14 +41,14 @@ const WIND_EFFECT_MAX_FRACTION = 0.15;
 const STORM_SPEED_MULTIPLIER = 0.75;
 /** Same, for a Storm that has escalated into a cyclone -- strictly more severe than a plain Storm. */
 const CYCLONE_SPEED_MULTIPLIER = 0.55;
-/** Condition fraction lost, once, the moment a Ship departs a port currently inside an active Storm's radius -- on top of ordinary transit decay. Can sink the Ship (see Faction.sinkAtSea) exactly like transit decay bottoming out. */
+/** Condition fraction lost, once, the moment a Ship departs a port currently inside an active Storm's radius -- on top of ordinary transit decay. Can sink the Ship (see FleetOwner.sinkAtSea) exactly like transit decay bottoming out. */
 const STORM_CONDITION_DAMAGE = 0.08;
 /** Same, for a cyclone. */
 const CYCLONE_CONDITION_DAMAGE = 0.2;
 
 export type TradeAction = "BUY" | "SELL" | "REFUEL" | "REPOSITION" | "ATTACK" | "SMUGGLE";
 
-// Tunable knobs for smuggling -- a SoloTrader-only ability (Faction.canSmuggle,
+// Tunable knobs for smuggling -- a SoloTrader-only ability (FleetOwner.canSmuggle,
 // see faction.ts) to sell cargo through a closed port's black market instead
 // of waiting for it to reopen. See Captain.maybeSmuggle.
 
@@ -88,7 +88,7 @@ export interface AgentEventLogEntry {
 
 /**
  * Whether Captains record Ship's Log entries at all (see recordShipLog and
- * Faction.sinkAtSea/sinkInPort's final-entry writes) -- off by default since
+ * FleetOwner.sinkAtSea/sinkInPort's final-entry writes) -- off by default since
  * this is a narrative/flavor feature with a real per-day cost (building a
  * sentence for every Captain, every day) that most callers don't need.
  * Module-level (like worldData.ts's DISPLAY_DISTANCE_UNIT) rather than a
@@ -128,14 +128,14 @@ export interface ContractDeliveryDirective {
   contract: Contract;
 }
 
-/** Directs a docked Ship whose condition has fallen below CONDITION_REPAIR_THRESHOLD to spend the WHOLE day repairing instead of trading/departing -- see Company.directFleet (which issues this ahead of any trade/reposition/contract directive) and Captain.act. */
+/** Directs a docked Ship whose condition has fallen below CONDITION_REPAIR_THRESHOLD to spend the WHOLE day repairing instead of trading/departing -- see Company.direct (which issues this ahead of any trade/reposition/contract directive) and Captain.act. */
 export interface RepairDirective {
   action: "REPAIR";
 }
 
 export type Directive = TradeDirective | RepositionDirective | ContractDeliveryDirective | RepairDirective;
 
-function isRepositionDirective(d: Directive): d is RepositionDirective {
+export function isRepositionDirective(d: Directive): d is RepositionDirective {
   return "action" in d && d.action === "REPOSITION";
 }
 
@@ -147,6 +147,11 @@ export function isRepairDirective(d: Directive): d is RepairDirective {
   return "action" in d && d.action === "REPAIR";
 }
 
+/** The only Directive kind with no `action` discriminant -- a trip bundle to buy/carry/sell, shared by Captain (via Company.direct) and Explorer (via ExpeditionParty.direct). See tradingAgent.ts's TradeDirective. */
+export function isTradeDirective(d: Directive): d is TradeDirective {
+  return !("action" in d);
+}
+
 export interface CaptainInit extends Omit<PersonInit, "location" | "transport" | "dailyWage"> {
   homeLocation: Location;
   startingCash?: number | null;
@@ -156,18 +161,18 @@ export interface CaptainInit extends Omit<PersonInit, "location" | "transport" |
   agentEventProbability?: number;
 }
 
-export class Captain extends Sailor {
+export class Captain extends Sailor implements Leader {
   private _ownCash: number;
   startingCash: number | null;
   repositionReturnMultiplier: number;
   minDailyReturnPct: number;
   priceImpact: number;
   agentEventProbability: number;
-  company: Faction | null = null;
+  company: FleetOwner | null = null;
 
   /**
    * The Transport this Captain was crewing the instant it sank (see
-   * Faction.sinkAtSea/sinkInPort, the only writers) -- `transport` itself is
+   * FleetOwner.sinkAtSea/sinkInPort, the only writers) -- `transport` itself is
    * already null by the time either of those returns, so this is the only
    * way a caller further up the stack (World.runDay's post-act() cleanup)
    * can still tell what kind of Ship needs replacing. Left stale (not
@@ -200,7 +205,7 @@ export class Captain extends Sailor {
 
   tradeLog: TradeLogEntry[] = [];
 
-  /** One entry per simulated day this Captain has had a Ship -- see recordShipLog, the sole writer (plus Faction.sinkAtSea/sinkInPort for a Ship's final entry). Never truncated, same convention as tradeLog/portfolioHistory. */
+  /** One entry per simulated day this Captain has had a Ship -- see recordShipLog, the sole writer (plus FleetOwner.sinkAtSea/sinkInPort for a Ship's final entry). Never truncated, same convention as tradeLog/portfolioHistory. */
   shipLog: ShipLogEntry[] = [];
   /** Day number the most recent genuine arrival happened (see Captain.arrive's true-return branch) -- consumed and cleared by recordShipLog the same day, so it can distinguish "made port today" from "still docked from a prior day." */
   private arrivedToday: number | null = null;
@@ -222,7 +227,7 @@ export class Captain extends Sailor {
     // dailyWage forced to 0 -- Captains are unpaid, unlike a plain Sailor's
     // DEFAULT_SAILOR_DAILY_WAGE (see sailor.ts). location (not transport) is
     // set to homeLocation here, matching Person's AT/ON invariant for a
-    // freshly constructed, not-yet-crewed Captain; Faction's constructor
+    // freshly constructed, not-yet-crewed Captain; FleetOwner's constructor
     // moves it onto the Transport (see Person.boardTransport) once assigned.
     super({ ...init, dailyWage: 0.0, location: init.homeLocation });
     this.rank = "Captain";
@@ -234,7 +239,7 @@ export class Captain extends Sailor {
     this.agentEventProbability = init.agentEventProbability ?? 0.005;
   }
 
-  /** Funds live on whichever Faction owns this transport (if it pools cash), else this Captain's own balance. */
+  /** Funds live on whichever FleetOwner owns this transport (if it pools cash), else this Captain's own balance. */
   get cash(): number {
     if (this.company !== null && this.company.poolsCash) return this.company.cash;
     return this._ownCash;
@@ -248,7 +253,7 @@ export class Captain extends Sailor {
     }
   }
 
-  /** Grants direct access to this captain's own private balance, bypassing any pooling -- used by Faction.__init__. */
+  /** Grants direct access to this captain's own private balance, bypassing any pooling -- used by FleetOwner.__init__. */
   get ownCash(): number {
     return this._ownCash;
   }
@@ -373,7 +378,7 @@ export class Captain extends Sailor {
    * reads the speed penalty via stormSpeedMultiplier, a side-effect-free
    * read -- applying damage there would punish a Captain for merely
    * considering a route it never took). Sinks the Ship immediately
-   * (Faction.sinkAtSea) if this drops condition to <= 0, exactly like
+   * (FleetOwner.sinkAtSea) if this drops condition to <= 0, exactly like
    * ordinary transit-decay does. Returns false if the Ship just sank (the
    * caller must stop touching `this` immediately, same convention as the
    * InTransit condition-decay check in act()); true otherwise (including
@@ -405,7 +410,7 @@ export class Captain extends Sailor {
    * (see crewSpeedFraction) rather than waiting. No-op for every other
    * Transport type.
    *
-   * A hire made for a Company/SoloTrader (Faction.rotatesCrew) is only good
+   * A hire made for a Company/SoloTrader (FleetOwner.rotatesCrew) is only good
    * for JOURNEYS_PER_HIRE journeys before disembarking again -- see
    * advanceCrewRotation. A PirateBrigade/PoliceFleet hire is permanent.
    *
@@ -492,8 +497,8 @@ export class Captain extends Sailor {
       // affordability against while already underway.
       this.transport!.consumeFuel(this.dailyFuelBurn);
 
-      // Condition decay -- gated per-Faction by Faction.decaysCondition
-      // (true for every concrete Faction today: Company/SoloTrader,
+      // Condition decay -- gated per-FleetOwner by FleetOwner.decaysCondition
+      // (true for every concrete FleetOwner today: Company/SoloTrader,
       // PirateBrigade, PoliceFleet). A Ship whose condition bottoms out here, still genuinely underway,
       // sinks AT SEA -- fatal, unlike a pirate-attack-induced sink (always
       // AtLocation by the time it happens -- see maybeAttackOnArrival,
@@ -556,7 +561,7 @@ export class Captain extends Sailor {
       if (directedRoute !== null) {
         if (isRepairDirective(directedRoute)) {
           // Spends the WHOLE day repairing -- no trade, no departure, just
-          // this. Free (no cash cost); see Company.directFleet, the only
+          // this. Free (no cash cost); see Company.direct, the only
           // source of this Directive.
           this.transport!.condition = 1.0;
           this.transport!.recordCondition(day, "repair");
@@ -610,7 +615,7 @@ export class Captain extends Sailor {
    * trade, a contract delivery, or a reposition) and disembarks anyone whose
    * term just expired into this Location's Sailor pool. Only Company/
    * SoloTrader hires ever carry a non-null journeysRemaining (see
-   * hireCrewIfPossible/Faction.rotatesCrew) -- the Captain and any
+   * hireCrewIfPossible/FleetOwner.rotatesCrew) -- the Captain and any
    * PirateBrigade/PoliceFleet crew are permanent and skip this entirely.
    * Called from act() AFTER this turn's sell/fence step, not from arrive()
    * itself -- see act()'s justArrived handling.
@@ -741,7 +746,7 @@ export class Captain extends Sailor {
 
   /**
    * PirateBrigade-only counterpart to sellCargoIfPossible (see
-   * Faction.fencesCargo) -- converts cargo seized in a raid (see
+   * FleetOwner.fencesCargo) -- converts cargo seized in a raid (see
    * PirateBrigade.attack) into cash at this Location's fence price, a
    * discount off the CURRENT live market price, looked up fresh right now
    * rather than snapshotted at the moment of seizure. There's no cost basis
@@ -792,7 +797,7 @@ export class Captain extends Sailor {
   }
 
   /**
-   * SoloTrader-only (see Faction.canSmuggle): sell cargo through a closed
+   * SoloTrader-only (see FleetOwner.canSmuggle): sell cargo through a closed
    * port's black market instead of just waiting for it to reopen. Tried
    * automatically, once per day, for as long as this Captain sits at a
    * closed port holding cargo. Priced at `SMUGGLING_PRICE_DISCOUNT` off the
@@ -934,7 +939,7 @@ export class Captain extends Sailor {
   }
 
   /**
-   * Public (not `private`) since Company.directFleet calls this directly on
+   * Public (not `private`) since Company.direct calls this directly on
    * an idle captain to score its best route -- mirrors faction.py's
    * cross-module call to this "private-by-convention" method in Python. The
    * destination-first knapsack itself lives in tradingAgent.ts's
@@ -963,7 +968,7 @@ export class Captain extends Sailor {
    * Estimate the COMPANY's expected profit per ship-day of delivering
    * `contract` if this captain buys at `producer` and carries it to the
    * contract's location. Public for the same reason as findBestLocalRoute:
-   * Company.directFleet (in "compare" mode) calls it to weigh a contract
+   * Company.direct (in "compare" mode) calls it to weigh a contract
    * against this captain's best arbitrage route on a common basis.
    *
    * Only the costs the Company actually bears are counted -- crew wages over
@@ -1136,7 +1141,7 @@ export class Captain extends Sailor {
    * out on arrival instead of selling at the destination's market price.
    * Unlike executeLocalRoute, there's no profitability gate: a due Contract
    * is an obligation the Company committed to, not an opportunistic trade --
-   * matching Company.directFleet prioritizing contracts over arbitrage.
+   * matching Company.direct prioritizing contracts over arbitrage.
    *
    * The issuing Location pays the producer directly for the goods -- the
    * Company never fronts that cost, only the fuel to carry them (reimbursed,
@@ -1412,7 +1417,7 @@ export class Captain extends Sailor {
     // Contract-bound items are paid for by the issuing Location, not this
     // Captain's Company (see executeContractDelivery), so each is excluded
     // from portfolio value individually -- the same per-item exclusion
-    // Faction.netWorth uses, since one voyage's hold can mix a contract item
+    // FleetOwner.netWorth uses, since one voyage's hold can mix a contract item
     // with open-market ones.
     if (this.cargo !== null) {
       const markLocation = this.status === "AtLocation" ? this.locationName : this.cargo.destination;
@@ -1478,7 +1483,7 @@ export class Captain extends Sailor {
    * day-stamped trace -- see each flag's own doc comment. Called once per
    * day, for every Captain still in `World.captains` (a Captain whose Ship
    * sank this turn is spliced out before this runs -- see World.runDay --
-   * so its FINAL entry is instead written directly by Faction.sinkAtSea/
+   * so its FINAL entry is instead written directly by FleetOwner.sinkAtSea/
    * sinkInPort, the only two writers of shipLog outside this method).
    */
   recordShipLog(day: number): void {

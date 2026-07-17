@@ -37,7 +37,7 @@ describe("Location.ruler", () => {
   it("round-trips a Chieftain ruler set at construction", () => {
     const chieftain = new Chieftain({
       name: "Chief Ombo", gender: "Male", dateOfBirth: new Date("1950-01-01"),
-      passageTaxRate: 0.15, trust: 0.4, giftCategories: ["Tobacco"],
+      passageTaxRate: 0.15, trust: 0.4,
     });
     const location = makeLocation({ settlementType: "Native village", terminalTypes: new Set(["Market"]), ruler: chieftain });
     expect(location.ruler).toBe(chieftain);
@@ -50,7 +50,6 @@ describe("Chieftain", () => {
     const chieftain = new Chieftain({ name: "Chief Default", gender: "Female", dateOfBirth: new Date("1960-01-01") });
     expect(chieftain.passageTaxRate).toBe(0.1);
     expect(chieftain.trust).toBe(0.5);
-    expect(chieftain.giftCategories).toEqual([]);
   });
 
   it("never crews a Transport -- starts with location/transport both null like any fresh Person", () => {

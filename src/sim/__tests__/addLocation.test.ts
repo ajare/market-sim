@@ -54,18 +54,18 @@ describe("World.addLocation", () => {
   it("tops up the fleet across eligible Companies at their OWN home Location, not the new one", () => {
     const { world } = buildWorld();
     const entity = world.locations[0].politicalEntity!;
-    const shipsBefore = world.captains.filter((c) => c.transport !== null).length;
-    const captainsBefore = new Set(world.captains);
+    const shipsBefore = world.shipCaptains.filter((c) => c.transport !== null).length;
+    const captainsBefore = new Set(world.shipCaptains);
 
     const coords = Object.values(LOCATION_COORDINATES);
     const cx = coords.reduce((sum, [x]) => sum + x, 0) / coords.length;
     const cy = coords.reduce((sum, [, y]) => sum + y, 0) / coords.length;
     const location = world.addLocation(cx, cy, entity, 500, 3000);
 
-    const shipsAfter = world.captains.filter((c) => c.transport !== null).length;
+    const shipsAfter = world.shipCaptains.filter((c) => c.transport !== null).length;
     expect(shipsAfter).toBeGreaterThan(shipsBefore);
 
-    const newCaptains = world.captains.filter((c) => !captainsBefore.has(c));
+    const newCaptains = world.shipCaptains.filter((c) => !captainsBefore.has(c));
     expect(newCaptains.length).toBeGreaterThan(0);
     for (const captain of newCaptains) {
       expect(captain.company).toBeInstanceOf(Company);

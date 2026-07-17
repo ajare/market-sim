@@ -507,7 +507,7 @@ progression, or reputation. Not tied to headcount or any growth curve.
 
 ### Existing Captain/Transport movement (context)
 
-Today's movement is fully AI-driven end-to-end: `Company.directFleet`/
+Today's movement is fully AI-driven end-to-end: `Company.direct`/
 `Captain.findBestLocalRoute` (`captain.ts`) algorithmically picks a destination
 (never player-chosen), `findShortestPath` (`src/sim/pathfinding.ts`, Dijkstra) computes
 the multi-leg `Route[]` path, and the Captain moves hop-by-hop — atomic within each

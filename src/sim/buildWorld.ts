@@ -23,7 +23,7 @@ import { Captain } from "./captain";
 import { DUTCH_NAMES, randomPersonName } from "./names";
 import { DUTCH_SHIP_NAMES, randomShipName } from "./shipNames";
 import { DUTCH_COMPANY_NAMES, randomCompanyName } from "./companyNames";
-import { Faction, Company, SoloTrader } from "./faction";
+import { FleetOwner, Company, SoloTrader } from "./faction";
 import { World } from "./world";
 import type { TenderContractsOptions } from "./contracts";
 import { randomBirthDate } from "./person";
@@ -31,7 +31,7 @@ import { SAILOR_MIN_AGE, SAILOR_MAX_AGE } from "./sailor";
 
 export interface BuiltWorld {
   world: World;
-  factions: Faction[];
+  factions: FleetOwner[];
   politicalEntities: PoliticalEntity[];
 }
 
@@ -52,7 +52,7 @@ export interface BuildWorldOptions {
    * Extra ships added to every Company on top of shipsPerCompany, as a
    * fraction (0 to 1) of shipsPerCompany, rounded up -- so a Company's
    * fleet is never fully saturated by Contract duty (which is prioritized
-   * over arbitrage, see Company.directFleet) and some ships are always
+   * over arbitrage, see Company.direct) and some ships are always
    * free to arbitrage. Default 0.2. Not empirically tuned like the ship-
    * per-location ratio -- a reasonable buffer, easy to retune.
    */
@@ -173,7 +173,7 @@ export const DEFAULT_PIRATE_CASH_PER_SHIP = 5_000.0;
 export const DEFAULT_NUM_POLICE_SHIPS = 80;
 
 /**
- * Builds a full World plus its Factions, procedurally, without running any
+ * Builds a full World plus its FleetOwners, procedurally, without running any
  * days. `maxRouteDistance` prunes the generated route network down to
  * pairs within that distance (matching exp-ui's SimState.reset(), which
  * passes 3000); pass `undefined` for an uncapped network (cli.py's
@@ -342,7 +342,7 @@ export function buildWorld(
     companies.push(new SoloTrader(randomCompanyName(fleetRng, DUTCH_COMPANY_NAMES), crew, cashPerShip * crew.length));
   }
 
-  const factions: Faction[] = [...companies];
+  const factions: FleetOwner[] = [...companies];
 
   const world = new World({
     locations,

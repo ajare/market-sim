@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildWorldFromJson } from "../buildWorldFromJson";
 import { NATIONALITY_POOLS } from "../nationality";
 import { DEFAULT_NUM_PIRATE_SHIPS, DEFAULT_NUM_POLICE_SHIPS } from "../buildWorld";
-import type { Faction, Company } from "../faction";
+import type { FleetOwner, Company } from "../faction";
 
 const FRENCH_SHIPS = new Set(NATIONALITY_POOLS.French.ships);
 
@@ -37,10 +37,10 @@ function world(companies: JsonCompany[], entities: Array<{ id: string; name: str
   });
 }
 
-function ships(factions: Faction[]): number {
+function ships(factions: FleetOwner[]): number {
   return factions.reduce((n, f) => n + f.captains.length, 0);
 }
-function soloCount(factions: Faction[]): number {
+function soloCount(factions: FleetOwner[]): number {
   return factions.filter((f) => f.captains.length === 1).length;
 }
 
@@ -70,7 +70,7 @@ describe("fleet synthesis on JSON load", () => {
     const company = factions.find((f) => f.name === "Grand Compagnie")!;
     expect(company.captains.length).toBe(80);
     // The ships synthesized onto a French-affiliated company use French ship names --
-    // Faction dedupes same-name Transports within a fleet, so once the (smaller) pool
+    // FleetOwner dedupes same-name Transports within a fleet, so once the (smaller) pool
     // is exhausted a repeat draw gets a " 2"/" 3"/... suffix; strip it before checking.
     const baseName = (name: string): string => name.replace(/ \d+$/, "");
     const frenchNamed = company.captains.filter((c) => FRENCH_SHIPS.has(baseName(c.transport!.name))).length;

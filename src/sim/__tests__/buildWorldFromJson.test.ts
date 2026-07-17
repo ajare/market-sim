@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildWorldFromJson } from "../buildWorldFromJson";
 import { buildExploreDemoWorldJson } from "../__fixtures__/exploreDemoWorld";
 import { getRoute } from "../routes";
+import { COMMODITIES } from "../worldData";
 
 /** A minimal, pre-exploration-shaped 20-location World JSON -- none of the new settlementType/ruler/explorers fields, exercising the backward-compatible defaults. */
 function minimalPreExplorationWorldJson(): string {
@@ -58,7 +59,10 @@ describe("buildWorldFromJson -- exploration mode fields", () => {
     expect(villageWithRuler.ruler).not.toBeNull();
     expect(villageWithRuler.ruler?.name).toBe("Chief Ombo");
     expect(villageWithRuler.ruler?.passageTaxRate).toBe(0.15);
-    expect(villageWithRuler.ruler?.giftCategories).toEqual(["Beads"]);
+    // Gift-worthiness is a global Commodity property now, not per-chieftain
+    // (see commodity.ts's Commodity.gift) -- the fixture's "Beads" entry
+    // round-trips through here instead of a ruler-level giftCategories list.
+    expect(COMMODITIES.Beads?.gift).toBe(0.7);
 
     const villageWithoutRuler = world.locations.find((l) => l.name === "Highland Village")!;
     expect(villageWithoutRuler.settlementType).toBe("Native village");

@@ -30,7 +30,7 @@ function makeCrew(names: string[]): Array<[Ship, Captain, string]> {
   ]);
 }
 
-describe("Faction ship-name deduplication", () => {
+describe("FleetOwner ship-name deduplication", () => {
   it("disambiguates duplicate transport names within the same Company's initial fleet", () => {
     const company = new Company("Acme Traders", makeCrew(["Victory", "Victory", "Victory"]), 0);
     const names = company.captains.map((c) => c.transport!.name);
@@ -63,7 +63,7 @@ function makeCrewWithCaptains(names: string[]): Array<[Ship, Captain, string]> {
   ]);
 }
 
-describe("Faction captain-name deduplication", () => {
+describe("FleetOwner captain-name deduplication", () => {
   it("gives a colliding Captain a middle initial starting with A", () => {
     const company = new Company("Acme Traders", makeCrewWithCaptains(["John Smith", "John Smith", "John Smith"]), 0);
     expect(company.captains.map((c) => c.name)).toEqual(["John Smith", "John A. Smith", "John B. Smith"]);

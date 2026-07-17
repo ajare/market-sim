@@ -8,7 +8,7 @@
  * for cyclone formation) but never mutating it.
  *
  * Randomness draws from the shared simRandom stream (like Market's daily
- * price noise or Faction's piracy tick), not a private Rng, so a World's own
+ * price noise or FleetOwner's piracy tick), not a private Rng, so a World's own
  * seed governs storm generation the same way it governs everything else
  * simulated day-to-day.
  */

@@ -43,7 +43,7 @@ export function TransportConditionHistoryPanel() {
     () =>
       world === null
         ? []
-        : world.captains
+        : world.shipCaptains
             .filter((c) => c.transport !== null)
             .map((c) => ({
               name: c.transport!.name,

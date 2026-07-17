@@ -330,7 +330,7 @@ export function NetWorthHistoryPanel() {
             <thead>
               <tr>
                 <th>Day</th>
-                <th>Faction</th>
+                <th>Company</th>
                 <th>Political entity</th>
                 <th>Type</th>
                 <th>Net worth</th>
